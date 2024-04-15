@@ -1,4 +1,4 @@
-# SlicerReSound
+# Ultrasound extension
 The Ultrasound extension for 3D Slicer contains modules to process ultrasound video data. 
 
 ## Anonymize Ultrasound
