@@ -1,5 +1,5 @@
 # Ultrasound extension
-The Ultrasound extension for 3D Slicer contains modules to process ultrasound video data. 
+The Ultrasound extension for 3D Slicer contains modules to process ultrasound video data. Suggestions and contributions are welcome!
 
 ## Anonymize Ultrasound
 This module reads a folder of ultrasound cine loops in DICOM format and iterates through them. It allows masking the fan shaped or rectangular image area to erase non-ultrasound information from the images. It also allows associating labels to loops, so classification annotations can start during anonymization. The masked loops are exported in DICOM format. The exported DICOM files only contain a specific set of DICOM tags that do not contain any personal information about the patient.
