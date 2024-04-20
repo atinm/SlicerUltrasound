@@ -10,12 +10,6 @@ import shutil
 import time
 import numpy as np
 
-try:
-    import pandas as pd
-except ImportError:
-    slicer.util.pip_install('pandas')
-    import pandas as pd
-
 from PIL import Image
 import pydicom
 from pydicom.dataset import Dataset, FileDataset
@@ -72,7 +66,11 @@ def performPostModuleDiscoveryTasks():
     """
     Perform some initialization tasks that require the application to be fully started up.
     """
-    pass
+    try:
+        import pandas as pd
+    except ImportError:
+        slicer.util.pip_install('pandas')
+        import pandas as pd
     
 #
 # AnonymizeUltrasoundWidget
