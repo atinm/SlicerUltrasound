@@ -92,11 +92,9 @@ def registerSampleData():
         nodeNames="TimeSeriesAnnotation1",
     )
 
-
 #
 # TimeSeriesAnnotationParameterNode
 #
-
 
 @parameterNodeWrapper
 class TimeSeriesAnnotationParameterNode:
@@ -113,14 +111,16 @@ class TimeSeriesAnnotationParameterNode:
     inputBrowser: vtkMRMLSequenceBrowserNode
     inputVolume: vtkMRMLScalarVolumeNode
     inputSkipNumber: int = 4
+    segmentationBrowser: vtkMRMLSequenceBrowserNode
     segmentation: vtkMRMLSegmentationNode
     ultrasoundModel: vtkMRMLModelNode
+    showUltrasoundModel: bool = True
+    showOverlay: bool = True
+    reviseSegmentations: bool = False
     
-
 #
 # TimeSeriesAnnotationWidget
 #
-
 
 class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     """Uses ScriptedLoadableModuleWidget base class, available at:
@@ -134,6 +134,8 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         self.logic = None
         self._parameterNode = None
         self._parameterNodeGuiTag = None
+        
+        self._updatingGuiFromParameterNode = False
         
         def setup(self):
             # Register subject hierarchy plugin
@@ -182,6 +184,9 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         # Buttons
         self.ui.captureButton.connect("clicked(bool)", self.onCaptureButton)
         self.ui.sampleDataButton.connect("clicked(bool)", self.onSampleDataButton)
+        self.ui.sliceViewButton.connect("toggled(bool)", self.onSliceViewButton)
+        self.ui.reviseButton.connect("toggled(bool)", self.onReviseButton)
+        self.ui.overlayButton.connect("toggled(bool)", self.onOverlayButton)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -201,6 +206,9 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             w = slicer.util.findChild(mw, "DataProbeCollapsibleWidget")
             if w:
                 w.collapsed = True
+                
+        # Make sure sequences toolbar is visible
+        slicer.modules.sequences.toolBar().setVisible(True)
 
     def exit(self) -> None:
         """Called each time the user opens a different module."""
@@ -268,6 +276,18 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         :param event: modified event that triggered the update (unused)
         :return: None
         """
+        
+        # Prevent infinite loop if GUI is modifying parameter node
+        if self._updatingGuiFromParameterNode:
+            return
+        self._updatingGuiFromParameterNode = True
+        
+        if self._parameterNode and self._parameterNode.inputBrowser:
+            if self._parameterNode.reviseSegmentations == False:
+                slicer.modules.sequences.toolBar().setActiveBrowserNode(self._parameterNode.inputBrowser)
+            elif self._parameterNode.segmentationBrowser:
+                slicer.modules.sequences.toolBar().setActiveBrowserNode(self._parameterNode.segmentationBrowser)
+        
         # Update buttons states and tooltips
         if self._parameterNode and self._parameterNode.inputVolume and self._parameterNode.inputBrowser and self._parameterNode.segmentation:
             self.ui.captureButton.toolTip = _("Record current frame")
@@ -284,6 +304,13 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             self.ui.deleteButton.toolTip = _("Select inputs to enable this button")
             self.ui.deleteButton.enabled = False
         
+        if self._parameterNode.reviseSegmentations:
+            self.ui.reviseButton.checked = True
+            self.ui.reviseButton.text = "Stop revising"
+        else:
+            self.ui.reviseButton.checked = False
+            self.ui.reviseButton.text = "Revise segmentations"
+        
         # Update selected segmentation node in segment editor
         if self._parameterNode and self._parameterNode.segmentation:
             if self.ui.segmentEditorWidget.segmentationNode() != self._parameterNode.segmentation:
@@ -297,26 +324,53 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
                 sliceWidget = layoutManager.sliceWidget(sliceViewName)
                 sliceWidget.sliceLogic().GetSliceCompositeNode().SetBackgroundVolumeID(self._parameterNode.inputVolume.GetID())
             self.ui.segmentEditorWidget.setSourceVolumeNode(self._parameterNode.inputVolume)
+        
+        # Show overlay foreground volume in 2D views
+        layoutManager = slicer.app.layoutManager()
+        compositeNode = layoutManager.sliceWidget('Red').sliceLogic().GetSliceCompositeNode()
+        if self._parameterNode and self._parameterNode.showOverlay:
+            compositeNode.SetForegroundOpacity(0.3)
+            self.ui.overlayButton.checked = True
+        else:
+            compositeNode.SetForegroundOpacity(0.0)
+            self.ui.overlayButton.checked = False
+        
+        # Update ultrasound slice representation in 3D view
+        layoutManager = slicer.app.layoutManager()
+        redWidget = layoutManager.sliceWidget('Red')
+        redWidget.sliceController().setSliceVisible(self._parameterNode.showUltrasoundModel)
+        if self._parameterNode and self._parameterNode.ultrasoundModel:
+            self._parameterNode.ultrasoundModel.GetDisplayNode().SetVisibility(not self._parameterNode.showUltrasoundModel)
+        
+        self._updatingGuiFromParameterNode = False
 
     def onCaptureButton(self) -> None:
-        """Run processing when user clicks "Apply" button."""
-        with slicer.util.tryWithErrorDisplay(_("Failed to compute results."), waitCursor=True):
-            # Compute output
-            self.logic.process(self.ui.inputSelector.currentNode(), self.ui.outputSelector.currentNode(),
-                               self.ui.imageThresholdSliderWidget.value, self.ui.invertOutputCheckBox.checked)
-
-            # Compute inverted output (if needed)
-            if self.ui.invertedOutputSelector.currentNode():
-                # If additional output volume is selected then result with inverted threshold is written there
-                self.logic.process(self.ui.inputSelector.currentNode(), self.ui.invertedOutputSelector.currentNode(),
-                                   self.ui.imageThresholdSliderWidget.value, not self.ui.invertOutputCheckBox.checked, showResult=False)
+        logging.info("onCaptureButton")
+        if not self._parameterNode:
+            logging.error("Parameter node is invalid")
+            return
+        
+        self.logic.captureCurrentFrame()
+        
 
     def onSampleDataButton(self) -> None:
         logging.info("onSampleDataButton")
         """Load sample data when user clicks "Load Sample Data" button."""
         with slicer.util.tryWithErrorDisplay(_("Failed to load sample data.")):
             SampleData.SampleDataLogic().downloadSample("TimeSeriesAnnotation1")
-
+    
+    def onSliceViewButton(self, checked) -> None:
+        """Show/hide slice views when user clicks "Show Slice Views" button."""
+        self._parameterNode.showUltrasoundModel = checked
+    
+    def onReviseButton(self, checked) -> None:
+        """Show/hide slice views when user clicks "Show Slice Views" button."""
+        self._parameterNode.reviseSegmentations = checked
+    
+    def onOverlayButton(self, checked) -> None:
+        """Show/hide slice views when user clicks "Show Slice Views" button."""
+        self._parameterNode.showOverlay = checked
+            
 #
 # TimeSeriesAnnotationLogic
 #
@@ -331,14 +385,29 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
     Uses ScriptedLoadableModuleLogic base class, available at:
     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
     """
-
+    ATTRIBUTE_PREFIX = 'SingleSliceSegmentation_'
+    ORIGINAL_IMAGE_INDEX = ATTRIBUTE_PREFIX + 'OriginalImageIndex'
+    
     def __init__(self) -> None:
         """Called when the logic class is instantiated. Can be used for initializing member variables."""
         ScriptedLoadableModuleLogic.__init__(self)
 
     def getParameterNode(self):
         return TimeSeriesAnnotationParameterNode(super().getParameterNode())
-
+    
+    def captureCurrentFrame(self):
+        """
+        Record the current frame and segmentation in the segmentation browser.
+        """
+        parameterNode = self.getParameterNode()
+        originalIndexStr = parameterNode.segmentation.GetAttribute(self.ORIGINAL_IMAGE_INDEX)
+        if not parameterNode.reviseSegmentations:  # Adding new segmentation to the record
+            inputIndex = parameterNode.inputBrowser.GetSelectedItemNumber()
+            parameterNode.segmentation.SetAttribute(self.ORIGINAL_IMAGE_INDEX, str(inputIndex))
+            
+        
+        #TODO: Implement this
+        
     def process(self,
                 inputVolume: vtkMRMLScalarVolumeNode,
                 outputVolume: vtkMRMLScalarVolumeNode,
