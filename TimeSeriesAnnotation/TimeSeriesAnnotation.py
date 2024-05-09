@@ -471,6 +471,9 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             layoutManager.setLayout(6)  # Red slice only
         else:
             layoutManager.setLayout(self.LAYOUT_2D3D)
+            layoutManager = slicer.app.layoutManager()
+            first3dView = layoutManager.threeDWidget(0).threeDView()
+            first3dView.resetFocalPoint()
         
     def onSampleDataButton(self) -> None:
         logging.info("onSampleDataButton")
@@ -520,32 +523,38 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
         """
         parameterNode = self.getParameterNode()
         
-        originalIndexStr = parameterNode.segmentation.GetAttribute(self.ORIGINAL_IMAGE_INDEX)
+        
+        currentAttributeIndexStr = parameterNode.segmentation.GetAttribute(self.ORIGINAL_IMAGE_INDEX)
+        if currentAttributeIndexStr == "None" or currentAttributeIndexStr == "":
+            currentAttributeIndexStr = None
         
         selectedSegmentation = parameterNode.segmentation
         segmentationSequenceNode = parameterNode.segmentationBrowser.GetSequenceNode(selectedSegmentation)
-        recordedOriginalIndex = None
+        previousAttributeIndex = None
         numSegmentationNodes = segmentationSequenceNode.GetNumberOfDataNodes()
         for i in range(numSegmentationNodes):
             segmentationNode = segmentationSequenceNode.GetNthDataNode(i)
             savedIndex = segmentationNode.GetAttribute(self.ORIGINAL_IMAGE_INDEX)
-            if originalIndexStr == savedIndex and originalIndexStr is not None:
-                recordedOriginalIndex = i
+            if currentAttributeIndexStr == savedIndex and currentAttributeIndexStr is not None:
+                previousAttributeIndex = i
                 break
         
         # If this image has been previously recorded, then update the segmentation
         
         try:
-            recordedOriginalIndex = int(recordedOriginalIndex)
+            previousAttributeIndex = int(previousAttributeIndex)
         except:
-            recordedOriginalIndex = None
+            previousAttributeIndex = None
         
         inputImageSequenceNode = parameterNode.segmentationBrowser.GetSequenceNode(parameterNode.inputVolume)
+        inputBrowserNode = parameterNode.inputBrowser
         
-        if recordedOriginalIndex is None:
+        if previousAttributeIndex is None:
+            selectedSegmentation.SetAttribute(self.ORIGINAL_IMAGE_INDEX, str(inputBrowserNode.GetSelectedItemNumber()))
             parameterNode.segmentationBrowser.SaveProxyNodesState()
+            selectedSegmentation.SetAttribute(self.ORIGINAL_IMAGE_INDEX, "None")
         else:
-            recordedIndexValue = inputImageSequenceNode.GetNthIndexValue(recordedOriginalIndex)
+            recordedIndexValue = inputImageSequenceNode.GetNthIndexValue(previousAttributeIndex)
             segmentationSequenceNode.SetDataNodeAtValue(selectedSegmentation, recordedIndexValue)
 
     def eraseCurrentSegmentation(self):
