@@ -106,13 +106,14 @@ def registerSampleData():
         # It can be created by Screen Capture module, "Capture all views" option enabled, "Number of images" set to "Single".
         thumbnailFileName=os.path.join(iconsPath, "TimeSeriesAnnotation1.png"),
         # Download URL and target file name
-        uris="https://onedrive.live.com/download?resid=7230D4DEC6058018%21114824&authkey=!AKoTnKwt3AP5OiU",
-        fileNames="1133_LandmarkingScan_Sa_Test.mrb",
+        uris=["https://onedrive.live.com/download?resid=7230D4DEC6058018%21114824&authkey=!AKoTnKwt3AP5OiU"],
+        fileNames=["1133_LandmarkingScan_Sa_Test.mrb"],
         # Checksum to ensure file integrity. Can be computed by this command:
         #  import hashlib; print(hashlib.sha256(open(filename, "rb").read()).hexdigest())
-        checksums="SHA256:4348c089b9ca9f25c0a70dff1ace1b94cab66b2b08c7524ddf638d4a32a4e57d",
+        checksums=["SHA256:19ecb7f4db9d538b3510d428d6be55dc71aa2faf3699f3c9bd89e199435d236f"],
         # This node name will be used when the data set is loaded
-        nodeNames="TimeSeriesAnnotation1",
+        loadFileType=['SceneFile'],
+        loadFiles=[True]
     )
 
 #
@@ -156,7 +157,6 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         self._updatingGuiFromParameterNode = False
             
         # Shortcuts
-
         self.shortcutS = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutS.setKey(qt.QKeySequence('s'))
         self.shortcutD = qt.QShortcut(slicer.util.mainWindow())
@@ -165,12 +165,6 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         self.shortcutC.setKey(qt.QKeySequence('c'))
         self.shortcutA = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutA.setKey(qt.QKeySequence('a'))
-        
-        # def setup(self):
-        #     # Register subject hierarchy plugin
-        #     import SubjectHierarchyPlugins
-        #     scriptedPlugin = slicer.qSlicerSubjectHierarchyScriptedPlugin(None)
-        #     scriptedPlugin.setPythonSource(SubjectHierarchyPlugins.SegmentEditorSubjectHierarchyPlugin.filePath)
         
     def connectKeyboardShortcuts(self):
         self.shortcutS.connect('activated()', self.onSkipButton)
@@ -301,9 +295,9 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
     
     def onSceneEndImport(self, caller, event) -> None:
         """Called after a scene is imported."""
-        # If this module is shown while the scene is imported then recreate a new parameter node immediately
+        # If this module is shown while the scene is imported then initialize new parameter node immediately
         if self.parent.isEntered:
-            self.initializeParameterNode()
+            qt.QTimer.singleShot(0, self.initializeParameterNode)  # Let the editor widget update itself before initializing parameter node
         
     def initializeParameterNode(self) -> None:
         """Ensure parameter node exists and observed."""
@@ -316,8 +310,9 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         if not segmentEditorNode:
             segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode", segmentEditorSingletonTag)
             segmentEditorNode.SetSingletonTag(segmentEditorSingletonTag)
-        self.ui.segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)            
-
+        self.ui.segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)
+        self.ui.segmentEditorWidget.updateWidgetFromMRML()
+        
         self.setParameterNode(self.logic.getParameterNode())
 
     def setParameterNode(self, inputParameterNode: Optional[TimeSeriesAnnotationParameterNode]) -> None:
