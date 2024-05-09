@@ -54,13 +54,36 @@ and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR0132
 """)
 
         # Additional initialization step after application startup is complete
-        slicer.app.connect("startupCompleted()", registerSampleData)
-
+        slicer.app.connect("startupCompleted()", postModuleDiscovery)
 
 #
 # Register sample data sets in Sample Data module
 #
 
+def postModuleDiscovery():
+    """Called after all modules have been discovered."""
+    registerSampleData()
+    addCustomLayouts()
+    
+def addCustomLayouts():
+    layoutManager = slicer.app.layoutManager()
+    customLayout = """
+    <layout type="horizontal" split="true">
+    <item>
+    <view class="vtkMRMLSliceNode" singletontag="Red">
+        <property name="orientation" action="default">Axial</property>
+        <property name="viewlabel" action="default">R</property>
+        <property name="viewcolor" action="default">#F34A33</property>
+    </view>
+    </item>
+    <item>
+    <view class="vtkMRMLViewNode" singletontag="1">
+        <property name="viewlabel" action="default">1</property>
+    </view>
+    </item>
+    </layout>
+    """
+    layoutManager.layoutLogic().GetLayoutNode().AddLayoutDescription(501, customLayout)
 
 def registerSampleData():
     """Add data sets to Sample Data module."""
@@ -100,14 +123,7 @@ def registerSampleData():
 class TimeSeriesAnnotationParameterNode:
     """
     The parameters needed by module.
-
-    inputVolume - The volume to threshold.
-    imageThreshold - The value at which to threshold the input volume.
-    invertThreshold - If true, will invert the threshold.
-    thresholdedVolume - The output volume that will contain the thresholded volume.
-    invertedVolume - The output volume that will contain the inverted thresholded volume.
     """
-
     inputBrowser: vtkMRMLSequenceBrowserNode
     inputVolume: vtkMRMLScalarVolumeNode
     inputSkipNumber: int = 4
@@ -126,7 +142,9 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
     """Uses ScriptedLoadableModuleWidget base class, available at:
     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
     """
-
+    
+    LAYOUT_2D3D = 501
+    
     def __init__(self, parent=None) -> None:
         """Called when the user opens the module the first time and the widget is initialized."""
         ScriptedLoadableModuleWidget.__init__(self, parent)
@@ -136,12 +154,36 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         self._parameterNodeGuiTag = None
         
         self._updatingGuiFromParameterNode = False
+            
+        # Shortcuts
+
+        self.shortcutS = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutS.setKey(qt.QKeySequence('s'))
+        self.shortcutD = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutD.setKey(qt.QKeySequence('d'))
+        self.shortcutC = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutC.setKey(qt.QKeySequence('c'))
+        self.shortcutA = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutA.setKey(qt.QKeySequence('a'))
         
-        def setup(self):
-            # Register subject hierarchy plugin
-            import SubjectHierarchyPlugins
-            scriptedPlugin = slicer.qSlicerSubjectHierarchyScriptedPlugin(None)
-            scriptedPlugin.setPythonSource(SubjectHierarchyPlugins.SegmentEditorSubjectHierarchyPlugin.filePath)
+        # def setup(self):
+        #     # Register subject hierarchy plugin
+        #     import SubjectHierarchyPlugins
+        #     scriptedPlugin = slicer.qSlicerSubjectHierarchyScriptedPlugin(None)
+        #     scriptedPlugin.setPythonSource(SubjectHierarchyPlugins.SegmentEditorSubjectHierarchyPlugin.filePath)
+        
+    def connectKeyboardShortcuts(self):
+        self.shortcutS.connect('activated()', self.onSkipButton)
+        self.shortcutD.connect('activated()', self.onDeleteButton)
+        self.shortcutC.connect('activated()', self.onCaptureButton)
+        # self.shortcutA.connect('activated()', self.onOverlayButton)
+        self.shortcutA.connect('activated()', lambda: self.onOverlayButton(not self.ui.overlayButton.checked))
+    
+    def disconnectKeyboardShortcuts(self):
+        self.shortcutS.activated.disconnect()
+        self.shortcutD.activated.disconnect()
+        self.shortcutC.activated.disconnect()
+        self.shortcutA.activated.disconnect()
 
     def setup(self) -> None:
         """Called when the user opens the module the first time and the widget is initialized."""
@@ -183,6 +225,9 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
 
         # Buttons
         self.ui.captureButton.connect("clicked(bool)", self.onCaptureButton)
+        self.ui.skipButton.connect("clicked(bool)", self.onSkipButton)
+        self.ui.deleteButton.connect("clicked(bool)", self.onDeleteButton)
+        self.ui.cycleLayoutButton.connect("clicked(bool)", self.onCycleLayoutButton)
         self.ui.sampleDataButton.connect("clicked(bool)", self.onSampleDataButton)
         self.ui.sliceViewButton.connect("toggled(bool)", self.onSliceViewButton)
         self.ui.reviseButton.connect("toggled(bool)", self.onReviseButton)
@@ -200,6 +245,9 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         # Make sure parameter node exists and observed
         self.initializeParameterNode()
         
+        self.ui.segmentEditorWidget.installKeyboardShortcuts()
+        self.connectKeyboardShortcuts()
+        
         # Collapse DataProbe widget
         mw = slicer.util.mainWindow()
         if mw:
@@ -209,6 +257,24 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
                 
         # Make sure sequences toolbar is visible
         slicer.modules.sequences.toolBar().setVisible(True)
+        
+        # Collapse input group if all inputs are set
+        if self._parameterNode and\
+            self._parameterNode.inputVolume and\
+            self._parameterNode.segmentation and\
+            self._parameterNode.inputBrowser and\
+            self._parameterNode.segmentationBrowser:
+            self.ui.inputsCollapsibleButton.collapsed = True
+        else:
+            self.ui.inputsCollapsibleButton.collapsed = False
+        
+        # Set layout
+        layoutManager = slicer.app.layoutManager()
+        layoutManager.setLayout(6)
+
+        # Fit slice view to background
+        redController = slicer.app.layoutManager().sliceWidget('Red').sliceController()
+        redController.fitSliceToBackground()
 
     def exit(self) -> None:
         """Called each time the user opens a different module."""
@@ -217,6 +283,10 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
             self._parameterNodeGuiTag = None
             self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._onParameterNodeModified)
+        
+        self.ui.segmentEditorWidget.uninstallKeyboardShortcuts()
+        self.disconnectKeyboardShortcuts()
+        
 
     def onSceneStartClose(self, caller, event) -> None:
         """Called just before the scene is closed."""
@@ -351,8 +421,57 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             return
         
         self.logic.captureCurrentFrame()
+        self.onSkipButton()
         
-
+    def onSkipButton(self) -> None:
+        logging.info("onSkipButton")
+        
+        if not self._parameterNode:
+            logging.error("Parameter node is invalid")
+            return
+        
+        if not self._parameterNode.inputBrowser or not self._parameterNode.segmentationBrowser:
+            logging.error("Input or segmentation browser is invalid")
+            return
+        if not self._parameterNode.inputVolume or not self._parameterNode.segmentation:
+            logging.error("Input volume or segmentation is invalid")
+            return
+        
+        if self._parameterNode.reviseSegmentations:
+            currentItemNum = self._parameterNode.segmentationBrowser.GetSelectedItemNumber()
+            newItemNum = self._parameterNode.segmentationBrowser.SelectNextItem()
+        else:
+            self.logic.eraseCurrentSegmentation()
+            currentItemNum = self._parameterNode.inputBrowser.GetSelectedItemNumber()
+            newItemNum = self._parameterNode.inputBrowser.SelectNextItem(self._parameterNode.inputSkipNumber)
+        
+        # Check if sequence browser wrapped around.
+        
+        if newItemNum < currentItemNum:
+            logging.info("Sequence browser wrapped around")
+            msgBox = qt.QMessageBox()
+            msgBox.setText("Sequence wrapped around")
+            msgBox.setInformativeText("Please save the scene before closing the application!")
+            msgBox.setStandardButtons(qt.QMessageBox.Ok)
+            msgBox.exec_()
+    
+    def onDeleteButton(self) -> None:
+        logging.info("onDeleteButton")
+        
+        if not self._parameterNode:
+            logging.error("Parameter node is invalid")
+            return
+        
+        self.logic.eraseCurrentSegmentation()
+        
+    def onCycleLayoutButton(self) -> None:
+        logging.info("onCycleLayoutButton")
+        layoutManager = slicer.app.layoutManager()
+        if layoutManager.layout == self.LAYOUT_2D3D:
+            layoutManager.setLayout(6)  # Red slice only
+        else:
+            layoutManager.setLayout(self.LAYOUT_2D3D)
+        
     def onSampleDataButton(self) -> None:
         logging.info("onSampleDataButton")
         """Load sample data when user clicks "Load Sample Data" button."""
@@ -400,13 +519,64 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
         Record the current frame and segmentation in the segmentation browser.
         """
         parameterNode = self.getParameterNode()
-        originalIndexStr = parameterNode.segmentation.GetAttribute(self.ORIGINAL_IMAGE_INDEX)
-        if not parameterNode.reviseSegmentations:  # Adding new segmentation to the record
-            inputIndex = parameterNode.inputBrowser.GetSelectedItemNumber()
-            parameterNode.segmentation.SetAttribute(self.ORIGINAL_IMAGE_INDEX, str(inputIndex))
-            
         
-        #TODO: Implement this
+        originalIndexStr = parameterNode.segmentation.GetAttribute(self.ORIGINAL_IMAGE_INDEX)
+        
+        selectedSegmentation = parameterNode.segmentation
+        segmentationSequenceNode = parameterNode.segmentationBrowser.GetSequenceNode(selectedSegmentation)
+        recordedOriginalIndex = None
+        numSegmentationNodes = segmentationSequenceNode.GetNumberOfDataNodes()
+        for i in range(numSegmentationNodes):
+            segmentationNode = segmentationSequenceNode.GetNthDataNode(i)
+            savedIndex = segmentationNode.GetAttribute(self.ORIGINAL_IMAGE_INDEX)
+            if originalIndexStr == savedIndex and originalIndexStr is not None:
+                recordedOriginalIndex = i
+                break
+        
+        # If this image has been previously recorded, then update the segmentation
+        
+        try:
+            recordedOriginalIndex = int(recordedOriginalIndex)
+        except:
+            recordedOriginalIndex = None
+        
+        inputImageSequenceNode = parameterNode.segmentationBrowser.GetSequenceNode(parameterNode.inputVolume)
+        
+        if recordedOriginalIndex is None:
+            parameterNode.segmentationBrowser.SaveProxyNodesState()
+        else:
+            recordedIndexValue = inputImageSequenceNode.GetNthIndexValue(recordedOriginalIndex)
+            segmentationSequenceNode.SetDataNodeAtValue(selectedSegmentation, recordedIndexValue)
+
+    def eraseCurrentSegmentation(self):
+        """
+        Erase the segmentation on the current frame.
+        """
+        parameterNode = self.getParameterNode()
+        if not parameterNode:
+            logging.error("Parameter node is invalid")
+            return
+        
+        if not parameterNode.segmentation:
+            logging.error("Segmentation node is invalid")
+            return
+        
+        selectedSegmentation = parameterNode.segmentation
+        
+        num_segments = parameterNode.segmentation.GetSegmentation().GetNumberOfSegments()
+        for i in range(num_segments):
+            segmentId = parameterNode.segmentation.GetSegmentation().GetNthSegmentID(i)
+                    
+            import vtkSegmentationCorePython as vtkSegmentationCore
+            try:
+                labelMapRep = selectedSegmentation.GetBinaryLabelmapRepresentation(segmentId)
+            except:
+                labelMapRep = selectedSegmentation.GetBinaryLabelmapInternalRepresentation(segmentId)
+            slicer.vtkOrientedImageDataResample.FillImage(labelMapRep, 0, labelMapRep.GetExtent())
+            slicer.vtkSlicerSegmentationsModuleLogic.SetBinaryLabelmapToSegment(
+                labelMapRep, selectedSegmentation, segmentId, slicer.vtkSlicerSegmentationsModuleLogic.MODE_REPLACE)
+            if num_segments > 1:
+                selectedSegmentation.Modified()
         
     def process(self,
                 inputVolume: vtkMRMLScalarVolumeNode,
