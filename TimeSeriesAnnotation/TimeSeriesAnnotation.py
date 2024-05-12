@@ -18,6 +18,7 @@ from slicer.parameterNodeWrapper import (
 )
 import SampleData
 
+from slicer import vtkMRMLLabelMapVolumeNode
 from slicer import vtkMRMLScalarVolumeNode
 from slicer import vtkMRMLSequenceBrowserNode
 from slicer import vtkMRMLSegmentationNode
@@ -134,6 +135,9 @@ class TimeSeriesAnnotationParameterNode:
     showUltrasoundModel: bool = True
     showOverlay: bool = True
     reviseSegmentations: bool = False
+    segmentationVolume: vtkMRMLScalarVolumeNode
+    labelmapVolume: vtkMRMLLabelMapVolumeNode
+    reconstructedVolume: vtkMRMLScalarVolumeNode
     
 #
 # TimeSeriesAnnotationWidget
@@ -226,6 +230,7 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         self.ui.sliceViewButton.connect("toggled(bool)", self.onSliceViewButton)
         self.ui.reviseButton.connect("toggled(bool)", self.onReviseButton)
         self.ui.overlayButton.connect("toggled(bool)", self.onOverlayButton)
+        self.ui.reconstructSegmentationsButton.connect("clicked(bool)", self.onReconstructSegmentationsButton)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -303,7 +308,9 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         """Ensure parameter node exists and observed."""
         # Parameter node stores all user choices in parameter values, node selections, etc.
         # so that when the scene is saved and reloaded, these settings are restored.
-
+        
+        self.logic.setupParameterNode()
+        
         # Make sure segment editor node is created and set before modifying it from parameters
         segmentEditorSingletonTag = "SegmentEditor"
         segmentEditorNode = slicer.mrmlScene.GetSingletonNode(segmentEditorSingletonTag, "vtkMRMLSegmentEditorNode")
@@ -379,7 +386,6 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         # Update selected segmentation node in segment editor
         if self._parameterNode and self._parameterNode.segmentation:
             if self.ui.segmentEditorWidget.segmentationNode() != self._parameterNode.segmentation:
-                print(f"Setting segmentation node: {self._parameterNode.segmentation.GetID()}")
                 self.ui.segmentEditorWidget.setSegmentationNode(self._parameterNode.segmentation)
         
         # Use selected input volume in segment editor and in 2D views
@@ -475,6 +481,8 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         """Load sample data when user clicks "Load Sample Data" button."""
         with slicer.util.tryWithErrorDisplay(_("Failed to load sample data.")):
             SampleData.SampleDataLogic().downloadSample("TimeSeriesAnnotation1")
+            layoutManager = slicer.app.layoutManager()
+            layoutManager.setLayout(6)
     
     def onSliceViewButton(self, checked) -> None:
         """Show/hide slice views when user clicks "Show Slice Views" button."""
@@ -487,7 +495,14 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
     def onOverlayButton(self, checked) -> None:
         """Show/hide slice views when user clicks "Show Slice Views" button."""
         self._parameterNode.showOverlay = checked
-            
+    
+    def onReconstructSegmentationsButton(self) -> None:
+        self.logic.reconstructSegmentations()
+        layoutManager = slicer.app.layoutManager()
+        layoutManager.setLayout(self.LAYOUT_2D3D)
+        first3dView = layoutManager.threeDWidget(0).threeDView()
+        first3dView.resetFocalPoint()
+        
 #
 # TimeSeriesAnnotationLogic
 #
@@ -512,6 +527,24 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
     def getParameterNode(self):
         return TimeSeriesAnnotationParameterNode(super().getParameterNode())
     
+    def setupParameterNode(self):
+        parameterNode = self.getParameterNode()
+        
+        # Add a new volume node for converting segmentations to volumes
+        if not parameterNode.segmentationVolume:
+            parameterNode.segmentationVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "SegmentationVolume")
+            parameterNode.segmentationVolume.CreateDefaultDisplayNodes()
+        
+        # Make sure labelmap volume node is created
+        if not parameterNode.labelmapVolume:
+            parameterNode.labelmapVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode", "LabelmapVolume")
+            parameterNode.labelmapVolume.CreateDefaultDisplayNodes()
+            
+        # Make sure reconstructed volume node is created
+        if not parameterNode.reconstructedVolume:
+            parameterNode.reconstructedVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "ReconstructedVolume")
+            parameterNode.reconstructedVolume.CreateDefaultDisplayNodes()
+        
     def captureCurrentFrame(self):
         """
         Record the current frame and segmentation in the segmentation browser.
@@ -581,6 +614,65 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
                 labelMapRep, selectedSegmentation, segmentId, slicer.vtkSlicerSegmentationsModuleLogic.MODE_REPLACE)
             if num_segments > 1:
                 selectedSegmentation.Modified()
+    
+    def reconstructSegmentations(self):
+        """
+        Reconstruct a volume from the recorded segmentations.
+        """
+        parameterNode = self.getParameterNode()
+        
+        # Make sure the segmentation volume node is a proxy node in a sequence in the segmentation browser
+        sequencesLogic = slicer.modules.sequences.logic()
+        if not parameterNode.segmentationBrowser.GetSequenceNode(parameterNode.segmentationVolume):
+            segmentationVolumeSequence = sequencesLogic.AddSynchronizedNode(None, parameterNode.segmentationVolume, parameterNode.segmentationBrowser)
+            parameterNode.segmentationBrowser.SetRecording(segmentationVolumeSequence, True)
+        else:
+            segmentationVolumeSequence = parameterNode.segmentationBrowser.GetSequenceNode(parameterNode.segmentationVolume)
+        
+        segmentationSequence = parameterNode.segmentationBrowser.GetMasterSequenceNode()
+        
+        # Make sure segmentation volume is on the same transform node as the input volume
+        # Get the transform node of the input volume
+        imageTransformNode = parameterNode.inputVolume.GetParentTransformNode()
+        if imageTransformNode is not None:
+            parameterNode.segmentationVolume.SetAndObserveTransformNodeID(imageTransformNode.GetID())
+        
+        # Iterate through each item in the segmentation browser and convert the segmentations to volumes
+        for itemIndex in range(parameterNode.segmentationBrowser.GetNumberOfItems()):
+            parameterNode.segmentationBrowser.SetSelectedItemNumber(itemIndex)
+            print(f"Item index: {itemIndex}")
+            slicer.modules.segmentations.logic().ExportAllSegmentsToLabelmapNode(parameterNode.segmentation, parameterNode.labelmapVolume, slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY)
+            arrayLabelMap = slicer.util.array(parameterNode.labelmapVolume.GetID())
+            arrayLabelMap *= 255
+            slicer.util.updateVolumeFromArray(parameterNode.segmentationVolume, arrayLabelMap)
+            indexValue = segmentationSequence.GetNthIndexValue(itemIndex)
+            segmentationVolumeSequence.SetDataNodeAtValue(parameterNode.segmentationVolume, indexValue)
+        
+        # Reconstruct segmentationVolumeSequence to get a 3D volume
+        volumeReconstructor = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVolumeReconstructionNode")
+        volumeReconstructor.SetAndObserveInputSequenceBrowserNode(parameterNode.segmentationBrowser)
+        volumeReconstructor.SetAndObserveInputVolumeNode(parameterNode.segmentationVolume)
+        volumeReconstructor.SetLiveVolumeReconstruction(False)
+        volumeReconstructor.SetAndObserveOutputVolumeNode(parameterNode.reconstructedVolume)
+        volumeReconstructor.SetInterpolationMode(slicer.vtkMRMLVolumeReconstructionNode.LINEAR_INTERPOLATION)
+        volumeReconstructor.SetCompoundingMode(slicer.vtkMRMLVolumeReconstructionNode.MAXIMUM_COMPOUNDING_MODE)
+        
+        volumeReconstructionLogic = slicer.modules.volumereconstruction.logic()
+        volumeReconstructionLogic.ReconstructVolumeFromSequence(volumeReconstructor)
+        
+        # Hide ROI node of volume reconstruction
+        roiNode = volumeReconstructor.GetInputROINode()
+        if roiNode:
+            roiNode.SetDisplayVisibility(False)
+        
+        # Show the reconstructed volume in 3D view
+        # Create volume rendering for the reconstructed volume
+        volumeRenderingLogic = slicer.modules.volumerendering.logic()
+        vrDisplayNode = volumeRenderingLogic.CreateDefaultVolumeRenderingNodes(parameterNode.reconstructedVolume)
+        volumeRenderingLogic.UpdateDisplayNodeFromVolumeNode(vrDisplayNode, parameterNode.reconstructedVolume)
+        vrDisplayNode.SetVisibility(True)
+        vrDisplayNode.GetVolumePropertyNode().Copy(volumeRenderingLogic.GetPresetByName("MR-Default"))
+        
         
     def process(self,
                 inputVolume: vtkMRMLScalarVolumeNode,
