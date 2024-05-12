@@ -107,11 +107,11 @@ def registerSampleData():
         # It can be created by Screen Capture module, "Capture all views" option enabled, "Number of images" set to "Single".
         thumbnailFileName=os.path.join(iconsPath, "TimeSeriesAnnotation1.png"),
         # Download URL and target file name
-        uris=["https://onedrive.live.com/download?resid=7230D4DEC6058018%21114824&authkey=!AKoTnKwt3AP5OiU"],
+        uris=["https://onedrive.live.com/download?resid=7230D4DEC6058018%21115152&authkey=!AO0-Um9UZcAXwcw"],
         fileNames=["1133_LandmarkingScan_Sa_Test.mrb"],
         # Checksum to ensure file integrity. Can be computed by this command:
         #  import hashlib; print(hashlib.sha256(open(filename, "rb").read()).hexdigest())
-        checksums=["SHA256:19ecb7f4db9d538b3510d428d6be55dc71aa2faf3699f3c9bd89e199435d236f"],
+        checksums=["SHA256:3b5a0ffe9a50c0473e22123826fed3e049441e11417291bee80d1832a2a433ef"],
         # This node name will be used when the data set is loaded
         loadFileType=['SceneFile'],
         loadFiles=[True]
@@ -478,11 +478,21 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         
     def onSampleDataButton(self) -> None:
         logging.info("onSampleDataButton")
-        """Load sample data when user clicks "Load Sample Data" button."""
+        
+        # Create a model dialog to inform the user that this process may take a couple of minutes
+        msgBox = qt.QMessageBox()
+        msgBox.setText("Loading sample data")
+        msgBox.setInformativeText("This process may take a couple of minutes")
+        msgBox.setStandardButtons(qt.QMessageBox.Ok)
+        msgBox.exec_()
+        
         with slicer.util.tryWithErrorDisplay(_("Failed to load sample data.")):
             SampleData.SampleDataLogic().downloadSample("TimeSeriesAnnotation1")
             layoutManager = slicer.app.layoutManager()
             layoutManager.setLayout(6)
+            
+        # Close the dialog
+        msgBox.close()
     
     def onSliceViewButton(self, checked) -> None:
         """Show/hide slice views when user clicks "Show Slice Views" button."""
@@ -497,11 +507,24 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         self._parameterNode.showOverlay = checked
     
     def onReconstructSegmentationsButton(self) -> None:
+        # Create a model dialog to inform the user that this process may take a couple of minutes
+        msgBox = qt.QMessageBox()
+        msgBox.setText("Reconstructing segmentations")
+        msgBox.setInformativeText("This process may take a couple of minutes")
+        msgBox.setStandardButtons(qt.QMessageBox.Ok)
+        msgBox.exec_()
+        
+        # Reconstruct segmentations
         self.logic.reconstructSegmentations()
+        
+        # Set layout and show reconstructed volume in 3D view
         layoutManager = slicer.app.layoutManager()
         layoutManager.setLayout(self.LAYOUT_2D3D)
         first3dView = layoutManager.threeDWidget(0).threeDView()
         first3dView.resetFocalPoint()
+        
+        # Close the dialog
+        msgBox.close()
         
 #
 # TimeSeriesAnnotationLogic
