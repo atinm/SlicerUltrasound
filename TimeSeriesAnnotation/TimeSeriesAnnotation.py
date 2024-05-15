@@ -226,12 +226,14 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         self.ui.skipButton.connect("clicked(bool)", self.onSkipButton)
         self.ui.deleteButton.connect("clicked(bool)", self.onDeleteButton)
         self.ui.cycleLayoutButton.connect("clicked(bool)", self.onCycleLayoutButton)
-        self.ui.sampleDataButton.connect("clicked(bool)", self.onSampleDataButton)
         self.ui.sliceViewButton.connect("toggled(bool)", self.onSliceViewButton)
         self.ui.reviseButton.connect("toggled(bool)", self.onReviseButton)
         self.ui.overlayButton.connect("toggled(bool)", self.onOverlayButton)
         self.ui.reconstructSegmentationsButton.connect("clicked(bool)", self.onReconstructSegmentationsButton)
-
+        
+        self.ui.deleteAllRecordedButton.connect("clicked(bool)", self.onDeleteAllRecordedButton)
+        self.ui.sampleDataButton.connect("clicked(bool)", self.onSampleDataButton)
+        
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
         
@@ -421,6 +423,15 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             logging.error("Parameter node is invalid")
             return
         
+        if not self.ui.captureButton.enabled:
+            # pop up a message button to inform the user that the inputs should be selected
+            msgBox = qt.QMessageBox()
+            msgBox.setText("Inputs not selected")
+            msgBox.setInformativeText("Please select the inputs before capturing the frame")
+            msgBox.setStandardButtons(qt.QMessageBox.Ok)
+            msgBox.exec_()
+            return
+        
         self.logic.captureCurrentFrame()
         self.onSkipButton()
         
@@ -475,7 +486,24 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             layoutManager = slicer.app.layoutManager()
             first3dView = layoutManager.threeDWidget(0).threeDView()
             first3dView.resetFocalPoint()
+    
+    def onDeleteAllRecordedButton(self) -> None:
+        logging.info("onDeleteAllRecordedButton")
         
+        # Use a dialog to confirm deletion
+        msgBox = qt.QMessageBox()
+        msgBox.setText("Delete all recorded segmentations")
+        msgBox.setInformativeText("Are you sure you want to delete all recorded segmentations?")
+        msgBox.setStandardButtons(qt.QMessageBox.Ok | qt.QMessageBox.Cancel)
+        msgBox.setDefaultButton(qt.QMessageBox.Cancel)
+        ret = msgBox.exec_()
+        
+        if ret == qt.QMessageBox.Cancel:
+            logging.info("Delete all recorded segmentations is cancelled")
+            return
+        
+        self.logic.deteleAllRecordedSegmentations()
+    
     def onSampleDataButton(self) -> None:
         logging.info("onSampleDataButton")
         
@@ -501,6 +529,13 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
     def onReviseButton(self, checked) -> None:
         """Show/hide slice views when user clicks "Show Slice Views" button."""
         self._parameterNode.reviseSegmentations = checked
+        if checked:
+            self.logic.resetSegmenationSequenceIndex()
+        else:
+            self.logic.resetSegmenationSequenceIndex()
+            self.logic.eraseCurrentSegmentation()
+            self._parameterNode.segmentation.SetAttribute(self.logic.ORIGINAL_IMAGE_INDEX, "None")
+            self.logic.resetInputSequenceIndex()
     
     def onOverlayButton(self, checked) -> None:
         """Show/hide slice views when user clicks "Show Slice Views" button."""
@@ -638,6 +673,58 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
             if num_segments > 1:
                 selectedSegmentation.Modified()
     
+    def deteleAllRecordedSegmentations(self):
+        """
+        Delete all recorded segmentations in the segmentation browser.
+        """
+        parameterNode = self.getParameterNode()
+        if not parameterNode:
+            logging.error("Parameter node is invalid")
+            return
+        
+        if not parameterNode.segmentationBrowser:
+            logging.error("Segmentation browser is invalid")
+            return
+        
+        sequenceNodes = vtk.vtkCollection()
+        parameterNode.segmentationBrowser.GetSynchronizedSequenceNodes(sequenceNodes, True)
+        for i in range(sequenceNodes.GetNumberOfItems()):
+            sequenceNode = sequenceNodes.GetItemAsObject(i)
+            sequenceNode.RemoveAllDataNodes()
+        
+        logging.info("All recorded segmentations are deleted")
+    
+    def resetSegmenationSequenceIndex(self):
+        """
+        Set the default item for segmenation browser.
+        """
+        parameterNode = self.getParameterNode()
+        
+        segmentationBrowserNode = parameterNode.segmentationBrowser
+        
+        if not segmentationBrowserNode:
+            logging.warning("Segmentation browser is invalid")
+        else:
+            slicer.app.pauseRender()
+            segmentationBrowserNode.SelectFirstItem()
+            slicer.app.resumeRender()
+            segmentationBrowserNode.SelectLastItem()    
+    
+    def resetInputSequenceIndex(self):
+        """
+        Set the default item for input browser.
+        """
+        parameterNode = self.getParameterNode()
+        
+        inputBrowserNode = parameterNode.inputBrowser
+        
+        if not inputBrowserNode:
+            logging.warning("Input browser is invalid")
+        else:
+            currentItemNumber = inputBrowserNode.GetSelectedItemNumber()
+            inputBrowserNode.SelectFirstItem()
+            inputBrowserNode.SetSelectedItemNumber(currentItemNumber)
+            
     def reconstructSegmentations(self):
         """
         Reconstruct a volume from the recorded segmentations.
