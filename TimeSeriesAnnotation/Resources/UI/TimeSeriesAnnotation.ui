@@ -64,7 +64,7 @@
         </size>
        </property>
        <property name="text">
-        <string>2D/3D model</string>
+        <string>2D/3D US model</string>
        </property>
        <property name="checkable">
         <bool>true</bool>
@@ -184,6 +184,9 @@
          <bool>false</bool>
         </property>
         <property name="removeEnabled">
+         <bool>false</bool>
+        </property>
+        <property name="selectNodeUponCreation">
          <bool>false</bool>
         </property>
         <property name="SlicerParameterName" stdset="0">
@@ -344,6 +347,13 @@
       </size>
      </property>
     </spacer>
+   </item>
+   <item>
+    <widget class="QPushButton" name="deleteAllRecordedButton">
+     <property name="text">
+      <string>Delete all recorded segmentations</string>
+     </property>
+    </widget>
    </item>
    <item>
     <widget class="QPushButton" name="sampleDataButton">
