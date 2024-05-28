@@ -25,12 +25,6 @@ from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
 from DICOMLib import DICOMUtils
 
-try:
-    import cv2
-except ImportError:
-    slicer.util.pip_install('opencv-python')
-    import cv2
-
 #
 # AnonymizeUltrasound
 #
@@ -66,11 +60,23 @@ def performPostModuleDiscoveryTasks():
     """
     Perform some initialization tasks that require the application to be fully started up.
     """
+    logging.info("AnonymizeUltrasound.performPostModuleDiscoveryTasks()")
+    
+    global pd
     try:
         import pandas as pd
     except ImportError:
+        logging.info("AnonymizeUltrasound: Pandas not found, installing...")
         slicer.util.pip_install('pandas')
         import pandas as pd
+        
+    global cv2
+    try:
+        import cv2
+    except ImportError:
+        slicer.util.pip_install('opencv-python')
+        import cv2
+
     
 #
 # AnonymizeUltrasoundWidget
@@ -522,7 +528,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             self.ui.labelsCollapsibleButton.collapsed = True
 
     def onNextSeriesButton(self):
-        logging.info('Next study button pressed')
+        logging.info('onNextSeriesButton')
 
         dialog = self.createWaitDialog("Loading series", "Please wait until the DICOM instance is loaded...")
 
@@ -893,28 +899,9 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         :param keep_folders: If True, output files are expected by the same name in the same subfolders as input files.
         :return:  index for dicomDf that points to the next row that needs to be processed.
         """
-        # If there is no input parsed, no need to check output
-        numSeries = self.getNumberOfSeries()
-        if numSeries < 1:
-            return 0
-        
-        # Iterate through the input files based on self.dicomDf and check if the expected output file exists.
-        for index, row in self.dicomDf.iterrows():
-            input_file = row['Filepath']
-            
-            if keep_folders:
-                output_fullpath = os.path.join(output_folder, os.path.relpath(input_file, input_folder))
-            else:
-                output_path = output_folder
-                output_filename = row['AnonFilename']
-                output_fullpath = os.path.join(output_path, output_filename)
-            
-            if not os.path.exists(output_fullpath):
-                self.nextDicomDfIndex = index
-                return index
-            else:
-                # Output file already exists, skip processing
-                continue
+        self.nextDicomDfIndex = None
+        self.incrementDicomDfIndex(input_folder, output_folder, skip_existing=True, keep_folders=keep_folders)
+        return self.nextDicomDfIndex
     
     def getNumberOfSeries(self):
         """
@@ -1104,11 +1091,9 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         tolerancePixels = round(0.1 * maskHeight)  #todo: Make this tolerance value a setting
         if abs(topLeft[0] - bottomLeft[0]) < tolerancePixels and abs(topRight[0] - bottomRight[0]) < tolerancePixels:
             # Mask is a rectangle
-            logging.info("Mask is a rectangle")
             mask_array = self.createRectangleMask(imageArray, topLeft, topRight, bottomLeft, bottomRight)
         else:
             # Mask is a fan
-            logging.info("Mask is a fan")
             mask_array = self.createFanMask(imageArray, topLeft, topRight, bottomLeft, bottomRight, value=1)
 
         # Create a copy of the mask_array to use for computing the contour of the mask
@@ -1849,6 +1834,49 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         self.setupScene(maskControlPointsList=maskFiducialsList)
 
         logging.info(f"Restored {len(maskFiducialsList)} mask fiducials")   
+    
+    def incrementDicomDfIndex(self, input_directory, output_directory, skip_existing=False, keep_folders=False):
+        """
+        Increment the index of the DICOM dataframe. If skipExistingOutput is True, then skip the rows that have already been processed.
+        
+        :param skip_existing: If True, skip the rows that have already been processed.
+        :param keep_folders: If True, keep the folder structure of the input DICOM files in the output directory.
+        :return: None
+        """
+        listOfIndices = self.dicomDf.index.tolist()
+        listOfIndices.sort()
+        
+        if self.nextDicomDfIndex is None:
+            nextIndexIndex = 0
+        else:
+            nextIndexIndex = listOfIndices.index(self.nextDicomDfIndex)
+            nextIndexIndex += 1
+        
+        if skip_existing:
+            while nextIndexIndex < len(listOfIndices):
+                nextDicomDfRow = self.dicomDf.iloc[listOfIndices[nextIndexIndex]]
+                input_file = nextDicomDfRow['Filepath']
+                
+                # Check if the output file already exists
+                if keep_folders:
+                    relative_path = os.path.relpath(input_file, input_directory)
+                    output_fullpath = os.path.join(output_directory, relative_path)
+                else:
+                    output_path = output_directory
+                    output_filename = nextDicomDfRow['AnonFilename']
+                    output_fullpath = os.path.join(output_path, output_filename)
+                
+                # Make sure output_fullpath has a .dcm extension
+                if not output_fullpath.endswith('.dcm'):
+                    output_fullpath += '.dcm'
+                
+                if not os.path.exists(output_fullpath):
+                    break
+                
+                nextIndexIndex += 1
+        
+        self.nextDicomDfIndex = listOfIndices[nextIndexIndex]
+        logging.info(f"Next DICOM dataframe index: {self.nextDicomDfIndex}")
         
     def loadNextSequence(self):
         """
@@ -1917,7 +1945,12 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             del self.currentDicomHeader["Pixel Data"]
 
         # Increment nextDicomDfIndex
-        self.nextDicomDfIndex += 1
+        settings = qt.QSettings()
+        continueProgress = settings.value('AnonymizeUltrasound/ContinueProgress', "True") == "True"
+        keepFolders = settings.value('AnonymizeUltrasound/KeepFolderStructure', "True") == "True"
+        inputDirectory = settings.value('AnonymizeUltrasound/InputDirectory', "")
+        outputDirectory = settings.value('AnonymizeUltrasound/OutputDirectory', "")
+        self.incrementDicomDfIndex(inputDirectory, outputDirectory, skip_existing=continueProgress, keep_folders=keepFolders)
 
         # Delete files from temporary folder
         for file in os.listdir(tempDicomDir):
