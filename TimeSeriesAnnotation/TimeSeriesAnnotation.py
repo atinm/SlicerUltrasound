@@ -455,7 +455,7 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         else:
             self.logic.eraseCurrentSegmentation()
             currentItemNum = self._parameterNode.inputBrowser.GetSelectedItemNumber()
-            newItemNum = self._parameterNode.inputBrowser.SelectNextItem(self._parameterNode.inputSkipNumber)
+            newItemNum = self._parameterNode.inputBrowser.SelectNextItem(self._parameterNode.inputSkipNumber + 1)
         
         # Check if sequence browser wrapped around.
         
