@@ -228,6 +228,7 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         self.ui.cycleLayoutButton.connect("clicked(bool)", self.onCycleLayoutButton)
         self.ui.sliceViewButton.connect("toggled(bool)", self.onSliceViewButton)
         self.ui.reviseButton.connect("toggled(bool)", self.onReviseButton)
+        self.ui.removeFrameButton.connect("clicked(bool)", self.onRemoveFrameButton)
         self.ui.overlayButton.connect("toggled(bool)", self.onOverlayButton)
         self.ui.reconstructSegmentationsButton.connect("clicked(bool)", self.onReconstructSegmentationsButton)
         
@@ -381,9 +382,11 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         if self._parameterNode.reviseSegmentations:
             self.ui.reviseButton.checked = True
             self.ui.reviseButton.text = "Stop revising"
+            self.ui.removeFrameButton.enabled = True
         else:
             self.ui.reviseButton.checked = False
             self.ui.reviseButton.text = "Revise segmentations"
+            self.ui.removeFrameButton.enabled = False
         
         # Update selected segmentation node in segment editor
         if self._parameterNode and self._parameterNode.segmentation:
@@ -537,6 +540,32 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             self._parameterNode.segmentation.SetAttribute(self.logic.ORIGINAL_IMAGE_INDEX, "None")
             self.logic.resetInputSequenceIndex()
     
+    def onRemoveFrameButton(self) -> None:
+        """
+        Callback for button: remove current frame from the segmentation sequence browser.
+        """
+        if not self._parameterNode:
+            logging.error("Parameter node is invalid")
+            return
+        
+        if not self._parameterNode.segmentationBrowser:
+            logging.error("Segmentation browser is invalid")
+            return
+        
+        # Use a dialog to confirm deletion
+        msgBox = qt.QMessageBox()
+        msgBox.setText("Remove current frame")
+        msgBox.setInformativeText("Are you sure you want to remove the current frame?")
+        msgBox.setStandardButtons(qt.QMessageBox.Ok | qt.QMessageBox.Cancel)
+        msgBox.setDefaultButton(qt.QMessageBox.Cancel)
+        ret = msgBox.exec_()
+        
+        if ret == qt.QMessageBox.Cancel:
+            logging.info("Remove current frame is cancelled")
+            return
+        
+        self.logic.removeCurrentSegmentationFrame()
+        
     def onOverlayButton(self, checked) -> None:
         """Show/hide slice views when user clicks "Show Slice Views" button."""
         self._parameterNode.showOverlay = checked
@@ -673,6 +702,32 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
             if num_segments > 1:
                 selectedSegmentation.Modified()
     
+    
+    def removeCurrentSegmentationFrame(self):
+        """
+        Remove current frame from the segmentation sequences.
+        """
+        parameterNode = self.getParameterNode()
+        
+        if not parameterNode.segmentationBrowser:
+            logging.error("Segmentation browser is invalid")
+            return
+        
+        sequenceNodes = vtk.vtkCollection()
+        parameterNode.segmentationBrowser.GetSynchronizedSequenceNodes(sequenceNodes, True)
+        
+        currentItemValues = []
+        for i in range(sequenceNodes.GetNumberOfItems()):
+            sequenceNode = sequenceNodes.GetItemAsObject(i)
+            currentItemNumber = parameterNode.segmentationBrowser.GetSelectedItemNumber()
+            currentItemValue = sequenceNode.GetNthIndexValue(currentItemNumber)
+            currentItemValues.append(currentItemValue)
+        
+        for i in range(sequenceNodes.GetNumberOfItems()):
+            sequenceNode = sequenceNodes.GetItemAsObject(i)
+            sequenceNode.RemoveDataNodeAtValue(currentItemValues[i])
+        
+        
     def deteleAllRecordedSegmentations(self):
         """
         Delete all recorded segmentations in the segmentation browser.

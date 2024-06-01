@@ -99,11 +99,33 @@
      </item>
      <item row="2" column="0" colspan="2">
       <widget class="QPushButton" name="reviseButton">
+       <property name="minimumSize">
+        <size>
+         <width>0</width>
+         <height>36</height>
+        </size>
+       </property>
        <property name="text">
         <string>Revise/edit past segmentations</string>
        </property>
        <property name="checkable">
         <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+     <item row="2" column="2">
+      <widget class="QPushButton" name="removeFrameButton">
+       <property name="enabled">
+        <bool>false</bool>
+       </property>
+       <property name="minimumSize">
+        <size>
+         <width>0</width>
+         <height>36</height>
+        </size>
+       </property>
+       <property name="text">
+        <string>Remove frame</string>
        </property>
       </widget>
      </item>
