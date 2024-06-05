@@ -303,7 +303,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         """
         # Make sure parameter node exists and observed
         self.initializeParameterNode()
-
+        
         # Collapse DataProbe widget
         mw = slicer.util.mainWindow()
         if mw:
@@ -509,7 +509,9 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         
         if self.ui.continueProgressCheckBox.checked:
             numDone = self.logic.updateProgressDicomDf(inputDirectory, outputDirectory, self.ui.keepFoldersCheckBox.checked)
-            if numDone < 1:
+            if numDone is None:
+                statusText += '\nAll files have been processed. Cannot load more files from input folder.'
+            elif numDone < 1:
                 statusText += '\nNo files already processed. Starting from first in alphabetical order.'
             else:
                 statusText += '\n' + str(numDone) + ' files already processed in output folder. Continue at next.'
@@ -538,6 +540,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         if currentDicomDfIndex is None:
             statusText = "No more series to load"
             self.ui.statusLabel.text = statusText
+            dialog.close()
             return
         else:
             self.ui.progressBar.value = currentDicomDfIndex
@@ -1875,8 +1878,12 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
                 
                 nextIndexIndex += 1
         
-        self.nextDicomDfIndex = listOfIndices[nextIndexIndex]
-        logging.info(f"Next DICOM dataframe index: {self.nextDicomDfIndex}")
+        if nextIndexIndex < len(listOfIndices):
+            self.nextDicomDfIndex = listOfIndices[nextIndexIndex]
+            logging.info(f"Next DICOM dataframe index: {self.nextDicomDfIndex}")
+        else:
+            self.nextDicomDfIndex = None
+            logging.info("No more DICOM files to process")
         
     def loadNextSequence(self):
         """
@@ -1889,7 +1896,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
 
         # Get next filepath from dicomDf. If nextDicomDfIndex is larger than the number of rows in dicomDf, then
         # return None.
-        if self.nextDicomDfIndex >= len(self.dicomDf):
+        if self.nextDicomDfIndex is None or self.nextDicomDfIndex >= len(self.dicomDf):
             return None
         nextDicomDfRow = self.dicomDf.iloc[self.nextDicomDfIndex]
 
@@ -1950,7 +1957,10 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         keepFolders = settings.value('AnonymizeUltrasound/KeepFolderStructure', "True") == "True"
         inputDirectory = settings.value('AnonymizeUltrasound/InputDirectory', "")
         outputDirectory = settings.value('AnonymizeUltrasound/OutputDirectory', "")
-        self.incrementDicomDfIndex(inputDirectory, outputDirectory, skip_existing=continueProgress, keep_folders=keepFolders)
+        nextIndex = self.incrementDicomDfIndex(inputDirectory, outputDirectory, skip_existing=continueProgress, keep_folders=keepFolders)
+        if nextIndex is None:
+            logging.info("No more DICOM files to process")
+            return None
 
         # Delete files from temporary folder
         for file in os.listdir(tempDicomDir):
