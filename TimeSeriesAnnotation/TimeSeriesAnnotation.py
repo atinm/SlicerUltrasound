@@ -401,6 +401,19 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
                 sliceWidget.sliceLogic().GetSliceCompositeNode().SetBackgroundVolumeID(self._parameterNode.inputVolume.GetID())
             self.ui.segmentEditorWidget.setSourceVolumeNode(self._parameterNode.inputVolume)
         
+        # Update volume reslice driver
+        if self._parameterNode and self._parameterNode.inputVolume:
+            redNode = slicer.mrmlScene.GetNodeByID('vtkMRMLSliceNodeRed')
+            redNode.SetSliceResolutionMode(slicer.vtkMRMLSliceNode.SliceResolutionMatchVolumes)
+            greenNode = slicer.mrmlScene.GetNodeByID('vtkMRMLSliceNodeGreen')
+            yellowNode = slicer.mrmlScene.GetNodeByID('vtkMRMLSliceNodeYellow')
+            resliceLogic = slicer.modules.volumereslicedriver.logic()
+            sliceNodeList = [redNode, greenNode, yellowNode]
+            for sliceNode in sliceNodeList:
+                resliceLogic.SetDriverForSlice(self._parameterNode.inputVolume.GetID(), sliceNode)
+                resliceLogic.SetModeForSlice(6, sliceNode)
+                resliceLogic.SetFlipForSlice(True, sliceNode)
+        
         # Show overlay foreground volume in 2D views
         layoutManager = slicer.app.layoutManager()
         compositeNode = layoutManager.sliceWidget('Red').sliceLogic().GetSliceCompositeNode()
