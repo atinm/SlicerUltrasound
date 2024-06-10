@@ -149,6 +149,7 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
     """
     
     LAYOUT_2D3D = 501
+    OUTPUT_FOLDER_SETTING = "TimeSeriesAnnotation/OutputFolder"
     
     def __init__(self, parent=None) -> None:
         """Called when the user opens the module the first time and the widget is initialized."""
@@ -230,10 +231,16 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         self.ui.reviseButton.connect("toggled(bool)", self.onReviseButton)
         self.ui.removeFrameButton.connect("clicked(bool)", self.onRemoveFrameButton)
         self.ui.overlayButton.connect("toggled(bool)", self.onOverlayButton)
+        self.ui.exportSequenceButton.connect("clicked(bool)", self.onExportSequenceButton)
         self.ui.reconstructSegmentationsButton.connect("clicked(bool)", self.onReconstructSegmentationsButton)
         
         self.ui.deleteAllRecordedButton.connect("clicked(bool)", self.onDeleteAllRecordedButton)
         self.ui.sampleDataButton.connect("clicked(bool)", self.onSampleDataButton)
+        
+        settings = qt.QSettings()
+        if settings.contains(self.OUTPUT_FOLDER_SETTING):
+            self.ui.outputDirectoryButton.directory = settings.value(self.OUTPUT_FOLDER_SETTING)
+        self.ui.outputDirectoryButton.connect("directoryChanged(QString)", self.onOutputPathChanged)
         
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -401,6 +408,19 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
                 sliceWidget.sliceLogic().GetSliceCompositeNode().SetBackgroundVolumeID(self._parameterNode.inputVolume.GetID())
             self.ui.segmentEditorWidget.setSourceVolumeNode(self._parameterNode.inputVolume)
         
+        # Update volume reslice driver
+        if self._parameterNode and self._parameterNode.inputVolume:
+            redNode = slicer.mrmlScene.GetNodeByID('vtkMRMLSliceNodeRed')
+            redNode.SetSliceResolutionMode(slicer.vtkMRMLSliceNode.SliceResolutionMatchVolumes)
+            greenNode = slicer.mrmlScene.GetNodeByID('vtkMRMLSliceNodeGreen')
+            yellowNode = slicer.mrmlScene.GetNodeByID('vtkMRMLSliceNodeYellow')
+            resliceLogic = slicer.modules.volumereslicedriver.logic()
+            sliceNodeList = [redNode, greenNode, yellowNode]
+            for sliceNode in sliceNodeList:
+                resliceLogic.SetDriverForSlice(self._parameterNode.inputVolume.GetID(), sliceNode)
+                resliceLogic.SetModeForSlice(6, sliceNode)
+                resliceLogic.SetFlipForSlice(True, sliceNode)
+        
         # Show overlay foreground volume in 2D views
         layoutManager = slicer.app.layoutManager()
         compositeNode = layoutManager.sliceWidget('Red').sliceLogic().GetSliceCompositeNode()
@@ -525,6 +545,11 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         # Close the dialog
         msgBox.close()
     
+    def onOutputPathChanged(self, text) -> None:
+        logging.info(f"onOutputPathChanged: {text}")
+        settings = qt.QSettings()
+        settings.setValue(self.OUTPUT_FOLDER_SETTING, text)
+    
     def onSliceViewButton(self, checked) -> None:
         """Show/hide slice views when user clicks "Show Slice Views" button."""
         self._parameterNode.showUltrasoundModel = checked
@@ -570,6 +595,25 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         """Show/hide slice views when user clicks "Show Slice Views" button."""
         self._parameterNode.showOverlay = checked
     
+    def onExportSequenceButton(self) -> None:
+        """Export the recorded segmentations to a numpy file."""
+        logging.info("onExportSequenceButton")
+        
+        # Create a model dialog to inform the user that this process may take a couple of minutes
+        msgBox = qt.QMessageBox()
+        msgBox.setText("Exporting segmentations")
+        msgBox.setInformativeText("This process may take a couple of minutes")
+        msgBox.setStandardButtons(qt.QMessageBox.Ok)
+        msgBox.exec_()
+        
+        # Export segmentations
+        outputFolder = self.ui.outputDirectoryButton.directory
+        baseName = self.ui.filenamePrefixLineEdit.text
+        self.logic.exportArrays(outputFolder, baseName)
+        
+        # Close the dialog
+        msgBox.close()
+        
     def onReconstructSegmentationsButton(self) -> None:
         # Create a model dialog to inform the user that this process may take a couple of minutes
         msgBox = qt.QMessageBox()
@@ -702,7 +746,6 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
             if num_segments > 1:
                 selectedSegmentation.Modified()
     
-    
     def removeCurrentSegmentationFrame(self):
         """
         Remove current frame from the segmentation sequences.
@@ -727,7 +770,6 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
             sequenceNode = sequenceNodes.GetItemAsObject(i)
             sequenceNode.RemoveDataNodeAtValue(currentItemValues[i])
         
-        
     def deteleAllRecordedSegmentations(self):
         """
         Delete all recorded segmentations in the segmentation browser.
@@ -748,6 +790,93 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
             sequenceNode.RemoveAllDataNodes()
         
         logging.info("All recorded segmentations are deleted")
+    
+    def exportArrays(self, outputFolder, baseName, useCompression=True):
+        """
+        Exports data to the outputPath folder. All ultrasound images are exported from the input sequence into a np array of size (num_frames, num_rows, num_cols, 1).
+        The same number and size of frames are exported in a segmentation array, even those that were not segmented.
+        An indices array is exported as a third file that indicates which frames have been segmented. These should be valid indices in the first dimension of the exported arrays.
+        :param outputFolder: the path to the folder where the data should be exported.
+        :param baseName: the base name of the exported files.
+        :param useCompression: if True, the data is exported as a compressed npz file. Otherwise, the data is exported as a npy file.
+        """
+        parameterNode = self.getParameterNode()
+        
+        inputBrowserNode = parameterNode.inputBrowser
+        inputImage = parameterNode.inputVolume
+        segmentationBrowserNode = parameterNode.segmentationBrowser
+        segmentation = parameterNode.segmentation
+        
+        # Make sure output folder exists
+        if not os.path.exists(outputFolder):
+            logging.info(f"Creating output folder: {outputFolder}")
+            os.makedirs(outputFolder)
+        
+        # Create temporary labelmap node
+        labelmapNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
+        
+        if useCompression:
+            segmentationFilepath = os.path.join(outputFolder, f"{baseName}_segmentation.npz")
+            imageFilepath = os.path.join(outputFolder, f"{baseName}_ultrasound.npz")
+            indicesFilepath = os.path.join(outputFolder, f"{baseName}_indices.npz")
+            transformFilepath = os.path.join(outputFolder, f"{baseName}_transform.npz")
+        else:
+            segmentationFilepath = os.path.join(outputFolder, f"{baseName}_segmentation.npy")
+            imageFilepath = os.path.join(outputFolder, f"{baseName}_ultrasound.npy")
+            indicesFilepath = os.path.join(outputFolder, f"{baseName}_indices.npy")
+            transformFilepath = os.path.join(outputFolder, f"{baseName}_transform.npy")
+        
+        # Calculate shape of output arrays
+        numFrames = inputBrowserNode.GetNumberOfItems()
+        frameSize = slicer.util.arrayFromVolume(inputImage).shape
+        frameRows = frameSize[1]
+        frameCols = frameSize[2]
+        
+        ultrasoundArray = np.zeros((numFrames, frameRows, frameCols, 1), dtype=np.uint8)  # Create empty arrays to hold ultrasound images
+        transformArray = np.zeros((numFrames, 4, 4), dtype=np.float32)  # Create empty arrays to hold transforms
+        
+        inputBrowserNode.SelectFirstItem()
+        for i in range(numFrames):
+            ultrasoundArray[i, :, :, 0] = slicer.util.arrayFromVolume(inputImage)[0, :, :]
+            transformNodeId = inputImage.GetTransformNodeID()
+            if transformNodeId:
+                transformNode = slicer.mrmlScene.GetNodeByID(transformNodeId)
+                transformArray[i, :, :] = slicer.util.arrayFromTransformMatrix(transformNode, toWorld=True)
+            else:
+                transformArray[i, :, :] = np.eye(4)
+            inputBrowserNode.SelectNextItem()
+            # slicer.app.processEvents()
+        
+        if useCompression:
+            np.savez_compressed(imageFilepath, ultrasoundArray)
+            np.savez_compressed(transformFilepath, transformArray)
+        else:
+            np.save(imageFilepath, ultrasoundArray)  # Save ultrasound images
+            np.save(transformFilepath, transformArray)  # Save transforms
+        
+        # Prepare segmentation indices array
+        numSegmentationItems = segmentationBrowserNode.GetNumberOfItems()
+        frameIndices = np.zeros((numSegmentationItems), dtype=np.int32)  # Create empty array to hold indices of segmented frames
+        
+        # Iterate through each item in the segmentation browser and convert the segmentations to volumes
+        segmentationLogic = slicer.modules.segmentations.logic()
+        segmentationArray = np.zeros((numFrames, frameRows, frameCols, 1), dtype=np.uint8)  # Create empty arrays to hold segmentations
+        segmentationBrowserNode.SelectFirstItem()
+        for i in range(numSegmentationItems):
+            segmentationLogic.ExportAllSegmentsToLabelmapNode(segmentation, labelmapNode, slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY)
+            frameIndex = int(segmentation.GetAttribute(self.ORIGINAL_IMAGE_INDEX))
+            frameIndices[i] = frameIndex
+            segmentationArray[frameIndex, :, :, 0] = slicer.util.arrayFromVolume(labelmapNode)
+            segmentationBrowserNode.SelectNextItem()
+            # slicer.app.processEvents()
+        
+        if useCompression:
+            np.savez_compressed(segmentationFilepath, segmentationArray)
+            np.savez_compressed(indicesFilepath, frameIndices)
+        else:
+            np.save(segmentationFilepath, segmentationArray)  # Save segmentations
+            np.save(indicesFilepath, frameIndices)  # Save indices
+        
     
     def resetSegmenationSequenceIndex(self):
         """

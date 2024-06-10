@@ -14,7 +14,7 @@ from slicer.parameterNodeWrapper import (
     WithinRange,
 )
 
-from slicer import vtkMRMLScalarVolumeNode, vtkMRMLSequenceBrowserNode, vtkMRMLModelNode, vtkMRMLLinearTransformNode
+from slicer import vtkMRMLScalarVolumeNode, vtkMRMLSequenceBrowserNode, vtkMRMLModelNode, vtkMRMLLinearTransformNode, vtkMRMLMarkupsFiducialNode
 
 
 #
@@ -37,9 +37,15 @@ class SceneCleaner(ScriptedLoadableModule):
         # TODO: update with short description of the module and a link to online module documentation
         # _() function marks text as translatable to other languages
         self.parent.helpText = _("""
-This is an example of scripted loadable module bundled in an extension.
-See more information in <a href="https://github.com/organization/projectname#SceneCleaner">module documentation</a>.
-""")
+                                 <p>
+                                 This module cleans the scene by removing unnecessary nodes, setting up transformation hierarchy, and renaming nodes.<br>
+                                 The input sequence browser node and the ultarsound image node must be selected. Other selections are optional.
+                                 The module will remove all noded that are not selected.
+                                 </p>
+                                 <p>
+                                 See more information in <a href="https://github.com/SlicerUltrasound/SlicerUltrasound?tab=readme-ov-file#ultrasound-extension">extension documentation</a>.
+                                 </p>
+                                 """)
         # TODO: replace with organization, grant and thanks
         self.parent.acknowledgementText = _("""
 This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc., Andras Lasso, PerkLab,
@@ -119,6 +125,8 @@ class SceneCleanerParameterNode:
     inputSequenceBrowser: vtkMRMLSequenceBrowserNode
     # imageThreshold: Annotated[float, WithinRange(-100, 500)] = 100
     ctVolume: vtkMRMLScalarVolumeNode
+    usVolume: vtkMRMLScalarVolumeNode
+    landmarksMarkup: vtkMRMLMarkupsFiducialNode
     atlasModel: vtkMRMLModelNode
     usImage: vtkMRMLScalarVolumeNode
     ctToUsTransform: vtkMRMLLinearTransformNode
@@ -302,7 +310,47 @@ class SceneCleanerLogic(ScriptedLoadableModuleLogic):
                 numSequenceBrowsersRemoved += 1
         
         logging.info(f"Removed {numSequenceBrowsersRemoved} unused sequence browser nodes")
+    
+    def _RemoveUnusedModels(self) -> None:
+        """
+        Remove models that are not used in the scene.
+        """
+        atlasModel = self.getParameterNode().atlasModel
+        allModels = slicer.util.getNodesByClass("vtkMRMLModelNode")
+        numModelsRemoved = 0
+        for modelNode in allModels:
+            if atlasModel is not None and modelNode.GetID() != atlasModel.GetID():
+                slicer.mrmlScene.RemoveNode(modelNode)
+                numModelsRemoved += 1
         
+        logging.info(f"Removed {numModelsRemoved} unused models")    
+    
+    def _RemoveUnusedMarkups(self) -> None:
+        """
+        Remove markups that are not used in the scene.
+        """
+        landmarksMarkup = self.getParameterNode().landmarksMarkup
+        allMarkups = slicer.util.getNodesByClass("vtkMRMLMarkupsFiducialNode")
+        numMarkupsRemoved = 0
+        for markupNode in allMarkups:
+            if landmarksMarkup is not None and markupNode.GetID() != landmarksMarkup.GetID():
+                slicer.mrmlScene.RemoveNode(markupNode)
+                numMarkupsRemoved += 1
+        
+        # Remove all curve markups
+        allMarkups = slicer.util.getNodesByClass("vtkMRMLMarkupsCurveNode")
+        for markupNode in allMarkups:
+            slicer.mrmlScene.RemoveNode(markupNode)
+            numMarkupsRemoved += 1
+        
+        # Remove all ROI markup nodes, unless their name contains "Reconstructor"
+        allMarkups = slicer.util.getNodesByClass("vtkMRMLMarkupsROINode")
+        for markupNode in allMarkups:
+            if "Reconstructor" not in markupNode.GetName():
+                slicer.mrmlScene.RemoveNode(markupNode)
+                numMarkupsRemoved += 1
+        
+        logging.info(f"Removed {numMarkupsRemoved} unused markups")
     
     def cleanNodes(self, scanName, patientId=None) -> None:
         """
@@ -316,7 +364,18 @@ class SceneCleanerLogic(ScriptedLoadableModuleLogic):
             raise ValueError("Input US image is invalid")
         
         self._RemoveUnusedSequenceBrowsers()
-
+        
+        # Rename atlas model if it is set
+        if parameterNode.atlasModel:
+            parameterNode.atlasModel.SetName(f"{patientId}_{scanName}_AtlasModel")
+        
+        self._RemoveUnusedModels()
+        
+        # Rename markups if set
+        if parameterNode.landmarksMarkup:
+            parameterNode.landmarksMarkup.SetName(f"{patientId}_{scanName}_Landmarks")
+        
+        self._RemoveUnusedMarkups()
 
 
 #
