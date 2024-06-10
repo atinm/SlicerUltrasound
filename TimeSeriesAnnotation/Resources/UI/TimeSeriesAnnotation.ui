@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>465</width>
-    <height>915</height>
+    <height>919</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -354,11 +354,18 @@
         </property>
        </widget>
       </item>
-      <item row="1" column="1">
-       <widget class="ctkPathLineEdit" name="outputPathLineEdit"/>
-      </item>
       <item row="0" column="1">
        <widget class="QLineEdit" name="filenamePrefixLineEdit"/>
+      </item>
+      <item row="1" column="1">
+       <widget class="ctkDirectoryButton" name="outputDirectoryButton">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+       </widget>
       </item>
      </layout>
     </widget>
@@ -400,9 +407,9 @@
    <container>1</container>
   </customwidget>
   <customwidget>
-   <class>ctkPathLineEdit</class>
+   <class>ctkDirectoryButton</class>
    <extends>QWidget</extends>
-   <header>ctkPathLineEdit.h</header>
+   <header>ctkDirectoryButton.h</header>
   </customwidget>
   <customwidget>
    <class>qMRMLNodeComboBox</class>
