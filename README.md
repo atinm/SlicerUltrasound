@@ -23,7 +23,7 @@ Options under Settings collapsible button:
 ![2024-04-14_AnonymizeUltrasound](https://github.com/SlicerUltrasound/SlicerUltrasound/assets/2071850/52ff3ab6-94ea-41d5-88c5-596b66d6a659)
 
 ## M-mode Analysis
-This module generates an M-mode image from a B-mode loop along a user-specified line. The line can be arbitrary, not just ultrasound scan lines. Measurements on the M-mode image can be saved.
+This module generates an M-mode image from a B-mode loop along a user-specified line (see [US types](https://en.wikipedia.org/wiki/Medical_ultrasound#Types)). The line can be arbitrary, not just ultrasound scan lines. Measurements on the M-mode image can be saved.
 
 ### How to use Mmode Analysis module
 1. Select **Output folder** where exported files will be saved.
