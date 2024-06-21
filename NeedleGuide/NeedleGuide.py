@@ -118,6 +118,7 @@ class NeedleGuideParameterNode:
     targetMarkups: vtkMRMLMarkupsFiducialNode
     blurSigma: Annotated[float, WithinRange(0, 5)] = 0.5
     reconstructedVolume: vtkMRMLScalarVolumeNode
+    opacityThreshold: Annotated[int, WithinRange(0, 255)] = 127
     invertThreshold: bool = False
     
 
@@ -166,14 +167,22 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
 
-        # Buttons
+        # UI widget connections
         self.ui.applyButton.connect("clicked(bool)", self.onReconstructionButton)
+        self.ui.volumeOpacitySlider.connect("valueChanged(int)", self.onVolumeOpacitySlider)
         
         self.addCustomLayouts()
         slicer.app.layoutManager().setLayout(self.LAYOUT_2D3D)
         
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
+        
+        # Collapse DataProbe widget
+        mw = slicer.util.mainWindow()
+        if mw:
+            w = slicer.util.findChild(mw, "DataProbeCollapsibleWidget")
+            if w:
+                w.collapsed = True
     
     def addCustomLayouts(self):
         layout2D3D = \
@@ -261,24 +270,44 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self._onParameterNodeModified()
 
     def _onParameterNodeModified(self, caller=None, event=None) -> None:
+        """
+        Update GUI based on parameter node changes.
+        """
+        # Update volume reconstruction button
         if self._parameterNode and self._parameterNode.inputVolume and self._parameterNode.predictionVolume and self._parameterNode.reconstructorNode:
             if self.logic.reconstructing:
                 self.ui.applyButton.text = _("Stop volume reconstruction")
                 self.ui.applyButton.toolTip = _("Stop volume reconstruction")
+                self.logic.startVolumeReconstruction()
             else:
                 self.ui.applyButton.text = _("Start volume reconstruction")
                 self.ui.applyButton.toolTip = _("Start volume reconstruction")
+                self.logic.stopVolumeReconstruction()
             self.ui.applyButton.enabled = True
         else:
             self.ui.applyButton.toolTip = _("Select input nodes to enable volume reconstruction")
             self.ui.applyButton.enabled = False
-
+        
+        # Update opacity threshold slider
+        if self._parameterNode and self._parameterNode.reconstructedVolume:
+            self.ui.volumeOpacitySlider.enabled = True
+        else:
+            self.ui.volumeOpacitySlider.enabled = False
+        
     def onReconstructionButton(self) -> None:
         """Run processing when user clicks button."""
         # Start volume reconstruction if not already started. Stop otherwise.
         
-        pass
-
+        if self.logic.reconstructing:
+            self.logic.stopVolumeReconstruction()
+        else:
+            self.logic.startVolumeReconstruction()
+    
+    def onVolumeOpacitySlider(self, value: int) -> None:
+        """Update volume rendering opacity threshold."""
+        if self._parameterNode and self._parameterNode.reconstructedVolume:
+            self.logic.setVolumeRenderingProperty(self._parameterNode.reconstructedVolume, window=200, level=value)
+    
 #
 # NeedleGuideLogic
 #
@@ -302,7 +331,63 @@ class NeedleGuideLogic(ScriptedLoadableModuleLogic):
 
     def getParameterNode(self):
         return NeedleGuideParameterNode(super().getParameterNode())
+    
+    def startVolumeReconstruction(self):
+        """
+        Start live volume reconstruction.
+        """
+        parameterNode = self.getParameterNode()
+        self.reconstructing = True
+        reconstructionLogic = slicer.modules.volumereconstruction.logic()
+        reconstructionLogic.StartLiveVolumeReconstruction(parameterNode.reconstructorNode)
+        outputVolume = parameterNode.reconstructorNode.GetOutputVolumeNode()
+        self.setVolumeRenderingProperty(outputVolume, window=200, level=parameterNode.opacityThreshold)
+        parameterNode.reconstructedVolume = outputVolume
+    
+    def stopVolumeReconstruction(self):
+        """
+        Stop live volume reconstruction.
+        """
+        parameterNode = self.getParameterNode()
+        self.reconstructing = False
+        reconstructionLogic = slicer.modules.volumereconstruction.logic()
+        reconstructionLogic.StopLiveVolumeReconstruction(parameterNode.reconstructorNode)
+    
+    def setVolumeRenderingProperty(self, volumeNode, window=255, level=127):
+        volumeRenderingLogic = slicer.modules.volumerendering.logic()
+        volumeRenderingDisplayNode = volumeRenderingLogic.GetFirstVolumeRenderingDisplayNode(volumeNode)
+        if not volumeRenderingDisplayNode:
+            volumeRenderingDisplayNode = volumeRenderingLogic.CreateDefaultVolumeRenderingNodes(volumeNode)
+            
+        upper = min(255 + window, level + window/2)
+        lower = max(0 - window, level - window/2)
 
+        if upper <= lower:
+            upper = lower + 1  # Make sure the displayed intensity range is valid.
+
+        p0 = lower
+        p1 = lower + (upper - lower)*0.15
+        p2 = lower + (upper - lower)*0.4
+        p3 = upper
+
+        opacityTransferFunction = vtk.vtkPiecewiseFunction()
+        opacityTransferFunction.AddPoint(p0, 0.0)
+        opacityTransferFunction.AddPoint(p1, 0.2)
+        opacityTransferFunction.AddPoint(p2, 0.6)
+        opacityTransferFunction.AddPoint(p3, 1)
+
+        colorTransferFunction = vtk.vtkColorTransferFunction()
+        colorTransferFunction.AddRGBPoint(p0, 0.20, 0.10, 0.00)
+        colorTransferFunction.AddRGBPoint(p1, 0.65, 0.45, 0.15)
+        colorTransferFunction.AddRGBPoint(p2, 0.85, 0.75, 0.55)
+        colorTransferFunction.AddRGBPoint(p3, 1.00, 1.00, 0.80)
+
+        volumeProperty = volumeRenderingDisplayNode.GetVolumePropertyNode().GetVolumeProperty()
+        volumeProperty.SetColor(colorTransferFunction)
+        volumeProperty.SetScalarOpacity(opacityTransferFunction)
+        volumeProperty.ShadeOn()
+        volumeProperty.SetInterpolationTypeToLinear()    
+    
     def process(self,
                 inputVolume: vtkMRMLScalarVolumeNode,
                 outputVolume: vtkMRMLScalarVolumeNode,

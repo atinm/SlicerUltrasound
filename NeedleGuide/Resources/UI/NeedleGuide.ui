@@ -91,7 +91,7 @@
        </widget>
       </item>
       <item row="2" column="1">
-       <widget class="qMRMLNodeComboBox" name="MRMLNodeComboBox">
+       <widget class="qMRMLNodeComboBox" name="predictionVolumeComboBox">
         <property name="enabled">
          <bool>true</bool>
         </property>
@@ -128,7 +128,7 @@
        </widget>
       </item>
       <item row="3" column="1">
-       <widget class="qMRMLNodeComboBox" name="MRMLNodeComboBox_2">
+       <widget class="qMRMLNodeComboBox" name="reconstructorNodeComboBox">
         <property name="enabled">
          <bool>true</bool>
         </property>
@@ -143,6 +143,9 @@
         <property name="interactionNodeSingletonTag">
          <string notr="true"/>
         </property>
+        <property name="SlicerParameterName" stdset="0">
+         <string>reconstructorNode</string>
+        </property>
        </widget>
       </item>
       <item row="4" column="0">
@@ -153,7 +156,7 @@
        </widget>
       </item>
       <item row="4" column="1">
-       <widget class="qMRMLNodeComboBox" name="MRMLNodeComboBox_3">
+       <widget class="qMRMLNodeComboBox" name="targetMarkupsNodeComboBox">
         <property name="enabled">
          <bool>true</bool>
         </property>
@@ -167,6 +170,9 @@
         </property>
         <property name="interactionNodeSingletonTag">
          <string notr="true"/>
+        </property>
+        <property name="SlicerParameterName" stdset="0">
+         <string>targetMarkups</string>
         </property>
        </widget>
       </item>
@@ -224,12 +230,18 @@
        </widget>
       </item>
       <item row="1" column="1">
-       <widget class="QSlider" name="horizontalSlider">
+       <widget class="QSlider" name="volumeOpacitySlider">
+        <property name="maximum">
+         <number>255</number>
+        </property>
         <property name="value">
-         <number>50</number>
+         <number>127</number>
         </property>
         <property name="orientation">
          <enum>Qt::Horizontal</enum>
+        </property>
+        <property name="SlicerParameterName" stdset="0">
+         <string>opacityThreshold</string>
         </property>
        </widget>
       </item>
@@ -401,6 +413,54 @@
     <hint type="destinationlabel">
      <x>220</x>
      <y>161</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>NeedleGuide</sender>
+   <signal>mrmlSceneChanged(vtkMRMLScene*)</signal>
+   <receiver>predictionVolumeComboBox</receiver>
+   <slot>setMRMLScene(vtkMRMLScene*)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>162</x>
+     <y>336</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>216</x>
+     <y>82</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>NeedleGuide</sender>
+   <signal>mrmlSceneChanged(vtkMRMLScene*)</signal>
+   <receiver>reconstructorNodeComboBox</receiver>
+   <slot>setMRMLScene(vtkMRMLScene*)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>162</x>
+     <y>336</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>216</x>
+     <y>108</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>NeedleGuide</sender>
+   <signal>mrmlSceneChanged(vtkMRMLScene*)</signal>
+   <receiver>targetMarkupsNodeComboBox</receiver>
+   <slot>setMRMLScene(vtkMRMLScene*)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>162</x>
+     <y>336</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>216</x>
+     <y>134</y>
     </hint>
    </hints>
   </connection>
