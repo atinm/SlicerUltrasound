@@ -16,7 +16,7 @@ from slicer.parameterNodeWrapper import (
     WithinRange,
 )
 
-from slicer import vtkMRMLScalarVolumeNode, vtkMRMLVolumeReconstructionNode, vtkMRMLMarkupsFiducialNode, vtkMRMLModelNode
+from slicer import vtkMRMLScalarVolumeNode, vtkMRMLVolumeReconstructionNode, vtkMRMLMarkupsFiducialNode, vtkMRMLModelNode, vtkMRMLLinearTransformNode
 
 
 #
@@ -113,6 +113,7 @@ class NeedleGuideParameterNode:
     The parameters needed by module.
     """
     inputVolume: vtkMRMLScalarVolumeNode
+    referenceToRas: vtkMRMLLinearTransformNode
     predictionVolume: vtkMRMLScalarVolumeNode
     reconstructorNode: vtkMRMLVolumeReconstructionNode
     targetMarkups: vtkMRMLMarkupsFiducialNode
@@ -172,6 +173,7 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # UI widget connections
         self.ui.applyButton.connect("clicked(bool)", self.onReconstructionButton)
         self.ui.volumeOpacitySlider.connect("valueChanged(int)", self.onVolumeOpacitySlider)
+        self.ui.setRoiButton.connect("clicked(bool)", self.onSetRoiButton)
         self.ui.targetRadiusSlider.connect("valueChanged(double)", self.onTargetRadiusSlider)
         
         # Add custom layout
@@ -403,6 +405,14 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if self._parameterNode and self._parameterNode.reconstructedVolume:
             self.logic.setVolumeRenderingProperty(self._parameterNode.reconstructedVolume, window=200, level=(255 - value))
     
+    def onSetRoiButton(self) -> None:
+        """
+        Set volume reconstruction ROI and ReferenceToRas transform based on the current location of the ultrasound image.
+        The center of ultrasound will be the center of the ROI. Marked (X) direction of the image will be aligne to Right (R) and Far (Y) to Anterior (A).
+        """
+        self.logic.resetReferenceToRasBasedOnImage()
+        self.logic.resetRoiBasedOnImage()
+        
 #
 # NeedleGuideLogic
 #
@@ -520,7 +530,75 @@ class NeedleGuideLogic(ScriptedLoadableModuleLogic):
 
         stopTime = time.time()
         logging.info(f"Processing completed in {stopTime-startTime:.2f} seconds")
-
+    
+    def resetReferenceToRasBasedOnImage(self):
+        """
+        Get the current position of Image in RAS. Make sure ReferenceToRas transform is aligned with the image.
+        Image should be aligned so X is Right, and Y is Anterior.
+        """
+        parameterNode = self.getParameterNode()
+        
+        inputVolume = parameterNode.inputVolume
+        if not inputVolume:
+            logging.error("Input volume is not set")
+            return
+        
+        referenceToRas = parameterNode.referenceToRas
+        if not referenceToRas:
+            logging.error("ReferenceToRas transform is not set")
+            return
+        
+        # Temporarily set ReferenceToRas matrix to identity
+        referenceToRasMatrix = vtk.vtkMatrix4x4()
+        referenceToRas.GetMatrixTransformToWorld(referenceToRasMatrix)
+        referenceToRasMatrix.Identity()
+        referenceToRas.SetMatrixTransformToParent(referenceToRasMatrix)
+        
+        # Get the current position of Image in RAS
+        imageToReferenceTransform = slicer.mrmlScene.GetNodeByID(inputVolume.GetTransformNodeID())
+        if imageToReferenceTransform is None:
+            logging.error("Image transform is not set")
+            return
+        
+        imageToReferenceMatrix = vtk.vtkMatrix4x4()
+        imageToReferenceTransform.GetMatrixTransformToWorld(imageToReferenceMatrix)
+        imageToReferenceMatrix.Invert()
+        # Keep only rotation part from imageToReferenceMatrix to align ReferenceToRas with the image
+        referenceToImageTransform = vtk.vtkTransform()
+        referenceToImageTransform.SetMatrix(imageToReferenceMatrix)
+        referenceToRasTransform = vtk.vtkTransform()
+        wxyz = referenceToImageTransform.GetOrientationWXYZ()
+        referenceToRasTransform.RotateWXYZ(wxyz[0], wxyz[1], wxyz[2], wxyz[3])
+        referenceToRas.SetMatrixTransformToParent(referenceToRasTransform.GetMatrix())
+    
+    def resetRoiBasedOnImage(self):
+        """
+        Get the current position of Image in RAS. Make sure volume reconstruction has a ROI node and it is centered in the image.
+        """
+        parameterNode = self.getParameterNode()
+        if not parameterNode.reconstructorNode:
+            logging.error("Reconstructor node is not set")
+            return
+        
+        # Get the current position of Image in RAS
+        imageNode = parameterNode.inputVolume
+        if not imageNode:
+            logging.warning("Cannot set ROI because input volume is not set")
+            return
+        
+        # Get the center of the image
+        imageBounds_Ras = np.zeros(6)
+        imageNode.GetRASBounds(imageBounds_Ras)
+        imageCenter_Ras = np.zeros(3)
+        for i in range(3):
+            imageCenter_Ras[i] = (imageBounds_Ras[i*2] + imageBounds_Ras[i*2+1]) / 2
+        
+        # Check if volume reconstruction node has a ROI already
+        roiNode = parameterNode.reconstructorNode.GetInputROINode()
+        if not roiNode:
+            roiNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsROINode")
+            parameterNode.reconstructorNode.SetAndObserveInputROINode(roiNode)
+        roiNode.SetCenterWorld(imageCenter_Ras)
 
 #
 # NeedleGuideTest
