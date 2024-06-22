@@ -1,4 +1,5 @@
 import logging
+import numpy as np
 import os
 from typing import Annotated, Optional
 
@@ -15,7 +16,7 @@ from slicer.parameterNodeWrapper import (
     WithinRange,
 )
 
-from slicer import vtkMRMLScalarVolumeNode, vtkMRMLVolumeReconstructionNode, vtkMRMLMarkupsFiducialNode
+from slicer import vtkMRMLScalarVolumeNode, vtkMRMLVolumeReconstructionNode, vtkMRMLMarkupsFiducialNode, vtkMRMLModelNode
 
 
 #
@@ -111,7 +112,6 @@ class NeedleGuideParameterNode:
     """
     The parameters needed by module.
     """
-
     inputVolume: vtkMRMLScalarVolumeNode
     predictionVolume: vtkMRMLScalarVolumeNode
     reconstructorNode: vtkMRMLVolumeReconstructionNode
@@ -120,7 +120,8 @@ class NeedleGuideParameterNode:
     reconstructedVolume: vtkMRMLScalarVolumeNode
     opacityThreshold: Annotated[int, WithinRange(-100, 200)] = 60
     invertThreshold: bool = False
-    
+    targetModel: vtkMRMLModelNode
+    targetRadius: Annotated[float, WithinRange(0, 10)] = 2.5
 
 #
 # NeedleGuideWidget
@@ -171,7 +172,9 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # UI widget connections
         self.ui.applyButton.connect("clicked(bool)", self.onReconstructionButton)
         self.ui.volumeOpacitySlider.connect("valueChanged(int)", self.onVolumeOpacitySlider)
+        self.ui.targetRadiusSlider.connect("valueChanged(double)", self.onTargetRadiusSlider)
         
+        # Add custom layout
         self.addCustomLayouts()
         slicer.app.layoutManager().setLayout(self.LAYOUT_2D3D)
         
@@ -251,6 +254,19 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # so that when the scene is saved and reloaded, these settings are restored.
 
         self.setParameterNode(self.logic.getParameterNode())
+        
+        targetModel = self._parameterNode.targetModel
+        if targetModel is None:
+            targetModel = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", "TargetModel")
+            targetModel.CreateDefaultDisplayNodes()
+            displayNode = targetModel.GetDisplayNode()
+            displayNode.SetColor(0.0, 1.0, 0.0)
+            displayNode.BackfaceCullingOff()
+            displayNode.Visibility2DOn()
+            displayNode.Visibility3DOn()
+            displayNode.SetSliceIntersectionThickness(3)
+            displayNode.SetOpacity(0.6)
+            self._parameterNode.targetModel = targetModel
 
         
     def setParameterNode(self, inputParameterNode: Optional[NeedleGuideParameterNode]) -> None:
@@ -330,18 +346,48 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         """
         logging.info("Target selection changed")
         selectedRow = self.ui.targetTableWidget.currentRow()
+        
+        # Clear targetModel mesh
+        targetModel = self._parameterNode.targetModel
+        if targetModel:
+            targetModel.SetAndObservePolyData(None)
+        
         if selectedRow < 0:
             return
         
         logging.info(f"Selected row: {selectedRow}")
-        selectedTarget = self._parameterNode.targetMarkups.GetNthControlPointLabel(selectedRow)
         
+        selectedPointPositionRas = np.zeros(3)
         for i in range(self._parameterNode.targetMarkups.GetNumberOfControlPoints()):
             if i == selectedRow:
                 self._parameterNode.targetMarkups.SetNthControlPointSelected(i, False)
+                self._parameterNode.targetMarkups.GetNthControlPointPosition(i, selectedPointPositionRas)
             else:
                 self._parameterNode.targetMarkups.SetNthControlPointSelected(i, True)
         
+        # Create a sphere at the selected point
+        sphereSource = vtk.vtkSphereSource()
+        sphereSource.SetRadius(self._parameterNode.targetRadius)
+        sphereSource.SetCenter(selectedPointPositionRas)
+        sphereSource.SetPhiResolution(12)
+        sphereSource.SetThetaResolution(24)
+        innerSphereSource = vtk.vtkSphereSource()
+        innerSphereSource.SetRadius(self._parameterNode.targetRadius*0.5)
+        innerSphereSource.SetCenter(selectedPointPositionRas)
+        innerSphereSource.SetPhiResolution(10)
+        innerSphereSource.SetThetaResolution(20)
+        appendFilter = vtk.vtkAppendPolyData()
+        appendFilter.AddInputConnection(sphereSource.GetOutputPort())
+        appendFilter.AddInputConnection(innerSphereSource.GetOutputPort())
+        appendFilter.Update()
+        
+        targetModel.SetAndObservePolyData(appendFilter.GetOutput())
+    
+    def onTargetRadiusSlider(self, value: float) -> None:
+        """
+        Update target radius.
+        """
+        self.onTargetSelectionChanged()
     
     def onReconstructionButton(self) -> None:
         """Run processing when user clicks button."""
