@@ -118,14 +118,13 @@ class NeedleGuideParameterNode:
     targetMarkups: vtkMRMLMarkupsFiducialNode
     blurSigma: Annotated[float, WithinRange(0, 5)] = 0.5
     reconstructedVolume: vtkMRMLScalarVolumeNode
-    opacityThreshold: Annotated[int, WithinRange(0, 255)] = 127
+    opacityThreshold: Annotated[int, WithinRange(-100, 200)] = 60
     invertThreshold: bool = False
     
 
 #
 # NeedleGuideWidget
 #
-
 
 class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     """Uses ScriptedLoadableModuleWidget base class, available at:
@@ -141,6 +140,8 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.logic = None
         self._parameterNode = None
         self._parameterNodeGuiTag = None
+        
+        self.observedTargetMarkups = None
 
     def setup(self) -> None:
         """Called when the user opens the module the first time and the widget is initialized."""
@@ -293,7 +294,55 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.ui.volumeOpacitySlider.enabled = True
         else:
             self.ui.volumeOpacitySlider.enabled = False
+            
+        # Set and observe target markups node
+        if self.observedTargetMarkups != self._parameterNode.targetMarkups:
+            if self.observedTargetMarkups:
+                self.removeObserver(self.observedTargetMarkups, vtk.vtkCommand.ModifiedEvent, self._onTargetMarkupsModified)
+            self.observedTargetMarkups = self._parameterNode.targetMarkups
+            if self.observedTargetMarkups:
+                self.addObserver(self.observedTargetMarkups, vtk.vtkCommand.ModifiedEvent, self._onTargetMarkupsModified)
+            self._onTargetMarkupsModified()
         
+        # Set up targets table
+        self.ui.targetTableWidget.setColumnCount(1)
+        self.ui.targetTableWidget.setHorizontalHeaderLabels(["Target"])
+        header = self.ui.targetTableWidget.horizontalHeader()
+        header.setSectionResizeMode(0, qt.QHeaderView.Stretch)
+        self.ui.targetTableWidget.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
+        self.ui.targetTableWidget.setSelectionMode(qt.QAbstractItemView.SingleSelection)
+        self.ui.targetTableWidget.itemSelectionChanged.connect(self.onTargetSelectionChanged)
+        
+    def _onTargetMarkupsModified(self, caller=None, event=None) -> None:
+        """
+        Update GUI based on target markups changes.
+        """
+        # Update target table from target markup names
+        self.ui.targetTableWidget.setRowCount(0)
+        if self._parameterNode and self._parameterNode.targetMarkups:
+            for i in range(self._parameterNode.targetMarkups.GetNumberOfControlPoints()):
+                self.ui.targetTableWidget.insertRow(i)
+                self.ui.targetTableWidget.setItem(i, 0, qt.QTableWidgetItem(self._parameterNode.targetMarkups.GetNthControlPointLabel(i)))
+    
+    def onTargetSelectionChanged(self) -> None:
+        """
+        Update GUI based on target selection changes.
+        """
+        logging.info("Target selection changed")
+        selectedRow = self.ui.targetTableWidget.currentRow()
+        if selectedRow < 0:
+            return
+        
+        logging.info(f"Selected row: {selectedRow}")
+        selectedTarget = self._parameterNode.targetMarkups.GetNthControlPointLabel(selectedRow)
+        
+        for i in range(self._parameterNode.targetMarkups.GetNumberOfControlPoints()):
+            if i == selectedRow:
+                self._parameterNode.targetMarkups.SetNthControlPointSelected(i, False)
+            else:
+                self._parameterNode.targetMarkups.SetNthControlPointSelected(i, True)
+        
+    
     def onReconstructionButton(self) -> None:
         """Run processing when user clicks button."""
         # Start volume reconstruction if not already started. Stop otherwise.
@@ -306,7 +355,7 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     def onVolumeOpacitySlider(self, value: int) -> None:
         """Update volume rendering opacity threshold."""
         if self._parameterNode and self._parameterNode.reconstructedVolume:
-            self.logic.setVolumeRenderingProperty(self._parameterNode.reconstructedVolume, window=200, level=value)
+            self.logic.setVolumeRenderingProperty(self._parameterNode.reconstructedVolume, window=200, level=(255 - value))
     
 #
 # NeedleGuideLogic
@@ -341,7 +390,7 @@ class NeedleGuideLogic(ScriptedLoadableModuleLogic):
         reconstructionLogic = slicer.modules.volumereconstruction.logic()
         reconstructionLogic.StartLiveVolumeReconstruction(parameterNode.reconstructorNode)
         outputVolume = parameterNode.reconstructorNode.GetOutputVolumeNode()
-        self.setVolumeRenderingProperty(outputVolume, window=200, level=parameterNode.opacityThreshold)
+        self.setVolumeRenderingProperty(outputVolume, window=200, level=(255-parameterNode.opacityThreshold))
         parameterNode.reconstructedVolume = outputVolume
     
     def stopVolumeReconstruction(self):
