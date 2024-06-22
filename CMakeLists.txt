@@ -22,6 +22,8 @@ include(${Slicer_USE_FILE})
 add_subdirectory(AnonymizeUltrasound)
 add_subdirectory(MmodeAnalysis)
 add_subdirectory(TimeSeriesAnnotation)
+# add_subdirectory(SceneCleaner)
+# add_subdirectory(NeedleGuide)
 ## NEXT_MODULE
 
 #-----------------------------------------------------------------------------
