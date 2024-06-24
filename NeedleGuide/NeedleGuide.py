@@ -114,15 +114,18 @@ class NeedleGuideParameterNode:
     """
     inputVolume: vtkMRMLScalarVolumeNode
     referenceToRas: vtkMRMLLinearTransformNode
+    stylusToReference: vtkMRMLLinearTransformNode
     predictionVolume: vtkMRMLScalarVolumeNode
     reconstructorNode: vtkMRMLVolumeReconstructionNode
     targetMarkups: vtkMRMLMarkupsFiducialNode
+    needleGuideMarkups: vtkMRMLMarkupsFiducialNode
     blurSigma: Annotated[float, WithinRange(0, 5)] = 0.5
     reconstructedVolume: vtkMRMLScalarVolumeNode
     opacityThreshold: Annotated[int, WithinRange(-100, 200)] = 60
     invertThreshold: bool = False
     targetModel: vtkMRMLModelNode
     targetRadius: Annotated[float, WithinRange(0, 10)] = 2.5
+    targetCoordinatesRas: tuple[float, float, float]
 
 #
 # NeedleGuideWidget
@@ -144,6 +147,10 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self._parameterNodeGuiTag = None
         
         self.observedTargetMarkups = None
+        self.observedNeedleGuideMarkups = None
+
+        # for debugging
+        slicer.mymod = self
 
     def setup(self) -> None:
         """Called when the user opens the module the first time and the widget is initialized."""
@@ -321,6 +328,15 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             if self.observedTargetMarkups:
                 self.addObserver(self.observedTargetMarkups, vtk.vtkCommand.ModifiedEvent, self._onTargetMarkupsModified)
             self._onTargetMarkupsModified()
+
+        # Set and observe StylusToReference transform
+        if self.observedNeedleGuideMarkups != self._parameterNode.needleGuideMarkups:
+            if self.observedNeedleGuideMarkups:
+                self.removeObserver(self.observedNeedleGuideMarkups, vtkMRMLMarkupsFiducialNode.TransformModifiedEvent, self._onStylusToReferenceModified)
+            self.observedNeedleGuideMarkups = self._parameterNode.needleGuideMarkups
+            if self.observedNeedleGuideMarkups:
+                self.addObserver(self.observedNeedleGuideMarkups, vtkMRMLMarkupsFiducialNode.TransformModifiedEvent, self._onStylusToReferenceModified)
+            self._onStylusToReferenceModified()
         
         # Set up targets table
         self.ui.targetTableWidget.setColumnCount(1)
@@ -384,6 +400,26 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         appendFilter.Update()
         
         targetModel.SetAndObservePolyData(appendFilter.GetOutput())
+
+        # save selected fiducial for distance measurement
+        self._parameterNode.targetCoordinatesRas = tuple(selectedPointPositionRas)
+        self._onStylusToReferenceModified()
+
+    def _onStylusToReferenceModified(self, caller=None, event=None) -> None:
+        if (self._parameterNode.needleGuideMarkups.GetNumberOfControlPoints() > 0
+            and self._parameterNode.targetCoordinatesRas is not None
+        ):
+            # Compute distance between needle guide and target
+            needleGuideCoordsRas = np.zeros(3)
+            self._parameterNode.needleGuideMarkups.GetNthControlPointPositionWorld(0, needleGuideCoordsRas)
+            distance = np.linalg.norm(needleGuideCoordsRas - self._parameterNode.targetCoordinatesRas)
+
+            # Update corner annotation
+            layoutManager = slicer.app.layoutManager()
+            for i in range(layoutManager.threeDViewCount):
+                view = layoutManager.threeDWidget(i).threeDView()
+                view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft, f"Depth: {distance:.0f}mm")
+                view.forceRender()
     
     def onTargetRadiusSlider(self, value: float) -> None:
         """

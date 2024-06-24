@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>325</width>
-    <height>673</height>
+    <height>709</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -54,14 +54,14 @@
         </property>
        </widget>
       </item>
-      <item row="2" column="0">
+      <item row="3" column="0">
        <widget class="QLabel" name="label_6">
         <property name="text">
          <string>Prediction image: </string>
         </property>
        </widget>
       </item>
-      <item row="2" column="1">
+      <item row="3" column="1">
        <widget class="qMRMLNodeComboBox" name="predictionVolumeComboBox">
         <property name="enabled">
          <bool>true</bool>
@@ -91,14 +91,14 @@
         </property>
        </widget>
       </item>
-      <item row="3" column="0">
+      <item row="4" column="0">
        <widget class="QLabel" name="label_7">
         <property name="text">
          <string>Reconstructor node: </string>
         </property>
        </widget>
       </item>
-      <item row="3" column="1">
+      <item row="4" column="1">
        <widget class="qMRMLNodeComboBox" name="reconstructorNodeComboBox">
         <property name="enabled">
          <bool>true</bool>
@@ -119,14 +119,14 @@
         </property>
        </widget>
       </item>
-      <item row="4" column="0">
+      <item row="5" column="0">
        <widget class="QLabel" name="label_9">
         <property name="text">
          <string>Target markups: </string>
         </property>
        </widget>
       </item>
-      <item row="4" column="1">
+      <item row="5" column="1">
        <widget class="qMRMLNodeComboBox" name="targetMarkupsNodeComboBox">
         <property name="enabled">
          <bool>true</bool>
@@ -150,7 +150,7 @@
       <item row="1" column="0">
        <widget class="QLabel" name="label_4">
         <property name="text">
-         <string>ReferenceToRas trasnform: </string>
+         <string>ReferenceToRas transform: </string>
         </property>
        </widget>
       </item>
@@ -178,6 +178,68 @@
         </property>
         <property name="SlicerParameterName" stdset="0">
          <string>referenceToRas</string>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="0">
+       <widget class="QLabel" name="label_11">
+        <property name="text">
+         <string>Needle guide markup:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="6" column="1">
+       <widget class="qMRMLNodeComboBox" name="needleGuideMarkupsComboxBox">
+        <property name="enabled">
+         <bool>true</bool>
+        </property>
+        <property name="nodeTypes">
+         <stringlist notr="true">
+          <string>vtkMRMLMarkupsFiducialNode</string>
+         </stringlist>
+        </property>
+        <property name="hideChildNodeTypes">
+         <stringlist notr="true"/>
+        </property>
+        <property name="baseName">
+         <string>NeedleGuideMarkup</string>
+        </property>
+        <property name="renameEnabled">
+         <bool>true</bool>
+        </property>
+        <property name="interactionNodeSingletonTag">
+         <string notr="true"/>
+        </property>
+        <property name="SlicerParameterName" stdset="0">
+         <string>needleGuideMarkups</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0">
+       <widget class="QLabel" name="label_12">
+        <property name="text">
+         <string>StylusToReference transform:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="qMRMLNodeComboBox" name="stylusToReferenceComboBox">
+        <property name="enabled">
+         <bool>true</bool>
+        </property>
+        <property name="nodeTypes">
+         <stringlist notr="true">
+          <string>vtkMRMLLinearTransformNode</string>
+         </stringlist>
+        </property>
+        <property name="hideChildNodeTypes">
+         <stringlist notr="true"/>
+        </property>
+        <property name="interactionNodeSingletonTag">
+         <string notr="true"/>
+        </property>
+        <property name="SlicerParameterName" stdset="0">
+         <string>stylusToReference</string>
         </property>
        </widget>
       </item>
@@ -437,8 +499,8 @@
      <y>135</y>
     </hint>
     <hint type="destinationlabel">
-     <x>220</x>
-     <y>161</y>
+     <x>306</x>
+     <y>305</y>
     </hint>
    </hints>
   </connection>
@@ -453,8 +515,8 @@
      <y>336</y>
     </hint>
     <hint type="destinationlabel">
-     <x>216</x>
-     <y>82</y>
+     <x>306</x>
+     <y>149</y>
     </hint>
    </hints>
   </connection>
@@ -469,8 +531,8 @@
      <y>336</y>
     </hint>
     <hint type="destinationlabel">
-     <x>216</x>
-     <y>108</y>
+     <x>306</x>
+     <y>177</y>
     </hint>
    </hints>
   </connection>
@@ -485,8 +547,8 @@
      <y>336</y>
     </hint>
     <hint type="destinationlabel">
-     <x>216</x>
-     <y>134</y>
+     <x>306</x>
+     <y>205</y>
     </hint>
    </hints>
   </connection>
@@ -503,6 +565,38 @@
     <hint type="destinationlabel">
      <x>216</x>
      <y>76</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>NeedleGuide</sender>
+   <signal>mrmlSceneChanged(vtkMRMLScene*)</signal>
+   <receiver>needleGuideMarkupsComboxBox</receiver>
+   <slot>setMRMLScene(vtkMRMLScene*)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>235</x>
+     <y>667</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>306</x>
+     <y>233</y>
+    </hint>
+   </hints>
+  </connection>
+  <connection>
+   <sender>NeedleGuide</sender>
+   <signal>mrmlSceneChanged(vtkMRMLScene*)</signal>
+   <receiver>stylusToReferenceComboBox</receiver>
+   <slot>setMRMLScene(vtkMRMLScene*)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>208</x>
+     <y>705</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>202</x>
+     <y>116</y>
     </hint>
    </hints>
   </connection>
