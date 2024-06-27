@@ -44,4 +44,4 @@ This module facilitates the process of creating segmentations for time-series 2D
 1. Use the Segmentation section to create segmentations for frames.
 1. Keyboard shortcuts facilitate the workflow: C saves current frame, S skips current frame without saving, D erases current segmentation, A shows/hides foreground volume.
 
-![TimeSeriesAnnotation_2024-06-27.png]()
+![TimeSeriesAnnotation_2024-06-27.png](https://raw.githubusercontent.com/ungi/SlicerUltrasound/b4c3fdea3025d2891f849a9061a89ca8cbb30b99/Screenshots/TimeSeriesAnnotation_2024-06-27.png)
