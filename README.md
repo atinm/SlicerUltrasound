@@ -34,3 +34,14 @@ This module generates an M-mode image from a B-mode loop along a user-specified 
 2. 
 
 ![2024-04-14_MmodeAnalysis](https://github.com/SlicerUltrasound/SlicerUltrasound/assets/2071850/16fd839c-0959-4e39-bdeb-789e945bae90)
+
+## Time Series Annotation
+This module facilitates the process of creating segmentations for time-series 2D images (ultrasound) and saving segmentations into an output sequence browser.
+
+### How to use Time Series Annotation module
+1. Prepare a Slicer scene with a recorded sequence browser with image frames and optionally tracking (transform) data, registered CT or MRI, ultrasound beam surface model, etc. Althernatively, use the 'Load sample data' button.
+1. Make selection in the module's Inputs section.
+1. Use the Segmentation section to create segmentations for frames.
+1. Keyboard shortcuts facilitate the workflow: C saves current frame, S skips current frame without saving, D erases current segmentation, A shows/hides foreground volume.
+
+![TimeSeriesAnnotation_2024-06-27.png](https://raw.githubusercontent.com/ungi/SlicerUltrasound/b4c3fdea3025d2891f849a9061a89ca8cbb30b99/Screenshots/TimeSeriesAnnotation_2024-06-27.png)
