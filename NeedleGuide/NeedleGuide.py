@@ -16,7 +16,14 @@ from slicer.parameterNodeWrapper import (
     WithinRange,
 )
 
-from slicer import vtkMRMLScalarVolumeNode, vtkMRMLVolumeReconstructionNode, vtkMRMLMarkupsFiducialNode, vtkMRMLModelNode, vtkMRMLLinearTransformNode
+from slicer import (
+    vtkMRMLScalarVolumeNode, 
+    vtkMRMLVolumeReconstructionNode, 
+    vtkMRMLMarkupsFiducialNode, 
+    vtkMRMLModelNode, 
+    vtkMRMLLinearTransformNode, 
+    vtkMRMLIGTLConnectorNode
+)
 
 
 #
@@ -114,11 +121,17 @@ class NeedleGuideParameterNode:
     """
     inputVolume: vtkMRMLScalarVolumeNode
     referenceToRas: vtkMRMLLinearTransformNode
+    imageToReference: vtkMRMLLinearTransformNode
     stylusToReference: vtkMRMLLinearTransformNode
+    stylusTipToStylus: vtkMRMLLinearTransformNode
+    needleModel: vtkMRMLModelNode
+    predictionToReference: vtkMRMLLinearTransformNode
     predictionVolume: vtkMRMLScalarVolumeNode
     reconstructorNode: vtkMRMLVolumeReconstructionNode
     targetMarkups: vtkMRMLMarkupsFiducialNode
     needleGuideMarkups: vtkMRMLMarkupsFiducialNode
+    plusConnectorNode: vtkMRMLIGTLConnectorNode
+    predictionConnectorNode: vtkMRMLIGTLConnectorNode
     blurSigma: Annotated[float, WithinRange(0, 5)] = 0.5
     reconstructedVolume: vtkMRMLScalarVolumeNode
     opacityThreshold: Annotated[int, WithinRange(-100, 200)] = 60
@@ -149,6 +162,7 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.displayedReconstructedVolume = None
         self.observedTargetMarkups = None
         self.observedNeedleGuideMarkups = None
+        self.lastSelectedTarget = None
 
         # for debugging
         slicer.mymod = self
@@ -171,23 +185,32 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Create logic class. Logic implements all computations that should be possible to run
         # in batch mode, without a graphical user interface.
         self.logic = NeedleGuideLogic()
+        self.logic.setup()
 
         # Connections
 
         # These connections ensure that we update parameter node when scene is closed
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartImportEvent, self.onSceneStartImport)
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndImportEvent, self.onSceneEndImport)
 
         # UI widget connections
+        self.ui.startOpenIGTLinkButton.connect("toggled(bool)", self.onOpenIGTLinkButton)
         self.ui.applyButton.connect("clicked(bool)", self.onReconstructionButton)
         self.ui.volumeOpacitySlider.connect("valueChanged(int)", self.onVolumeOpacitySlider)
         self.ui.setRoiButton.connect("clicked(bool)", self.onSetRoiButton)
+        self.ui.targetsVisibilityButton.connect("toggled(bool)", self.onTargetsVisibilityButton)
+        self.ui.lockTargetsButton.connect("toggled(bool)", self.onLockTargetsButton)
         self.ui.targetRadiusSlider.connect("valueChanged(double)", self.onTargetRadiusSlider)
         self.ui.blurButton.connect("clicked()", self.onBlurButton)
         
         # Add custom layout
         self.addCustomLayouts()
         slicer.app.layoutManager().setLayout(self.LAYOUT_2D3D)
+        slicer.app.layoutManager().sliceWidget("Red").sliceController().setSliceVisible(True)
+        for viewNode in slicer.util.getNodesByClass("vtkMRMLAbstractViewNode"):
+            viewNode.SetOrientationMarkerType(slicer.vtkMRMLAbstractViewNode.OrientationMarkerTypeHuman)
         
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -233,6 +256,15 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     
     def cleanup(self) -> None:
         """Called when the application closes and the module widget is destroyed."""
+        # stop volume reconstruction if running
+        if self.logic.reconstructing:
+            self.logic.stopVolumeReconstruction()
+        
+        # stop OpenIGTLink connections if running
+        if self._parameterNode:
+            self._parameterNode.plusConnectorNode.Stop()
+            self._parameterNode.predictionConnectorNode.Stop()
+        
         self.removeObservers()
 
     def enter(self) -> None:
@@ -259,25 +291,21 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if self.parent.isEntered:
             self.initializeParameterNode()
 
+    def onSceneStartImport(self, caller, event) -> None:
+        if self.parent.isEntered:
+            slicer.mrmlScene.Clear(0)
+    
+    def onSceneEndImport(self, caller, event) -> None:
+        if self.parent.isEntered:
+            self.logic.setup()
+            self.initializeParameterNode()
+
     def initializeParameterNode(self) -> None:
         """Ensure parameter node exists and observed."""
         # Parameter node stores all user choices in parameter values, node selections, etc.
         # so that when the scene is saved and reloaded, these settings are restored.
 
         self.setParameterNode(self.logic.getParameterNode())
-        
-        targetModel = self._parameterNode.targetModel
-        if targetModel is None:
-            targetModel = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", "TargetModel")
-            targetModel.CreateDefaultDisplayNodes()
-            displayNode = targetModel.GetDisplayNode()
-            displayNode.SetColor(0.0, 1.0, 0.0)
-            displayNode.BackfaceCullingOff()
-            displayNode.Visibility2DOn()
-            displayNode.Visibility3DOn()
-            displayNode.SetSliceIntersectionThickness(3)
-            displayNode.SetOpacity(0.6)
-            self._parameterNode.targetModel = targetModel
         
     def setParameterNode(self, inputParameterNode: Optional[NeedleGuideParameterNode]) -> None:
         """
@@ -300,16 +328,33 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         """
         Update GUI based on parameter node changes.
         """
+        # Update slice display with input volume
+        if self._parameterNode and self._parameterNode.inputVolume:
+            slicer.util.setSliceViewerLayers(background=self._parameterNode.inputVolume, fit=True)
+            resliceDriverLogic = slicer.modules.volumereslicedriver.logic()
+            # Get red slice node
+            layoutManager = slicer.app.layoutManager()
+            sliceWidget = layoutManager.sliceWidget("Red")
+            sliceNode = sliceWidget.mrmlSliceNode()
+
+            # Update slice using reslice driver
+            resliceDriverLogic.SetDriverForSlice(self._parameterNode.inputVolume.GetID(), sliceNode)
+            resliceDriverLogic.SetModeForSlice(resliceDriverLogic.MODE_TRANSVERSE, sliceNode)
+            resliceDriverLogic.SetRotationForSlice(180, sliceNode)
+
+            # Fit slice to background
+            sliceWidget.sliceController().fitSliceToBackground()
+
         # Update volume reconstruction button
         if self._parameterNode and self._parameterNode.inputVolume and self._parameterNode.predictionVolume and self._parameterNode.reconstructorNode:
             if self.logic.reconstructing:
                 self.ui.applyButton.text = _("Stop volume reconstruction")
                 self.ui.applyButton.toolTip = _("Stop volume reconstruction")
-                self.logic.startVolumeReconstruction()
+                self.ui.applyButton.checked = True
             else:
                 self.ui.applyButton.text = _("Start volume reconstruction")
                 self.ui.applyButton.toolTip = _("Start volume reconstruction")
-                self.logic.stopVolumeReconstruction()
+                self.ui.applyButton.checked = False
             self.ui.applyButton.enabled = True
         else:
             self.ui.applyButton.toolTip = _("Select input nodes to enable volume reconstruction")
@@ -322,13 +367,33 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             # Update visibility of volumes
             if self.displayedReconstructedVolume and self.displayedReconstructedVolume != self._parameterNode.reconstructedVolume:
                 previousDisplayNode = vrLogic.GetFirstVolumeRenderingDisplayNode(self.displayedReconstructedVolume)
-                previousDisplayNode.SetVisibility(False)
+                if previousDisplayNode:
+                    previousDisplayNode.SetVisibility(False)
             self.displayedReconstructedVolume = self._parameterNode.reconstructedVolume
             currentDisplayNode = vrLogic.GetFirstVolumeRenderingDisplayNode(self.displayedReconstructedVolume)
-            currentDisplayNode.SetVisibility(True)
+            if currentDisplayNode:
+                currentDisplayNode.SetVisibility(True)
         else:
             self.ui.volumeOpacitySlider.enabled = False
+
+        # update target points visibility
+        if self._parameterNode.targetMarkups:
+            targetsVisible = self._parameterNode.targetMarkups.GetDisplayVisibility()
+            self.ui.targetsVisibilityButton.checked = targetsVisible
+            if targetsVisible:
+                self.ui.targetsVisibilityButton.text = _("Hide target points")
+            else:
+                self.ui.targetsVisibilityButton.text = _("Show target points")
             
+        # Set up targets table
+        self.ui.targetTableWidget.setColumnCount(1)
+        self.ui.targetTableWidget.setHorizontalHeaderLabels(["Target"])
+        header = self.ui.targetTableWidget.horizontalHeader()
+        header.setSectionResizeMode(0, qt.QHeaderView.Stretch)
+        self.ui.targetTableWidget.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
+        self.ui.targetTableWidget.setSelectionMode(qt.QAbstractItemView.SingleSelection)
+        self.ui.targetTableWidget.itemSelectionChanged.connect(self.onTargetSelectionChanged)
+
         # Set and observe target markups node
         if self.observedTargetMarkups != self._parameterNode.targetMarkups:
             if self.observedTargetMarkups:
@@ -346,15 +411,6 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             if self.observedNeedleGuideMarkups:
                 self.addObserver(self.observedNeedleGuideMarkups, vtkMRMLMarkupsFiducialNode.TransformModifiedEvent, self._onStylusToReferenceModified)
             self._onStylusToReferenceModified()
-        
-        # Set up targets table
-        self.ui.targetTableWidget.setColumnCount(1)
-        self.ui.targetTableWidget.setHorizontalHeaderLabels(["Target"])
-        header = self.ui.targetTableWidget.horizontalHeader()
-        header.setSectionResizeMode(0, qt.QHeaderView.Stretch)
-        self.ui.targetTableWidget.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
-        self.ui.targetTableWidget.setSelectionMode(qt.QAbstractItemView.SingleSelection)
-        self.ui.targetTableWidget.itemSelectionChanged.connect(self.onTargetSelectionChanged)
         
     def _onTargetMarkupsModified(self, caller=None, event=None) -> None:
         """
@@ -385,12 +441,11 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         logging.info(f"Selected row: {selectedRow}")
         
         selectedPointPositionRas = np.zeros(3)
-        for i in range(self._parameterNode.targetMarkups.GetNumberOfControlPoints()):
-            if i == selectedRow:
-                self._parameterNode.targetMarkups.SetNthControlPointSelected(i, False)
-                self._parameterNode.targetMarkups.GetNthControlPointPosition(i, selectedPointPositionRas)
-            else:
-                self._parameterNode.targetMarkups.SetNthControlPointSelected(i, True)
+        if self.lastSelectedTarget is not None:
+            self._parameterNode.targetMarkups.SetNthControlPointSelected(self.lastSelectedTarget, True)
+        self._parameterNode.targetMarkups.SetNthControlPointSelected(selectedRow, False)
+        self._parameterNode.targetMarkups.GetNthControlPointPosition(selectedRow, selectedPointPositionRas)
+        self.lastSelectedTarget = selectedRow
         
         # Create a sphere at the selected point
         sphereSource = vtk.vtkSphereSource()
@@ -409,13 +464,32 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         appendFilter.Update()
         
         targetModel.SetAndObservePolyData(appendFilter.GetOutput())
+        targetModel.SetDisplayVisibility(self.ui.targetsVisibilityButton.checked)
 
         # save selected fiducial for distance measurement
         self._parameterNode.targetCoordinatesRas = tuple(selectedPointPositionRas)
         self._onStylusToReferenceModified()
+    
+    def onTargetsVisibilityButton(self, checked: bool) -> None:
+        if self._parameterNode and self._parameterNode.targetMarkups:
+            if checked:
+                self.ui.targetsVisibilityButton.text = _("Hide target points")
+            else:
+                self.ui.targetsVisibilityButton.text = _("Show target points")
+            self._parameterNode.targetMarkups.SetDisplayVisibility(checked)
+            self._parameterNode.targetModel.SetDisplayVisibility(checked)
+
+    def onLockTargetsButton(self, checked: bool) -> None:
+        if self._parameterNode and self._parameterNode.targetMarkups:
+            if checked:
+                self.ui.lockTargetsButton.text = _("Unlock target points")
+            else:
+                self.ui.lockTargetsButton.text = _("Lock target points")
+            self._parameterNode.targetMarkups.SetLocked(checked)
 
     def _onStylusToReferenceModified(self, caller=None, event=None) -> None:
-        if (self._parameterNode.needleGuideMarkups.GetNumberOfControlPoints() > 0
+        if (self._parameterNode.needleGuideMarkups 
+            and self._parameterNode.needleGuideMarkups.GetNumberOfControlPoints() > 0
             and self._parameterNode.targetCoordinatesRas is not None
         ):
             # Compute distance between needle guide and target
@@ -436,13 +510,28 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         """
         self.onTargetSelectionChanged()
     
+    def onOpenIGTLinkButton(self, checked: bool) -> None:
+        parameterNode = self._parameterNode
+        if checked:
+            parameterNode.plusConnectorNode.Start()
+            parameterNode.predictionConnectorNode.Start()
+        else:
+            parameterNode.plusConnectorNode.Stop()
+            parameterNode.predictionConnectorNode.Stop()
+    
     def onReconstructionButton(self) -> None:
         """Run processing when user clicks button."""
         # Start volume reconstruction if not already started. Stop otherwise.
         
         if self.logic.reconstructing:
+            self.ui.applyButton.text = _("Start volume reconstruction")
+            self.ui.applyButton.toolTip = _("Start volume reconstruction")
+            self.ui.applyButton.checked = False
             self.logic.stopVolumeReconstruction()
         else:
+            self.ui.applyButton.text = _("Stop volume reconstruction")
+            self.ui.applyButton.toolTip = _("Stop volume reconstruction")
+            self.ui.applyButton.checked = True
             self.logic.startVolumeReconstruction()
     
     def onVolumeOpacitySlider(self, value: int) -> None:
@@ -456,7 +545,7 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         The center of ultrasound will be the center of the ROI. Marked (X) direction of the image will be aligne to Right (R) and Far (Y) to Anterior (A).
         """
         self.logic.resetReferenceToRasBasedOnImage()
-        self.logic.resetRoiBasedOnImage()
+        self.logic.resetRoiAndTargetsBasedOnImage()
 
     def onBlurButton(self) -> None:
         if self._parameterNode and self._parameterNode.reconstructedVolume:
@@ -468,21 +557,22 @@ class NeedleGuideWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             outputDisplayNode.GetVolumePropertyNode().Copy(vrLogic.GetPresetByName("MR-Default"))
             outputDisplayNode.SetVisibility(True)
 
-            # Change slice view back to Image_Image and reslice
-            slicer.util.setSliceViewerLayers(background=self._parameterNode.inputVolume, fit=True)
-            resliceDriverLogic = slicer.modules.volumereslicedriver.logic()
+            if self._parameterNode.inputVolume:
+                # Change slice view back to Image_Image and reslice
+                slicer.util.setSliceViewerLayers(background=self._parameterNode.inputVolume, fit=True)
+                resliceDriverLogic = slicer.modules.volumereslicedriver.logic()
 
-            # Get red slice node
-            layoutManager = slicer.app.layoutManager()
-            sliceWidget = layoutManager.sliceWidget("Red")
-            sliceNode = sliceWidget.mrmlSliceNode()
+                # Get red slice node
+                layoutManager = slicer.app.layoutManager()
+                sliceWidget = layoutManager.sliceWidget("Red")
+                sliceNode = sliceWidget.mrmlSliceNode()
 
-            # Update slice using reslice driver
-            resliceDriverLogic.SetDriverForSlice(self._parameterNode.inputVolume.GetID(), sliceNode)
-            resliceDriverLogic.SetModeForSlice(resliceDriverLogic.MODE_TRANSVERSE, sliceNode)
+                # Update slice using reslice driver
+                resliceDriverLogic.SetDriverForSlice(self._parameterNode.inputVolume.GetID(), sliceNode)
+                resliceDriverLogic.SetModeForSlice(resliceDriverLogic.MODE_TRANSVERSE, sliceNode)
 
-            # Fit slice to background
-            sliceWidget.sliceController().fitSliceToBackground()
+                # Fit slice to background
+                sliceWidget.sliceController().fitSliceToBackground()
 
             # Set blurred volume as active volume and hide the original volume
             inputDisplayNode = vrLogic.GetFirstVolumeRenderingDisplayNode(self._parameterNode.reconstructedVolume)
@@ -504,6 +594,36 @@ class NeedleGuideLogic(ScriptedLoadableModuleLogic):
     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
     """
 
+    # transform names
+    REFERENCE_TO_RAS = "ReferenceToRas"
+    IMAGE_TO_REFERENCE = "ImageToReference"
+    PREDICTION_TO_REFERENCE = "PredToReference"
+    STYLUS_TO_REFERENCE = "StylusToReference"
+    STYLUS_TIP_TO_STYLUS = "StylusTipToStylus"
+
+    # volume names
+    IMAGE_IMAGE = "Image_Image"
+    PREDICTION = "Prediction"
+
+    # reconstruction nodes
+    RECONSTRUCTOR_NODE = "VolumeReconstruction"
+    RECONSTRUCTED_VOLUME = "ReconstructedVolume"
+    RECONSTRUCTION_ROI = "ReconstructionROI"
+
+    # OpenIGTLink parameters
+    PLUS_CONNECTOR = "PlusConnector"
+    PREDICTION_CONNECTOR = "PredictionConnector"
+    PLUS_CONNECTOR_PORT = 18944
+    PREDICTION_CONNECTOR_PORT = 18945
+
+    # needle guide parameters
+    TARGET_MARKUPS = "TargetPoints"
+    NUM_TARGETS_PER_SIDE = 6
+    TARGET_MODEL = "TargetModel"
+    NEEDLE_MODEL = "NeedleModel"
+    NEEDLE_LENGTH = 80  # mm
+    NEEDLE_GUIDE_MARKUP = "NeedleGuideMarkup"
+
     def __init__(self) -> None:
         """Called when the logic class is instantiated. Can be used for initializing member variables."""
         ScriptedLoadableModuleLogic.__init__(self)
@@ -512,6 +632,140 @@ class NeedleGuideLogic(ScriptedLoadableModuleLogic):
 
     def getParameterNode(self):
         return NeedleGuideParameterNode(super().getParameterNode())
+
+    def setup(self):
+        # create nodes for image, prediction, volume reconstruction, and transforms
+        parameterNode = self.getParameterNode()
+        if not parameterNode.referenceToRas:
+            referenceToRas = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", self.REFERENCE_TO_RAS)
+            parameterNode.referenceToRas = referenceToRas
+        
+        if not parameterNode.imageToReference:
+            imageToReference = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", self.IMAGE_TO_REFERENCE)
+            imageToReference.SetAndObserveTransformNodeID(parameterNode.referenceToRas.GetID())
+            parameterNode.imageToReference = imageToReference
+
+        if not parameterNode.inputVolume:
+            inputVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", self.IMAGE_IMAGE)
+            inputVolume.CreateDefaultDisplayNodes()
+            inputArray = np.zeros((1, 512, 512), dtype="uint8")
+            slicer.util.updateVolumeFromArray(inputVolume, inputArray)
+            inputVolume.SetAndObserveTransformNodeID(parameterNode.imageToReference.GetID())
+            parameterNode.inputVolume = inputVolume
+
+        if not parameterNode.predictionToReference:
+            predictionToReference = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", self.PREDICTION_TO_REFERENCE)
+            predictionToReference.SetAndObserveTransformNodeID(parameterNode.referenceToRas.GetID())
+            parameterNode.predictionToReference = predictionToReference
+        
+        if not parameterNode.predictionVolume:
+            predictionVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", self.PREDICTION)
+            predictionVolume.CreateDefaultDisplayNodes()
+            predictionArray = np.zeros((1, 512, 512), dtype="uint8")
+            slicer.util.updateVolumeFromArray(predictionVolume, predictionArray)
+            predictionVolume.SetAndObserveTransformNodeID(parameterNode.predictionToReference.GetID())
+            parameterNode.predictionVolume = predictionVolume
+
+        if not parameterNode.stylusToReference:
+            stylusToReference = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", self.STYLUS_TO_REFERENCE)
+            stylusToReference.SetAndObserveTransformNodeID(parameterNode.referenceToRas.GetID())
+            parameterNode.stylusToReference = stylusToReference
+
+        if not parameterNode.stylusTipToStylus:
+            stylusTipToStylus = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLinearTransformNode", self.STYLUS_TIP_TO_STYLUS)
+            stylusTipToStylus.SetAndObserveTransformNodeID(parameterNode.stylusToReference.GetID())
+            # TODO: update with actual stylus tip to stylus transform, probably best to save as a .h5 file
+            parameterNode.stylusTipToStylus = stylusTipToStylus
+        
+        if not parameterNode.needleModel:
+            createModelsLogic = slicer.modules.createmodels.logic()
+            needleModel = createModelsLogic.CreateNeedle(self.NEEDLE_LENGTH, 1.0, 2.5, False)
+            needleModel.GetDisplayNode().SetColor(0.33, 1.0, 1.0)
+            needleModel.SetName(self.NEEDLE_MODEL)
+            needleModel.GetDisplayNode().Visibility2DOn()
+            needleModel.SetAndObserveTransformNodeID(parameterNode.stylusTipToStylus.GetID())
+            parameterNode.needleModel = needleModel
+
+        if not parameterNode.reconstructedVolume:
+            reconstructedVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", self.RECONSTRUCTED_VOLUME)
+            reconstructedVolume.CreateDefaultDisplayNodes()
+            volRenLogic = slicer.modules.volumerendering.logic()
+            displayNode = volRenLogic.CreateDefaultVolumeRenderingNodes(reconstructedVolume)
+            displayNode.SetVisibility(True)
+            displayNode.GetVolumePropertyNode().Copy(volRenLogic.GetPresetByName("MR-Default"))
+            parameterNode.reconstructedVolume = reconstructedVolume
+
+        if not parameterNode.reconstructorNode:
+            reconstructorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVolumeReconstructionNode", self.RECONSTRUCTOR_NODE)
+            reconstructorNode.SetLiveVolumeReconstruction(True)
+            reconstructorNode.SetInterpolationMode(1)  # linear
+            reconstructorNode.SetAndObserveInputVolumeNode(parameterNode.predictionVolume)
+            reconstructorNode.SetAndObserveOutputVolumeNode(parameterNode.reconstructedVolume)
+
+            # create roi node
+            roiNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsROINode", self.RECONSTRUCTION_ROI)
+            roiNode.SetSize((250, 250, 350))
+            roiNode.SetDisplayVisibility(False)
+            reconstructorNode.SetAndObserveInputROINode(roiNode)
+            parameterNode.reconstructorNode = reconstructorNode
+
+        # setup target points
+        if not parameterNode.targetMarkups:
+            targetMarkups = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode", self.TARGET_MARKUPS)
+            targetMarkups.CreateDefaultDisplayNodes()
+            # create 12 target points for L1-S1 facet joints
+            targetLevelNames = ["L1", "L2", "L3", "L4", "L5", "S1"]
+            start = int(self.NUM_TARGETS_PER_SIDE * 40 / 2)
+            stop = -start
+            i = 0
+            for s_l in range(start, stop, -40):  # left side targets
+                targetMarkups.AddControlPoint(-50, 0, s_l - 40, f"{targetLevelNames[i]}_L")
+                i += 1
+            i = 0
+            for s_r in range(start, stop, -40):
+                targetMarkups.AddControlPoint(50, 0, s_r - 40, f"{targetLevelNames[i]}_R")
+                i += 1
+            targetMarkups.SetDisplayVisibility(False)
+            parameterNode.targetMarkups = targetMarkups
+
+        targetModel = parameterNode.targetModel
+        if targetModel is None:
+            targetModel = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLModelNode", self.TARGET_MODEL)
+            targetModel.CreateDefaultDisplayNodes()
+            displayNode = targetModel.GetDisplayNode()
+            displayNode.SetColor(0.0, 1.0, 0.0)
+            displayNode.BackfaceCullingOff()
+            displayNode.Visibility2DOn()
+            displayNode.Visibility3DOn()
+            displayNode.SetSliceIntersectionThickness(3)
+            displayNode.SetOpacity(0.6)
+            parameterNode.targetModel = targetModel
+
+        if not parameterNode.needleGuideMarkups:
+            needleGuideMarkups = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode", self.NEEDLE_GUIDE_MARKUP)
+            needleGuideMarkups.SetMaximumNumberOfControlPoints(1)
+            needleGuideMarkups.CreateDefaultDisplayNodes()
+            needleGuideMarkups.SetDisplayVisibility(False)
+            parameterNode.needleGuideMarkups = needleGuideMarkups
+        
+        self.setupOpenIgtLink()
+    
+    def setupOpenIgtLink(self):
+        parameterNode = self.getParameterNode()
+
+        # create OpenIGTLink connector node for ultrasound image and tracking
+        plusConnectorNode = parameterNode.plusConnectorNode
+        if not plusConnectorNode:
+            plusConnectorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLIGTLConnectorNode", self.PLUS_CONNECTOR)
+            plusConnectorNode.SetTypeClient("localhost", self.PLUS_CONNECTOR_PORT)
+            parameterNode.plusConnectorNode = plusConnectorNode
+        
+        # create OpenIGTLink connector node for prediction
+        predictionConnectorNode = parameterNode.predictionConnectorNode
+        if not predictionConnectorNode:
+            predictionConnectorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLIGTLConnectorNode", self.PREDICTION_CONNECTOR)
+            predictionConnectorNode.SetTypeClient("localhost", self.PREDICTION_CONNECTOR_PORT)
+            parameterNode.predictionConnectorNode = predictionConnectorNode
     
     def startVolumeReconstruction(self):
         """
@@ -569,44 +823,6 @@ class NeedleGuideLogic(ScriptedLoadableModuleLogic):
         volumeProperty.ShadeOn()
         volumeProperty.SetInterpolationTypeToLinear()    
     
-    def process(self,
-                inputVolume: vtkMRMLScalarVolumeNode,
-                outputVolume: vtkMRMLScalarVolumeNode,
-                imageThreshold: float,
-                invert: bool = False,
-                showResult: bool = True) -> None:
-        """
-        Run the processing algorithm.
-        Can be used without GUI widget.
-        :param inputVolume: volume to be thresholded
-        :param outputVolume: thresholding result
-        :param imageThreshold: values above/below this threshold will be set to 0
-        :param invert: if True then values above the threshold will be set to 0, otherwise values below are set to 0
-        :param showResult: show output volume in slice viewers
-        """
-
-        if not inputVolume or not outputVolume:
-            raise ValueError("Input or output volume is invalid")
-
-        import time
-
-        startTime = time.time()
-        logging.info("Processing started")
-
-        # Compute the thresholded output volume using the "Threshold Scalar Volume" CLI module
-        cliParams = {
-            "InputVolume": inputVolume.GetID(),
-            "OutputVolume": outputVolume.GetID(),
-            "ThresholdValue": imageThreshold,
-            "ThresholdType": "Above" if invert else "Below",
-        }
-        cliNode = slicer.cli.run(slicer.modules.thresholdscalarvolume, None, cliParams, wait_for_completion=True, update_display=showResult)
-        # We don't need the CLI module node anymore, remove it to not clutter the scene with it
-        slicer.mrmlScene.RemoveNode(cliNode)
-
-        stopTime = time.time()
-        logging.info(f"Processing completed in {stopTime-startTime:.2f} seconds")
-    
     def resetReferenceToRasBasedOnImage(self):
         """
         Get the current position of Image in RAS. Make sure ReferenceToRas transform is aligned with the image.
@@ -647,7 +863,7 @@ class NeedleGuideLogic(ScriptedLoadableModuleLogic):
         referenceToRasTransform.RotateWXYZ(wxyz[0], wxyz[1], wxyz[2], wxyz[3])
         referenceToRas.SetMatrixTransformToParent(referenceToRasTransform.GetMatrix())
     
-    def resetRoiBasedOnImage(self):
+    def resetRoiAndTargetsBasedOnImage(self):
         """
         Get the current position of Image in RAS. Make sure volume reconstruction has a ROI node and it is centered in the image.
         """
@@ -669,12 +885,25 @@ class NeedleGuideLogic(ScriptedLoadableModuleLogic):
         for i in range(3):
             imageCenter_Ras[i] = (imageBounds_Ras[i*2] + imageBounds_Ras[i*2+1]) / 2
         
-        # Check if volume reconstruction node has a ROI already
+        # Set the center of the ROI to the center of the image
         roiNode = parameterNode.reconstructorNode.GetInputROINode()
         if not roiNode:
-            roiNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsROINode")
-            parameterNode.reconstructorNode.SetAndObserveInputROINode(roiNode)
+            logging.warning("No ROI node found in volume reconstruction node")
+            return
         roiNode.SetCenterWorld(imageCenter_Ras)
+
+        # calculate transform from ras origin to image center
+        rasToImageCenter = vtk.vtkTransform()
+        rasToImageCenter.Translate(imageCenter_Ras)
+        # rasToImageCenter.Inverse()
+        rasToImageCenter.Update()
+        
+        # apply transform to all target markups
+        targetMarkups = parameterNode.targetMarkups
+        if not targetMarkups:
+            logging.warning("No target markups found")
+            return
+        targetMarkups.ApplyTransform(rasToImageCenter)
 
     def blurVolume(self, inputVolume, sigma):
         parameterNode = self.getParameterNode()

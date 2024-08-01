@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>325</width>
-    <height>709</height>
+    <height>900</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -319,6 +319,16 @@
     </widget>
    </item>
    <item>
+    <widget class="QPushButton" name="startOpenIGTLinkButton">
+     <property name="text">
+      <string>Start OpenIGTLink connection</string>
+     </property>
+     <property name="checkable">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
     <widget class="QPushButton" name="setRoiButton">
      <property name="text">
       <string>Set ROI and orientation</string>
@@ -348,6 +358,9 @@
      <property name="text">
       <string>Start reconstruction</string>
      </property>
+     <property name="checkable">
+      <bool>true</bool>
+     </property>
     </widget>
    </item>
    <item>
@@ -365,14 +378,27 @@
     </widget>
    </item>
    <item>
-    <widget class="QTableWidget" name="targetTableWidget"/>
-   </item>
-   <item>
-    <widget class="QLabel" name="statusLabel">
+    <widget class="QPushButton" name="targetsVisibilityButton">
      <property name="text">
-      <string>TextLabel</string>
+      <string>Show target points</string>
+     </property>
+     <property name="checkable">
+      <bool>true</bool>
      </property>
     </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="lockTargetsButton">
+     <property name="text">
+      <string>Lock target points</string>
+     </property>
+     <property name="checkable">
+      <bool>true</bool>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QTableWidget" name="targetTableWidget"/>
    </item>
    <item>
     <widget class="ctkCollapsibleButton" name="advancedCollapsibleButton">
