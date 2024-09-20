@@ -547,7 +547,6 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         dialog.close()
 
-        self.logic.updateMaskVolume()
         
         # Uncheck all label checkboxes
         for i in range(self.ui.labelsScrollAreaWidgetContents.layout().count()): 
@@ -592,6 +591,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         statusText += filepath
         self.ui.statusLabel.text = statusText
         
+        self.logic.updateMaskVolume()
         self.logic.showMaskContour()
 
         # Set red slice compositing mode to 2
@@ -829,6 +829,8 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         # Recursively walk through the input folder
         file_count = 0
         for root, dirs, files in os.walk(input_folder):
+            dirs.sort()
+            files.sort()
             for file in files:
                 progress_dialog.setValue(file_count)
                 file_count += 1
@@ -1884,6 +1886,8 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         else:
             self.nextDicomDfIndex = None
             logging.info("No more DICOM files to process")
+        
+        return self.nextDicomDfIndex
         
     def loadNextSequence(self):
         """
