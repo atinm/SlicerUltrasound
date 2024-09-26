@@ -6,10 +6,10 @@ This repository contains the `Time Series Annotation` module for 3D Slicer, desi
 - [Overview](#overview)
 - [Getting Started](#getting-started)
   - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
 - [Usage](#usage)
   - [Preparing the Environment](#preparing-the-environment)
-  - [Understanding the Interface](#understanding-the-interface)
+  - [Segmentation Section](#segmentation-section)
+  - [Outputs Section](#outputs-section)
   - [Annotating Time Series Data](#annotating-time-series-data)
 
 ## Overview
@@ -91,5 +91,5 @@ Once your environment is fully prepared, you can begin annotating your time-seri
 
 - **Revise Segmentations**: Use this button to revisit and adjust your segmentations as needed. This feature is crucial for refining your work, ensuring that all annotations meet the required standards before finalizing the dataset.
 
-![TimeSeriesAnnotation_2024-09-26_1.png](../Screenshots/TimeSeriesAnnotation_2024-09-26_1.jpg)
+![TimeSeriesAnnotation_2024-09-26_1.jpg](../Screenshots/TimeSeriesAnnotation_2024-09-26_1.jpg)
 ![TimeSeriesAnnotation_2024-09-26_2.jpg](../Screenshots/TimeSeriesAnnotation_2024-09-26_2.jpg)
