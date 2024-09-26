@@ -686,6 +686,36 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
         currentAttributeIndexStr = parameterNode.segmentation.GetAttribute(self.ORIGINAL_IMAGE_INDEX)
         if currentAttributeIndexStr == "None" or currentAttributeIndexStr == "":
             currentAttributeIndexStr = None
+
+        selectedSegmentation = parameterNode.segmentation
+        sequencesLogic = slicer.modules.sequences.logic()
+
+        # Check if the segmentation browser is empty
+        if not parameterNode.segmentationBrowser.GetNumberOfSynchronizedSequenceNodes():
+            # Prepare the user with a message box
+            msgBox = qt.QMessageBox()
+            msgBox.setText("SegmentationBrowser is empty")
+            msgBox.setInformativeText("Proceeding to add the segmentation node and input volume as proxy nodes.")
+            msgBox.setStandardButtons(qt.QMessageBox.Ok)
+            msgBox.setDefaultButton(qt.QMessageBox.Ok)
+            msgBox.exec_()
+
+            # Add segmentation node as proxy node
+            segmentationSequenceNode = sequencesLogic.AddSynchronizedNode(None, selectedSegmentation,
+                                                                          parameterNode.segmentationBrowser)
+            # Add inputVolume as proxy node (if needed)
+            if parameterNode.inputVolume:
+                inputVolumeSequenceNode = sequencesLogic.AddSynchronizedNode(None, parameterNode.inputVolume,
+                                                                             parameterNode.segmentationBrowser)
+        else:
+            # If segmentation browser is not empty, check if selectedSegmentation is a proxy node
+            if not parameterNode.segmentationBrowser.GetSequenceNode(selectedSegmentation):
+                segmentationSequenceNode = sequencesLogic.AddSynchronizedNode(None, selectedSegmentation,
+                                                                              parameterNode.segmentationBrowser)
+            else:
+                segmentationSequenceNode = parameterNode.segmentationBrowser.GetSequenceNode(selectedSegmentation)
+
+        print('segmentationSequenceNode:', segmentationSequenceNode)
         
         selectedSegmentation = parameterNode.segmentation
         segmentationSequenceNode = parameterNode.segmentationBrowser.GetSequenceNode(selectedSegmentation)
