@@ -386,6 +386,15 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             self.ui.deleteButton.toolTip = _("Select inputs to enable this button")
             self.ui.deleteButton.enabled = False
         
+        # Only enable revise button if there is a segmentation browser with more than zero items
+        segmentationBrowser = self._parameterNode.segmentationBrowser
+        if segmentationBrowser and segmentationBrowser.GetNumberOfItems() > 0:
+            self.ui.reviseButton.enabled = True
+            self.ui.reviseButton.toolTip = _("Revise segmentations")
+        else:
+            self.ui.reviseButton.enabled = False
+            self.ui.reviseButton.toolTip = _("Segmentation browser is empty")
+        
         if self._parameterNode.reviseSegmentations:
             self.ui.reviseButton.checked = True
             self.ui.reviseButton.text = "Stop revising"
@@ -457,6 +466,7 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         
         self.logic.captureCurrentFrame()
         self.onSkipButton()
+        self._onParameterNodeModified() # Update GUI widgets
         
     def onSkipButton(self) -> None:
         logging.info("onSkipButton")
@@ -555,7 +565,16 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         self._parameterNode.showUltrasoundModel = checked
     
     def onReviseButton(self, checked) -> None:
-        """Show/hide slice views when user clicks "Show Slice Views" button."""
+        """Callback function for the revise button."""
+        # Check if segmentation browser is valid
+        if not self._parameterNode.segmentationBrowser:
+            logging.error("Segmentation browser is invalid, cannot revise segmentations")
+            return
+        # Check number of items in the segmentation browser. Return if less than one.
+        numItems = self._parameterNode.segmentationBrowser.GetNumberOfItems()
+        if numItems < 1:
+            logging.warning("Segmentation browser has less than one item, cannot revise segmentations")
+            return
         self._parameterNode.reviseSegmentations = checked
         if checked:
             self.logic.resetSegmenationSequenceIndex()
@@ -866,6 +885,18 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
             segmentationLogic.ExportAllSegmentsToLabelmapNode(segmentation, labelmapNode, slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY)
             frameIndex = int(segmentation.GetAttribute(self.ORIGINAL_IMAGE_INDEX))
             frameIndices[i] = frameIndex
+            if labelmapNode.GetImageData().GetScalarType() != vtk.VTK_SHORT:
+                logging.warning("Segmentation is not of type unsigned char")
+                castFilter = vtk.vtkImageCast()
+                castFilter.SetInputData(labelmapNode.GetImageData())
+                castFilter.SetOutputScalarTypeToShort()
+                castFilter.Update()
+                labelmapNode.SetAndObserveImageData(castFilter.GetOutput())
+            labelMapArray = slicer.util.arrayFromVolume(labelmapNode)
+            if labelMapArray.ndim == 2:
+                segmentationArray[frameIndex, :, :, 0] = labelMapArray
+            else:
+                segmentationArray[frameIndex, :, :, 0] = labelMapArray[0, :, :]
             segmentationArray[frameIndex, :, :, 0] = slicer.util.arrayFromVolume(labelmapNode)
             segmentationBrowserNode.SelectNextItem()
             # slicer.app.processEvents()
