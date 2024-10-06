@@ -138,6 +138,10 @@ class TimeSeriesAnnotationParameterNode:
     segmentationVolume: vtkMRMLScalarVolumeNode
     labelmapVolume: vtkMRMLLabelMapVolumeNode
     reconstructedVolume: vtkMRMLScalarVolumeNode
+    progressValue: int = 0  # Progress bar value (0-100)
+    progressMessage: str = ""  # Progress bar message
+    progressShow: bool = False  # Show progress bar
+    progressCancelRequest: bool = False  # Cancel export request
     
 #
 # TimeSeriesAnnotationWidget
@@ -236,6 +240,9 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         
         self.ui.deleteAllRecordedButton.connect("clicked(bool)", self.onDeleteAllRecordedButton)
         self.ui.sampleDataButton.connect("clicked(bool)", self.onSampleDataButton)
+        
+        # Create a progress bar for tracking export process
+        self.exportProgressBar = None
         
         settings = qt.QSettings()
         if settings.contains(self.OUTPUT_FOLDER_SETTING):
@@ -448,6 +455,22 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             self._parameterNode.ultrasoundModel.GetDisplayNode().SetVisibility(not self._parameterNode.showUltrasoundModel)
         
         self._updatingGuiFromParameterNode = False
+        
+        # Update progress bar
+        if self._parameterNode.progressShow:
+            if self.exportProgressBar is None:
+                self.exportProgressBar = slicer.util.createProgressDialog(parent=self.parent, windowTitle="Exporting data", labelText="...", maximum=100)
+                self.exportProgressBar.setWindowModality(qt.Qt.WindowModal)
+            if self.exportProgressBar.isHidden():
+                self.exportProgressBar.show()
+            self.exportProgressBar.labelText = self._parameterNode.progressMessage
+            self.exportProgressBar.value = self._parameterNode.progressValue
+            slicer.app.processEvents()
+            if self.exportProgressBar.wasCanceled:
+                self._parameterNode.progressCancelRequest = True
+        else:
+            if self.exportProgressBar is not None:
+                self.exportProgressBar.hide()
 
     def onCaptureButton(self) -> None:
         logging.info("onCaptureButton")
@@ -618,12 +641,7 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         """Export the recorded segmentations to a numpy file."""
         logging.info("onExportSequenceButton")
         
-        # Create a model dialog to inform the user that this process may take a couple of minutes
-        msgBox = qt.QMessageBox()
-        msgBox.setText("Exporting segmentations")
-        msgBox.setInformativeText("This process may take a couple of minutes")
-        msgBox.setStandardButtons(qt.QMessageBox.Ok)
-        msgBox.exec_()
+        self._parameterNode.progressShow = True
         
         # Export segmentations
         outputFolder = self.ui.outputDirectoryButton.directory
@@ -631,7 +649,7 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         self.logic.exportArrays(outputFolder, baseName)
         
         # Close the dialog
-        msgBox.close()
+        self._parameterNode.progressShow = False
         
     def onReconstructSegmentationsButton(self) -> None:
         # Create a model dialog to inform the user that this process may take a couple of minutes
@@ -854,8 +872,13 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
         ultrasoundArray = np.zeros((numFrames, frameRows, frameCols, 1), dtype=np.uint8)  # Create empty arrays to hold ultrasound images
         transformArray = np.zeros((numFrames, 4, 4), dtype=np.float32)  # Create empty arrays to hold transforms
         
+        parameterNode.progressMessage = "Exporting ultrasound and tracking data (1/2)"
+        parameterNode.progressValue = 0
         inputBrowserNode.SelectFirstItem()
         for i in range(numFrames):
+            if parameterNode.progressCancelRequest == True:
+                logging.info("Exporting data is cancelled")
+                return
             ultrasoundArray[i, :, :, 0] = slicer.util.arrayFromVolume(inputImage)[0, :, :]
             transformNodeId = inputImage.GetTransformNodeID()
             if transformNodeId:
@@ -863,15 +886,20 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
                 transformArray[i, :, :] = slicer.util.arrayFromTransformMatrix(transformNode, toWorld=True)
             else:
                 transformArray[i, :, :] = np.eye(4)
+            parameterNode.progressValue = int((i + 1) / numFrames * 99)
             inputBrowserNode.SelectNextItem()
-            # slicer.app.processEvents()
+            slicer.app.processEvents()
         
+        parameterNode.progressMessage = "Saving ultrasound and tracking data to files..."
         if useCompression:
             np.savez_compressed(imageFilepath, ultrasoundArray)
             np.savez_compressed(transformFilepath, transformArray)
         else:
             np.save(imageFilepath, ultrasoundArray)  # Save ultrasound images
             np.save(transformFilepath, transformArray)  # Save transforms
+        
+        parameterNode.progressMessage = "Exporting segmentation data (2/2)"
+        parameterNode.progressValue = 0
         
         # Prepare segmentation indices array
         numSegmentationItems = segmentationBrowserNode.GetNumberOfItems()
@@ -882,6 +910,9 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
         segmentationArray = np.zeros((numFrames, frameRows, frameCols, 1), dtype=np.uint8)  # Create empty arrays to hold segmentations
         segmentationBrowserNode.SelectFirstItem()
         for i in range(numSegmentationItems):
+            if parameterNode.progressCancelRequest == True:
+                logging.info("Exporting data is cancelled")
+                return
             segmentationLogic.ExportAllSegmentsToLabelmapNode(segmentation, labelmapNode, slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY)
             frameIndex = int(segmentation.GetAttribute(self.ORIGINAL_IMAGE_INDEX))
             frameIndices[i] = frameIndex
@@ -899,7 +930,11 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
                 segmentationArray[frameIndex, :, :, 0] = labelMapArray[0, :, :]
             segmentationArray[frameIndex, :, :, 0] = slicer.util.arrayFromVolume(labelmapNode)
             segmentationBrowserNode.SelectNextItem()
-            # slicer.app.processEvents()
+            parameterNode.progressValue = int((i + 1) / numSegmentationItems * 99)
+            slicer.app.processEvents()
+        
+        parameterNode.progressMessage = "Saving segmentations to file..."
+        slicer.app.processEvents()
         
         if useCompression:
             np.savez_compressed(segmentationFilepath, segmentationArray)
