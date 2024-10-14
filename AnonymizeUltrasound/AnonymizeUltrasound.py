@@ -76,6 +76,15 @@ def performPostModuleDiscoveryTasks():
     except ImportError:
         slicer.util.pip_install('opencv-python')
         import cv2
+    
+    global torch
+    try:
+        import torch
+    except ImportError:
+        logging.info("AnonymizeUltrasound: torch not found, installing...")
+        slicer.util.pip_install('torch')
+        import torch
+        
 
     
 #
@@ -135,7 +144,8 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.ui.keepFoldersCheckBox.connect('toggled(bool)', self.updateSettingsFromGUI)
         self.ui.convertGrayscaleCheckBox.connect('toggled(bool)', self.updateSettingsFromGUI)
         self.ui.compressionCheckBox.connect('toggled(bool)', self.updateSettingsFromGUI)
-        
+        self.ui.autoDefinedMaskCheckBox.connect('toggled(bool)', self.updateSettingsFromGUI)
+
         # Buttons
         self.ui.updateDicomsButton.connect('clicked(bool)', self.onUpdateDicomsButton)
         self.ui.nextSeriesButton.connect('clicked(bool)', self.onNextSeriesButton)
@@ -174,6 +184,11 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             settings.setValue('AnonymizeUltrasound/KeepFolderStructure', "True")
         else:
             settings.setValue('AnonymizeUltrasound/keepFolderStructure', "False")
+
+        if self.ui.autoDefinedMaskCheckBox.checked:
+            settings.setValue('AnonymizeUltrasound/AutoDefinedMask', "True")
+        else:
+            settings.setValue('AnonymizeUltrasound/AutoDefinedMask', "False")
 
     def onLabelsPathChanged(self, filePath):
         settings = qt.QSettings()
@@ -285,11 +300,13 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         keepFolders = settings.value('AnonymizeUltrasound/KeepFolderStructure', "True") == "True"
         convertGrayscale = settings.value('AnonymizeUltrasound/ConvertGrayscale', "True") == "True"
         compression = settings.value('AnonymizeUltrasound/Compression', "True") == "True"
+        autoMaskDefined = settings.value('AnonymizeUltrasound/AutoDefinedMask', "True") == "True"
         moduleWidget.ui.skipSingleframeCheckBox.checked = skipSingleFrame
         moduleWidget.ui.continueProgressCheckBox.checked = continueProgress
         moduleWidget.ui.keepFoldersCheckBox.checked = keepFolders
         moduleWidget.ui.convertGrayscaleCheckBox.checked = convertGrayscale
         moduleWidget.ui.compressionCheckBox.checked = compression
+        moduleWidget.ui.autoDefinedMaskCheckBox.checked = autoMaskDefined
 
         # Set initial states of widgets
         self.ui.inputsCollapsibleButton.collapsed = False
@@ -605,6 +622,19 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         if landmarkNode is None:
             logging.error(f"Landmark node not found: {self.logic.MASK_FAN_LANDMARKS}")
             return
+        
+        if self.ui.autoDefinedMaskCheckBox.checked:
+            maskFiducialsList = []
+            _, coords = self.logic.prepareDicomForModel()
+            for x, y in coords:
+                coord = [-x, -y, 0]
+                maskFiducialsList.append(coord)
+            
+            self.logic.setupScene(maskControlPointsList=maskFiducialsList)
+            
+            # Update the status
+            self._parameterNode.SetParameter(self.logic.STATUS, self.logic.STATUS_LANDMARKS_PLACED)
+            toggled = False
 
         if toggled:
             self.logic.resetMaskLandmarks()
@@ -2170,6 +2200,67 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         # Remove private tags
         if removePrivateTags:
             ds.remove_private_tags()
+    
+    def prepareDicomForModel(self):
+        if not hasattr(self, 'currentDicomDataset'):
+            logging.error("No current DICOM dataset loaded")
+            return None
+        
+        # TODO: Load the model, path to the model_config file in init??
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logging.info(f"The model will run on Device: {device}")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(script_dir, 'Resources/checkpoints/', 'trapisoid_model_traced.pt')
+        model = torch.jit.load(model_path).to(device).eval()
+
+        # TODO: Read current frame from sequence browser
+        currentSequenceBrowser = self.getParameterNode().GetNodeReference(self.CURRENT_SEQUENCE)
+        masterSequenceNode = currentSequenceBrowser.GetMasterSequenceNode()
+        currentVolumeNode = masterSequenceNode.GetNthDataNode(0)
+        currentVolumeArray = slicer.util.arrayFromVolume(currentVolumeNode)
+        frame_item = currentVolumeArray[0, :, :]
+        
+        if len(frame_item.shape) == 3 and frame_item.shape[2] == 3:
+            frame_item = cv2.cvtColor(frame_item, cv2.COLOR_RGB2GRAY)
+        original_frame_size = frame_item.shape[::-1]
+        
+        # TODO: Resize based on the model_config file
+        frame_item = cv2.resize(frame_item, (128, 160))
+        with torch.no_grad():
+            input_tensor = torch.tensor(np.expand_dims(np.expand_dims(np.array(frame_item), axis=0), axis=0)).float()
+            input_tensor = input_tensor.to(device)
+            output = model(input_tensor)
+        output = (torch.softmax(output, dim=1) > 0.5).cpu().numpy()
+        mask_output = np.uint8(output[0, 1, :, :]) 
+        mask_output = cv2.resize(np.uint8(output[0, 1, :, :]), original_frame_size)
+        logging.info(f"({str(mask_output.shape)}) Mask generated successfully")
+        # Find the four corners of the foreground
+        approx_corners = self.find_four_corners(mask_output)
+        if approx_corners is None:
+            logging.error("Could not find the four corners of the foreground in the mask")
+        else:
+            logging.info(f"Approximate corners: {approx_corners}")
+        return mask_output, approx_corners
+    
+    def find_four_corners(self, mask):
+        """
+        Find the four corners of the foreground in the mask.
+        """
+        # Find the four corners of the mask
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if len(contours) == 0:
+            return None
+        # Assuming the largest contour is the foreground
+        contour = max(contours, key=cv2.contourArea)
+        epsilon = 0.02 * cv2.arcLength(contour, True)
+        approx_corners = cv2.approxPolyDP(contour, epsilon, True)
+        # TODO: Handle cases where the contour is not a quadrilateral 
+        if len(approx_corners) == 4:
+            return approx_corners.reshape(4, 2)  # Return as (x, y) coordinates
+        else:
+            return None
         
 
 
