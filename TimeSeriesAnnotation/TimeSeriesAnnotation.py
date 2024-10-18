@@ -131,6 +131,8 @@ class TimeSeriesAnnotationParameterNode:
     inputSkipNumber: int = 4
     segmentationBrowser: vtkMRMLSequenceBrowserNode
     segmentation: vtkMRMLSegmentationNode
+    secondaryVolume: vtkMRMLScalarVolumeNode
+    secondarySliceNode: vtkMRMLScalarVolumeNode
     ultrasoundModel: vtkMRMLModelNode
     showUltrasoundModel: bool = True
     showOverlay: bool = True
@@ -162,6 +164,7 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         self.logic = None
         self._parameterNode = None
         self._parameterNodeGuiTag = None
+        self._lastLayout = 6  # Default layout is Red slice only
         
         self._updatingGuiFromParameterNode = False
             
@@ -286,7 +289,7 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
         
         # Set layout
         layoutManager = slicer.app.layoutManager()
-        layoutManager.setLayout(6)
+        layoutManager.setLayout(self._lastLayout)
 
         # Fit slice view to background
         redController = slicer.app.layoutManager().sliceWidget('Red').sliceController()
@@ -299,6 +302,8 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
             self._parameterNodeGuiTag = None
             self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._onParameterNodeModified)
+        
+        self._lastLayout = slicer.app.layoutManager().layout  # If the user explicitly changed the layout, recover that when re-entering the module
         
         self.ui.segmentEditorWidget.uninstallKeyboardShortcuts()
         self.disconnectKeyboardShortcuts()
@@ -468,6 +473,7 @@ class TimeSeriesAnnotationWidget(ScriptedLoadableModuleWidget, VTKObservationMix
             slicer.app.processEvents()
             if self.exportProgressBar.wasCanceled:
                 self._parameterNode.progressCancelRequest = True
+                self.exportProgressBar.reset()
         else:
             if self.exportProgressBar is not None:
                 self.exportProgressBar.hide()
@@ -882,7 +888,7 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
         parameterNode = self.getParameterNode()
         
         inputBrowserNode = parameterNode.inputBrowser
-        inputImage = parameterNode.inputVolume
+        inputVolumeNode = parameterNode.inputVolume
         segmentationBrowserNode = parameterNode.segmentationBrowser
         segmentation = parameterNode.segmentation
         
@@ -899,35 +905,85 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
             imageFilepath = os.path.join(outputFolder, f"{baseName}_ultrasound.npz")
             indicesFilepath = os.path.join(outputFolder, f"{baseName}_indices.npz")
             transformFilepath = os.path.join(outputFolder, f"{baseName}_transform.npz")
+            secondaryImageFilepath = os.path.join(outputFolder, f"{baseName}_secondary.npz")
         else:
             segmentationFilepath = os.path.join(outputFolder, f"{baseName}_segmentation.npy")
             imageFilepath = os.path.join(outputFolder, f"{baseName}_ultrasound.npy")
             indicesFilepath = os.path.join(outputFolder, f"{baseName}_indices.npy")
             transformFilepath = os.path.join(outputFolder, f"{baseName}_transform.npy")
+            secondaryImageFilepath = os.path.join(outputFolder, f"{baseName}_secondary.npy")
         
         # Calculate shape of output arrays
         numFrames = inputBrowserNode.GetNumberOfItems()
-        frameSize = slicer.util.arrayFromVolume(inputImage).shape
+        frameSize = slicer.util.arrayFromVolume(inputVolumeNode).shape
         frameRows = frameSize[1]
         frameCols = frameSize[2]
         
         ultrasoundArray = np.zeros((numFrames, frameRows, frameCols, 1), dtype=np.uint8)  # Create empty arrays to hold ultrasound images
         transformArray = np.zeros((numFrames, 4, 4), dtype=np.float32)  # Create empty arrays to hold transforms
         
+        # Prepare reslice filter if secondaryVolume is set
+        secondaryVolumeArray = None
+        reslice = None
+        secondaryVolumeToIjkMatrix = None
+        sliceToIjkTransform = None
+        secondaryVolumeNode = parameterNode.secondaryVolume
+        if secondaryVolumeNode:
+            secondaryVolumeToIjkMatrix = vtk.vtkMatrix4x4()
+            secondaryVolumeNode.GetRASToIJKMatrix(secondaryVolumeToIjkMatrix)
+            secondaryVolumeArray = np.zeros((numFrames, frameRows, frameCols, 1), dtype=np.int16)
+            reslice = vtk.vtkImageReslice()
+            reslice.SetInputData(secondaryVolumeNode.GetImageData())
+            sliceToIjkTransform = vtk.vtkTransform()
+            reslice.SetResliceTransform(sliceToIjkTransform)
+            reslice.SetInterpolationModeToLinear()
+            reslice.SetOutputOrigin(0.0, 0.0, 0.0)  # Must keep zero so transform overlays slice with volume
+            reslice.SetOutputSpacing(1.0, 1.0, 1.0)
+            reslice.SetOutputDimensionality(2)
+            reslice.SetOutputExtent(inputVolumeNode.GetImageData().GetExtent())
+            reslice.SetBackgroundLevel(0)
+            secondarySliceNode = parameterNode.secondarySliceNode
+            if secondarySliceNode is None:
+                secondarySliceNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "SecondarySliceVolume")
+                parameterNode.secondarySliceNode = secondarySliceNode
+        
+        # Iterate through each item in the input browser and convert the images and transforms to arrays
         parameterNode.progressMessage = "Exporting ultrasound and tracking data (1/2)"
         parameterNode.progressValue = 0
         inputBrowserNode.SelectFirstItem()
-        for i in range(numFrames):
+        for i in range(numFrames):  
             if parameterNode.progressCancelRequest == True:
                 logging.info("Exporting data is cancelled")
+                parameterNode.progressCancelRequest = False
                 return
-            ultrasoundArray[i, :, :, 0] = slicer.util.arrayFromVolume(inputImage)[0, :, :]
-            transformNodeId = inputImage.GetTransformNodeID()
-            if transformNodeId:
-                transformNode = slicer.mrmlScene.GetNodeByID(transformNodeId)
-                transformArray[i, :, :] = slicer.util.arrayFromTransformMatrix(transformNode, toWorld=True)
+            ultrasoundArray[i, :, :, 0] = slicer.util.arrayFromVolume(inputVolumeNode)[0, :, :]
+            imageToParentTransformNode = inputVolumeNode.GetParentTransformNode()
+            if imageToParentTransformNode:
+                transformArray[i, :, :] = slicer.util.arrayFromTransformMatrix(imageToParentTransformNode, toWorld=True)
             else:
                 transformArray[i, :, :] = np.eye(4)
+            if secondaryVolumeNode:
+                # Get the Image to RAS transform matrix
+                imageToRasMatrix = vtk.vtkMatrix4x4()
+                imageToParentTransformNode.GetMatrixTransformToWorld(imageToRasMatrix)
+                secondaryVolumeTransformNode = secondaryVolumeNode.GetParentTransformNode()
+                # Get Ras to SecondaryVolume transform matrix
+                rasToSecondaryVolumeMatrix = vtk.vtkMatrix4x4()
+                rasToSecondaryVolumeMatrix.Identity()
+                if secondaryVolumeTransformNode:
+                    secondaryVolumeTransformNode.GetMatrixTransformFromWorld(rasToSecondaryVolumeMatrix)
+                # Create the slice to IJK transform matrix
+                sliceToIjkTransform.Identity()
+                sliceToIjkTransform.Concatenate(secondaryVolumeToIjkMatrix)
+                sliceToIjkTransform.Concatenate(rasToSecondaryVolumeMatrix)
+                sliceToIjkTransform.Concatenate(imageToRasMatrix)
+                # Reslice the secondary volume to the same slice as the input volume
+                reslice.Update()
+                parameterNode.secondarySliceNode.SetAndObserveImageData(reslice.GetOutput())
+                parameterNode.secondarySliceNode.SetSpacing(1, 1, 1)
+                parameterNode.secondarySliceNode.CreateDefaultDisplayNodes()
+                secondaryVolumeArray[i, :, :, 0] = slicer.util.arrayFromVolume(parameterNode.secondarySliceNode)[0, :, :]
+                
             parameterNode.progressValue = int((i + 1) / numFrames * 99)
             inputBrowserNode.SelectNextItem()
             slicer.app.processEvents()
@@ -936,9 +992,13 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
         if useCompression:
             np.savez_compressed(imageFilepath, ultrasoundArray)
             np.savez_compressed(transformFilepath, transformArray)
+            if secondaryVolumeNode:
+                np.savez_compressed(secondaryImageFilepath, secondaryVolumeArray)
         else:
             np.save(imageFilepath, ultrasoundArray)  # Save ultrasound images
             np.save(transformFilepath, transformArray)  # Save transforms
+            if secondaryVolumeNode:
+                np.save(secondaryImageFilepath, secondaryVolumeArray)  # Save secondary images
         
         parameterNode.progressMessage = "Exporting segmentation data (2/2)"
         parameterNode.progressValue = 0
@@ -954,6 +1014,7 @@ class TimeSeriesAnnotationLogic(ScriptedLoadableModuleLogic):
         for i in range(numSegmentationItems):
             if parameterNode.progressCancelRequest == True:
                 logging.info("Exporting data is cancelled")
+                parameterNode.progressCancelRequest = False
                 return
             segmentationLogic.ExportAllSegmentsToLabelmapNode(segmentation, labelmapNode, slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY)
             frameIndex = int(segmentation.GetAttribute(self.ORIGINAL_IMAGE_INDEX))
