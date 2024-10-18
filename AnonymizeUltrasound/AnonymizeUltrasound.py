@@ -84,6 +84,14 @@ def performPostModuleDiscoveryTasks():
         logging.info("AnonymizeUltrasound: torch not found, installing...")
         slicer.util.pip_install('torch')
         import torch
+    
+    global yaml
+    try:
+        import yaml
+    except ImportError:
+        logging.info("AnonymizeUltrasound: yaml not found, installing...")
+        slicer.util.pip_install('PyYAML')
+        import yaml
         
 
     
@@ -623,14 +631,15 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             logging.error(f"Landmark node not found: {self.logic.MASK_FAN_LANDMARKS}")
             return
         
+
         if self.ui.autoDefinedMaskCheckBox.checked:
-            maskFiducialsList = []
+            # Get the mask control points
+            maskFiducialsNode = self._parameterNode.GetNodeReference(self.logic.MASK_FAN_LANDMARKS)
+            maskFiducialsNode.RemoveAllControlPoints()
             _, coords = self.logic.prepareDicomForModel()
             for x, y in coords:
                 coord = [-x, -y, 0]
-                maskFiducialsList.append(coord)
-            
-            self.logic.setupScene(maskControlPointsList=maskFiducialsList)
+                maskFiducialsNode.AddControlPoint(coord[0], coord[1], coord[2])
             
             # Update the status
             self._parameterNode.SetParameter(self.logic.STATUS, self.logic.STATUS_LANDMARKS_PLACED)
@@ -815,7 +824,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             markupsNode.RemoveAllControlPoints()
             for controlPoint in maskControlPointsList:
                 markupsNode.AddControlPoint(controlPoint)
-
+        # TODO: Double check if this is need to remove all observers 
         self.addObserver(markupsNode, slicer.vtkMRMLMarkupsNode.PointAddedEvent, self.onPointAdded)
         self.addObserver(markupsNode, slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self.onPointDefined)
         self.addObserver(markupsNode, slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self.onPointModified)
@@ -2212,22 +2221,39 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logging.info(f"The model will run on Device: {device}")
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(script_dir, 'Resources/checkpoints/', 'trapisoid_model_traced.pt')
+        model_path = os.path.join(script_dir, 'Resources/checkpoints/', 'model_traced.pt')
         model = torch.jit.load(model_path).to(device).eval()
+        # read model config yaml file 
+        model_config_path = os.path.join(script_dir, 'Resources/checkpoints/', 'model_config.yaml')
+        with open(model_config_path, 'r') as file:
+            model_config = yaml.safe_load(file)
+        # read the model input shape from the model_config file
+        input_shape_str = model_config['input_shape']
+        # Convert the input_shape string to a tuple
+        input_shape = tuple(map(int, input_shape_str.strip('()').split(',')))
 
-        # TODO: Read current frame from sequence browser
+        # Read the current sequence browser node
+        slicer.app.pauseRender()
         currentSequenceBrowser = self.getParameterNode().GetNodeReference(self.CURRENT_SEQUENCE)
         masterSequenceNode = currentSequenceBrowser.GetMasterSequenceNode()
         currentVolumeNode = masterSequenceNode.GetNthDataNode(0)
         currentVolumeArray = slicer.util.arrayFromVolume(currentVolumeNode)
-        frame_item = currentVolumeArray[0, :, :]
+        maxVolumeArray = np.copy(currentVolumeArray)
         
+        # Find the maximum pixel value in the sequence
+        for i in range(1, masterSequenceNode.GetNumberOfDataNodes()):
+            currentVolumeNode = masterSequenceNode.GetNthDataNode(i)
+            currentVolumeArray = slicer.util.arrayFromVolume(currentVolumeNode)
+            maxVolumeArray = np.maximum(maxVolumeArray, currentVolumeArray)
+        frame_item = maxVolumeArray[0, :, :]
+        slicer.app.resumeRender()
+        # Convert RGB images to grayscale
         if len(frame_item.shape) == 3 and frame_item.shape[2] == 3:
             frame_item = cv2.cvtColor(frame_item, cv2.COLOR_RGB2GRAY)
         original_frame_size = frame_item.shape[::-1]
         
-        # TODO: Resize based on the model_config file
-        frame_item = cv2.resize(frame_item, (128, 160))
+        # Resize based on the model_config input shape
+        frame_item = cv2.resize(frame_item, input_shape)
         with torch.no_grad():
             input_tensor = torch.tensor(np.expand_dims(np.expand_dims(np.array(frame_item), axis=0), axis=0)).float()
             input_tensor = input_tensor.to(device)
@@ -2236,6 +2262,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         mask_output = np.uint8(output[0, 1, :, :]) 
         mask_output = cv2.resize(np.uint8(output[0, 1, :, :]), original_frame_size)
         logging.info(f"({str(mask_output.shape)}) Mask generated successfully")
+        
         # Find the four corners of the foreground
         approx_corners = self.find_four_corners(mask_output)
         if approx_corners is None:
