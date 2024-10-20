@@ -9,6 +9,7 @@ import os
 import shutil
 import time
 import numpy as np
+import requests
 
 from PIL import Image
 import pydicom
@@ -92,8 +93,6 @@ def performPostModuleDiscoveryTasks():
         logging.info("AnonymizeUltrasound: yaml not found, installing...")
         slicer.util.pip_install('PyYAML')
         import yaml
-        
-
     
 #
 # AnonymizeUltrasoundWidget
@@ -636,14 +635,15 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             # Get the mask control points
             maskFiducialsNode = self._parameterNode.GetNodeReference(self.logic.MASK_FAN_LANDMARKS)
             maskFiducialsNode.RemoveAllControlPoints()
-            _, coords = self.logic.prepareDicomForModel()
-            for x, y in coords:
-                coord = [-x, -y, 0]
-                maskFiducialsNode.AddControlPoint(coord[0], coord[1], coord[2])
-            
-            # Update the status
-            self._parameterNode.SetParameter(self.logic.STATUS, self.logic.STATUS_LANDMARKS_PLACED)
-            toggled = False
+            coords = self.logic.prepareDicomForModel()
+            if coords is not None:
+                for x, y in coords:
+                    coord = [-x, -y, 0]
+                    maskFiducialsNode.AddControlPoint(coord[0], coord[1], coord[2])
+                
+                # Update the status
+                self._parameterNode.SetParameter(self.logic.STATUS, self.logic.STATUS_LANDMARKS_PLACED)
+                toggled = False
 
         if toggled:
             self.logic.resetMaskLandmarks()
@@ -2221,10 +2221,34 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logging.info(f"The model will run on Device: {device}")
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(script_dir, 'Resources/checkpoints/', 'model_traced.pt')
+        checkpoint_dir = os.path.join(script_dir, 'Resources/checkpoints/')
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(checkpoint_dir), exist_ok=True)
+        model_path = os.path.join(checkpoint_dir, 'model_traced.pt')
+        model_config_path = os.path.join(checkpoint_dir, 'model_config.yaml')
+
+        # TODO: Put these url in a config file for anonymize ultrasound module?
+        # URLs for downloading the model and config
+        model_url = "https://www.dropbox.com/scl/fi/abgn6ln13thh0v9mq5kqj/model_traced.pt?rlkey=8a9eugxbqeuzwrglz55sh7hkd&st=mwclwtgv&dl=1"
+        config_url = "https://www.dropbox.com/scl/fi/klnwakbysn95nae85lmjz/model_config.yaml?rlkey=p1jada30bvbsihtfiw80dq7h2&st=7a8y0ewy&dl=1"  
+
+        # Check if the model file exists, if not download it
+        if not os.path.exists(model_path):
+            logging.info(f"The AI model does not exist. Starting download...")
+            dialog = AnonymizeUltrasoundWidget.createWaitDialog(self,"Downloading AI Model", "The AI model does not exist. Downloading...")
+            success = self.download_model(model_url, model_path)
+            dialog.close()
+            if not success:
+                return None
+        # Check if the model config file exists, if not download it
+        if not os.path.exists(model_config_path):
+            logging.info(f"The model config file does not exist. Starting download...")
+            success = self.download_model(config_url, model_config_path)
+            if not success:            
+                return None
+        # Load the model
         model = torch.jit.load(model_path).to(device).eval()
         # read model config yaml file 
-        model_config_path = os.path.join(script_dir, 'Resources/checkpoints/', 'model_config.yaml')
         with open(model_config_path, 'r') as file:
             model_config = yaml.safe_load(file)
         # read the model input shape from the model_config file
@@ -2269,8 +2293,28 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             logging.error("Could not find the four corners of the foreground in the mask")
         else:
             logging.info(f"Approximate corners: {approx_corners}")
-        return mask_output, approx_corners
+        return approx_corners
     
+    def download_model(self, url, output_path):
+        try:
+            # Send a GET request to the URL
+            response = requests.get(url, stream=True)
+        
+            # Raise an exception if the request was unsuccessful
+            response.raise_for_status()
+
+            # Write the content to the file
+            with open(output_path, 'wb') as file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    file.write(chunk)
+        
+            logging.info(f"Downloaded file saved to {output_path}")
+            return True
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Failed to download the file: {e}")
+            # TODO: Disable the button of Auto mask generation?
+            return False
+
     def find_four_corners(self, mask):
         """
         Find the four corners of the foreground in the mask.
