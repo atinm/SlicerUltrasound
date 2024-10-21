@@ -635,7 +635,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             # Get the mask control points
             maskFiducialsNode = self._parameterNode.GetNodeReference(self.logic.MASK_FAN_LANDMARKS)
             maskFiducialsNode.RemoveAllControlPoints()
-            coords = self.logic.prepareDicomForModel()
+            coords = self.logic.getAutoMask()
             if coords is not None:
                 for x, y in coords:
                     coord = [-x, -y, 0]
@@ -2210,53 +2210,70 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         if removePrivateTags:
             ds.remove_private_tags()
     
-    def prepareDicomForModel(self):
+    def getAutoMask(self):
         if not hasattr(self, 'currentDicomDataset'):
             logging.error("No current DICOM dataset loaded")
             return None
-        
-        # TODO: Load the model, path to the model_config file in init??
+        model, input_shape, device = self.downloadAndPrepareModel()
+        if model is None:
+            return None
+        return self.findMaskAutomatic(model, input_shape, device)
+    
+    def downloadAndPrepareModel(self):
+        """ Download the AI model and prepare it for inference """
+        # Set the Device to run the model on
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logging.info(f"The model will run on Device: {device}")
+        
         script_dir = os.path.dirname(os.path.abspath(__file__))
         checkpoint_dir = os.path.join(script_dir, 'Resources/checkpoints/')
-        # Ensure the directory exists
         os.makedirs(os.path.dirname(checkpoint_dir), exist_ok=True)
+
         model_path = os.path.join(checkpoint_dir, 'model_traced.pt')
         model_config_path = os.path.join(checkpoint_dir, 'model_config.yaml')
-
-        # TODO: Put these url in a config file for anonymize ultrasound module?
-        # URLs for downloading the model and config
+    
         model_url = "https://www.dropbox.com/scl/fi/abgn6ln13thh0v9mq5kqj/model_traced.pt?rlkey=8a9eugxbqeuzwrglz55sh7hkd&st=mwclwtgv&dl=1"
         config_url = "https://www.dropbox.com/scl/fi/klnwakbysn95nae85lmjz/model_config.yaml?rlkey=p1jada30bvbsihtfiw80dq7h2&st=7a8y0ewy&dl=1"  
-
-        # Check if the model file exists, if not download it
+    
         if not os.path.exists(model_path):
             logging.info(f"The AI model does not exist. Starting download...")
-            dialog = AnonymizeUltrasoundWidget.createWaitDialog(self,"Downloading AI Model", "The AI model does not exist. Downloading...")
+            dialog = AnonymizeUltrasoundWidget.createWaitDialog(self, "Downloading AI Model", "The AI model does not exist. Downloading...")
             success = self.download_model(model_url, model_path)
             dialog.close()
             if not success:
                 return None
-        # Check if the model config file exists, if not download it
+    
         if not os.path.exists(model_config_path):
             logging.info(f"The model config file does not exist. Starting download...")
             success = self.download_model(config_url, model_config_path)
             if not success:            
                 return None
-        # Load the model
-        model = torch.jit.load(model_path).to(device).eval()
-        # read model config yaml file 
-        with open(model_config_path, 'r') as file:
-            model_config = yaml.safe_load(file)
-        # read the model input shape from the model_config file
-        input_shape_str = model_config['input_shape']
-        # Convert the input_shape string to a tuple
-        input_shape = tuple(map(int, input_shape_str.strip('()').split(',')))
-
-        # Read the current sequence browser node
+        # Check if the model loaded successfully
+        try:
+            model = torch.jit.load(model_path).to(device).eval()
+        except Exception as e:
+            logging.error(f"Failed to load the model: {e}")
+            logging.error("Automatic mode is disabled. Please define the mask manually.")            
+            # TODO: Disable the button of Auto mask generation?
+            return None, None, None
+        # Check if the model config loaded successfully
+        try:
+            with open(model_config_path, 'r') as file:
+                model_config = yaml.safe_load(file)
+            input_shape_str = model_config['input_shape']
+            input_shape = tuple(map(int, input_shape_str.strip('()').split(',')))
+        except Exception as e:
+            logging.error(f"Failed to load the model config: {e}")
+            logging.error("Automatic mode is disabled. Please define the mask manually.")            
+            # TODO: Disable the button of Auto mask generation?
+            return None, None, None
+    
+        return model, input_shape, device
+    
+    def findMaskAutomatic(self, model, input_shape, device):
+        """ Generate a mask automatically using the AI model """
         slicer.app.pauseRender()
         currentSequenceBrowser = self.getParameterNode().GetNodeReference(self.CURRENT_SEQUENCE)
         masterSequenceNode = currentSequenceBrowser.GetMasterSequenceNode()
@@ -2264,20 +2281,18 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         currentVolumeArray = slicer.util.arrayFromVolume(currentVolumeNode)
         maxVolumeArray = np.copy(currentVolumeArray)
         
-        # Find the maximum pixel value in the sequence
         for i in range(1, masterSequenceNode.GetNumberOfDataNodes()):
             currentVolumeNode = masterSequenceNode.GetNthDataNode(i)
             currentVolumeArray = slicer.util.arrayFromVolume(currentVolumeNode)
             maxVolumeArray = np.maximum(maxVolumeArray, currentVolumeArray)
         frame_item = maxVolumeArray[0, :, :]
         slicer.app.resumeRender()
-        # Convert RGB images to grayscale
+    
         if len(frame_item.shape) == 3 and frame_item.shape[2] == 3:
             frame_item = cv2.cvtColor(frame_item, cv2.COLOR_RGB2GRAY)
         original_frame_size = frame_item.shape[::-1]
-        
-        # Resize based on the model_config input shape
         frame_item = cv2.resize(frame_item, input_shape)
+        
         with torch.no_grad():
             input_tensor = torch.tensor(np.expand_dims(np.expand_dims(np.array(frame_item), axis=0), axis=0)).float()
             input_tensor = input_tensor.to(device)
@@ -2286,8 +2301,6 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         mask_output = np.uint8(output[0, 1, :, :]) 
         mask_output = cv2.resize(np.uint8(output[0, 1, :, :]), original_frame_size)
         logging.info(f"({str(mask_output.shape)}) Mask generated successfully")
-        
-        # Find the four corners of the foreground
         approx_corners = self.find_four_corners(mask_output)
         if approx_corners is None:
             logging.error("Could not find the four corners of the foreground in the mask")
@@ -2296,18 +2309,16 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         return approx_corners
     
     def download_model(self, url, output_path):
+        """ Download a file from a URL """
         try:
             # Send a GET request to the URL
             response = requests.get(url, stream=True)
-        
             # Raise an exception if the request was unsuccessful
             response.raise_for_status()
-
             # Write the content to the file
             with open(output_path, 'wb') as file:
                 for chunk in response.iter_content(chunk_size=8192):
                     file.write(chunk)
-        
             logging.info(f"Downloaded file saved to {output_path}")
             return True
         except requests.exceptions.RequestException as e:
@@ -2316,10 +2327,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             return False
 
     def find_four_corners(self, mask):
-        """
-        Find the four corners of the foreground in the mask.
-        """
-        # Find the four corners of the mask
+        """ Find the four corners of the foreground in the mask. """
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if len(contours) == 0:
             return None
@@ -2333,8 +2341,6 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         else:
             return None
         
-
-
 #
 # AnonymizeUltrasoundTest
 #
