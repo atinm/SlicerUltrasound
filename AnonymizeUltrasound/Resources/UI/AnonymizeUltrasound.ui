@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>481</width>
-    <height>865</height>
+    <height>771</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout" stretch="0,0,1,0,0,0">
@@ -233,8 +233,8 @@
           <rect>
            <x>0</x>
            <y>0</y>
-           <width>441</width>
-           <height>212</height>
+           <width>459</width>
+           <height>140</height>
           </rect>
          </property>
          <layout class="QVBoxLayout" name="verticalLayout_4"/>
@@ -285,6 +285,13 @@
       <bool>false</bool>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout_3">
+      <item>
+       <widget class="QCheckBox" name="autoDefinedMaskCheckBox">
+        <property name="text">
+         <string>Define mask automatically</string>
+        </property>
+       </widget>
+      </item>
       <item>
        <widget class="QCheckBox" name="skipSingleframeCheckBox">
         <property name="text">
