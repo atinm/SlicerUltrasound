@@ -2355,12 +2355,29 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             with open(output_path, 'wb') as file:
                 for chunk in response.iter_content(chunk_size=8192):
                     file.write(chunk)
-            logging.info(f"Downloaded file saved to {output_path}")
+            logger.info(f"Downloaded file saved to {output_path}")
             return True
         except requests.exceptions.RequestException as e:
-            logging.error(f"Failed to download the file: {e}")
+            logger.error(f"Failed to download the file: {e}")
             # TODO: Disable the button of Auto mask generation?
             return False
+
+    def sort_points(self, points):
+        """ Sort points so top left is first, then top right, then bottom left, then bottom right. """
+        
+        if len(points) != 4:
+            return None
+        
+        sorter_by_y = sorted(points, key=lambda x: x[1])
+        bottom_points = sorter_by_y[2:]
+        top_points = sorter_by_y[:2]
+        
+        top_left = min(top_points, key=lambda x: x[0])
+        top_right = max(top_points, key=lambda x: x[0])
+        bottom_left = min(bottom_points, key=lambda x: x[0])
+        bottom_right = max(bottom_points, key=lambda x: x[0])
+        
+        return np.array([top_left, top_right, bottom_left, bottom_right])
 
     def find_four_corners(self, mask):
         """ Find the four corners of the foreground in the mask. """
@@ -2373,7 +2390,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         approx_corners = cv2.approxPolyDP(contour, epsilon, True)
         # TODO: Handle cases where the contour is not a quadrilateral 
         if len(approx_corners) == 4:
-            return approx_corners.reshape(4, 2)  # Return as (x, y) coordinates
+            return self.sort_points(approx_corners.reshape(4, 2))  # Return as (x, y) coordinates
         else:
             return None
         
