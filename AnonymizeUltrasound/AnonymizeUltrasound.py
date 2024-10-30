@@ -1557,27 +1557,27 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         # Define a mapping between DICOM tags and keys in the dicom_header_data
         
         dicom_tag_mapping = {
-            "BitsAllocated": "bits allocated",
-            "BitsStored": "bits stored",
-            "HighBit": "high bit",
-            "ManufacturerModelName": "manufacturer model name",
-            "PatientAge": "patient age",
-            "PatientID": "patient id",
-            "PatientName": "patient name",
-            "PatientSex": "patient sex",
-            "PixelRepresentation": "pixel representation",
-            "SeriesNumber": "series number",
-            "SOPClassUID": "sop class uid",
-            "SOPInstanceUID": "sop instance uid",
-            "StationName": "station name",
-            "StudyDate": "study date",
-            "StudyDescription": "study description",
-            "StudyID": "study id",
-            "StudyInstanceUID": "study instance uid",
-            "StudyTime": "study time",
-            "TransducerType": "transducer"
+            "BitsAllocated": "Bits Allocated",
+            "BitsStored": "Bits Stored",
+            "HighBit": "High Bit",
+            "ManufacturerModelName": "Manufacturer's Model Name",
+            "PatientAge": "Patient's Age",
+            "PatientID": "Patient ID",
+            "PatientName": "Patient's Name",
+            "PatientSex": "Patient's Sex",
+            "PixelRepresentation": "Pixel Representation",
+            "SeriesNumber": "Series Number",
+            "SOPClassUID": "SOP Class UID",
+            "SOPInstanceUID": "SOP Instance UID",
+            "StationName": "Station Name",
+            "StudyDate": "Study Date",
+            "StudyDescription": "Study Description",
+            "StudyID": "Study ID",
+            "StudyInstanceUID": "Study Instance UID",
+            "StudyTime": "Study Time",
+            "TransducerType": "Transducer Data"
         }
-
+        
         # Set the DICOM tags from the JSON header file
         for dicom_tag, header_key in dicom_tag_mapping.items():
             if header_key in dicom_header_data:
