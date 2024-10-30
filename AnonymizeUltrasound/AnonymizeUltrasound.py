@@ -328,13 +328,6 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         # Make sure parameter node exists and observed
         self.initializeParameterNode()
         
-        # Collapse DataProbe widget
-        mw = slicer.util.mainWindow()
-        if mw:
-            w = slicer.util.findChild(mw, "DataProbeCollapsibleWidget")
-            if w:
-                w.collapsed = True
-
         # If this is the first enter, initialize GUI
         if self.notEnteredYet:
             self.notEnteredYet = False
@@ -347,6 +340,13 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         # Make sure all nodes exist
         self.logic.setupScene()
+        
+        # Collapse DataProbe widget
+        mw = slicer.util.mainWindow()
+        if mw:
+            w = slicer.util.findChild(mw, "DataProbeCollapsibleWidget")
+            if w:
+                w.collapsed = True
 
 
     def exit(self):
@@ -1536,7 +1536,6 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
                 ds.PhotometricInterpretation = "YBR_FULL_422"
 
         # Ensure the data type of numpy array matches the expected pixel data type
-        ds.BitsAllocated = 8
         ds.Modality = 'US'
         
         # Set the pixel data
@@ -1555,47 +1554,48 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         
         if hasattr(original_ds, "Manufacturer") and original_ds.Manufacturer:
             ds.Manufacturer = original_ds.Manufacturer
+        # Define a mapping between DICOM tags and keys in the dicom_header_data
         
-        # Find and set the following DICOM tags from the JSON header file:
-        for key in dicom_header_data.keys():
-            if "patient" in key.lower() and "name" in key.lower():
-                ds.PatientName = str(dicom_header_data[key])
-            if "patient id" in key.lower():
-                ds.PatientID = str(dicom_header_data[key])
-            if "study id" in key.lower():
-                ds.StudyID = str(dicom_header_data[key])
-            if "study date" in key.lower():
-                ds.StudyDate = dicom_header_data[key]
-            if "study time" in key.lower():
-                ds.StudyTime = dicom_header_data[key]
-            if "study description" in key.lower():
-                ds.StudyDescription = dicom_header_data[key]
-            if "patient" in key.lower() and "sex" in key.lower():
-                ds.PatientSex = dicom_header_data[key]
-            if "patient" in key.lower() and "age" in key.lower():
-                ds.PatientAge = dicom_header_data[key]
-            if "series number" in key.lower():
-                ds.SeriesNumber = dicom_header_data[key]
-            if "study instance uid" in key.lower():
-                ds.StudyInstanceUID = dicom_header_data[key]
-            # If we keep the SeriesInstanceUID from the original DICOM header, only one series is displayed in the DICOM viewer
-            # Either comment out the next two lines, or patch the original DICOM to generate different series IDs for different instances.
-            if "series instance uid" in key.lower():
-                ds.SeriesInstanceUID = dicom_header_data[key]
+        dicom_tag_mapping = {
+            "BitsAllocated": "bits allocated",
+            "BitsStored": "bits stored",
+            "HighBit": "high bit",
+            "ManufacturerModelName": "manufacturer model name",
+            "PatientAge": "patient age",
+            "PatientID": "patient id",
+            "PatientName": "patient name",
+            "PatientSex": "patient sex",
+            "PixelRepresentation": "pixel representation",
+            "SeriesNumber": "series number",
+            "SOPClassUID": "sop class uid",
+            "SOPInstanceUID": "sop instance uid",
+            "StationName": "station name",
+            "StudyDate": "study date",
+            "StudyDescription": "study description",
+            "StudyID": "study id",
+            "StudyInstanceUID": "study instance uid",
+            "StudyTime": "study time",
+            "TransducerType": "transducer"
+        }
+
+        # Set the DICOM tags from the JSON header file
+        for dicom_tag, header_key in dicom_tag_mapping.items():
+            if header_key in dicom_header_data:
+                setattr(ds, dicom_tag, dicom_header_data[header_key])
             else:
-                ds.SeriesInstanceUID = generate_uid()
-            if "sop Instance uid" in key.lower():
-                ds.SOPInstanceUID = dicom_header_data[key]
-            else:
-                ds.SOPInstanceUID = generate_uid()
-            if "sop class uid" in key.lower():
-                ds.SOPClassUID = dicom_header_data[key]
-            if "manufacturer" in key.lower() and "model name" in key.lower():
-                ds.ManufacturerModelName = dicom_header_data[key]
-            if "transducer" in key.lower():
-                ds.TransducerType = dicom_header_data[key]
-            if "station name" in key.lower():
-                ds.StationName = dicom_header_data[key]
+                if dicom_tag in ["BitsAllocated", "BitsStored", "HighBit", "PixelRepresentation"]:  # Mandatory for OHIF
+                    logging.error(f"{dicom_tag} not found for DICOM header file: {dicomFilePath}")
+
+        # Handle special cases for UIDs
+        if "series instance uid" in dicom_header_data:
+            ds.SeriesInstanceUID = dicom_header_data["series instance uid"]
+        else:
+            ds.SeriesInstanceUID = generate_uid()
+
+        if "sop instance uid" in dicom_header_data:
+            ds.SOPInstanceUID = dicom_header_data["sop instance uid"]
+        else:
+            ds.SOPInstanceUID = generate_uid()
         
         # Set default SOPClassUID if not present
         if not hasattr(ds, 'SOPClassUID'):
