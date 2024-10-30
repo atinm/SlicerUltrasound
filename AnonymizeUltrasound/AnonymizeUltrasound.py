@@ -661,20 +661,42 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             logging.error(f"Landmark node not found: {self.logic.MASK_FAN_LANDMARKS}")
             return
         
-
         if self.ui.autoDefinedMaskCheckBox.checked:
             # Get the mask control points
             maskFiducialsNode = self._parameterNode.GetNodeReference(self.logic.MASK_FAN_LANDMARKS)
             maskFiducialsNode.RemoveAllControlPoints()
-            coords = self.logic.getAutoMask()
-            if coords is not None:
-                for x, y in coords:
-                    coord = [-x, -y, 0]
-                    maskFiducialsNode.AddControlPoint(coord[0], coord[1], coord[2])
+            coords_IJK = self.logic.getAutoMask()
+            if coords_IJK is None:
+                logging.error("Auto mask not found")
+                return
+            # Get IJK to RAS matrix from the volume node
+            currentVolumeNode = self.logic.getCurrentProxyNode()
+            if currentVolumeNode is None:
+                logging.error("Current volume node not found")
+                return
+
+            ijkToRas = vtk.vtkMatrix4x4()
+            currentVolumeNode.GetIJKToRASMatrix(ijkToRas)
+            
+            num_points = coords_IJK.shape[0]
+            coords_RAS = np.zeros((num_points, 4))
+            for i in range(num_points):
+                point_IJK = np.array([coords_IJK[i, 0], coords_IJK[i, 1], 0, 1])
+                # convert to IJK
+                coords_RAS[i, :] = ijkToRas.MultiplyPoint(point_IJK)
+            
+            for i in range(num_points):
+                coord = coords_RAS[i, :]
+                maskFiducialsNode.AddControlPoint(coord[0], coord[1], coord[2])
+            
+            # if coords_IJK is not None:
+            #     for x, y in coords_IJK:
+            #         coord = [-x, -y, 0]
+            #         maskFiducialsNode.AddControlPoint(coord[0], coord[1], coord[2])
                 
-                # Update the status
-                self._parameterNode.SetParameter(self.logic.STATUS, self.logic.STATUS_LANDMARKS_PLACED)
-                toggled = False
+            # Update the status
+            self._parameterNode.SetParameter(self.logic.STATUS, self.logic.STATUS_LANDMARKS_PLACED)
+            toggled = False
 
         if toggled:
             self.logic.resetMaskLandmarks()
