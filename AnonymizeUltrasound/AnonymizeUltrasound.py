@@ -2383,24 +2383,41 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             logger.error(f"Failed to download the file: {e}")
             # TODO: Disable the button of Auto mask generation?
             return False
+    
+    def find_extreme_corners(self, points):
+        # Convert points to a numpy array for easier manipulation
+        points = np.array(points)
+        # Find the top-left corner (minimum x + y)
+        top_left = list(points[np.argmin(points[:, 0] + points[:, 1])])
+        # Find the top-right corner (maximum x - y)
+        top_right = list(points[np.argmax(points[:, 0] - points[:, 1])])
+        # Find the bottom-left corner (minimum x - y)
+        bottom_left = list(points[np.argmin(points[:, 0] - points[:, 1])])
+        # Find the bottom-right corner (maximum x + y)
+        bottom_right = list(points[np.argmax(points[:, 0] + points[:, 1])])
 
-    def sort_points(self, points):
-        """ Sort points so top left is first, then top right, then bottom left, then bottom right. """
-        
-        if len(points) != 4:
+        corners = [tuple(top_left), tuple(top_right), tuple(bottom_left), tuple(bottom_right)]
+        unique_corners = set(corners)
+        num_unique_corners = len(unique_corners)
+
+        # If there are 3 unique corners, then the mask is a triangle
+        epsilon = 2 
+        if num_unique_corners == 3:
+            # Define the top point (which one is higher from top-left and top-right, higher means less y)
+            top_point = top_left if top_left[1] < top_right[1] else top_right
+            # Set top-left and top-right equal to top_point
+            top_left = list(top_point)
+            top_right = list(top_point)
+            # Adjust x coordinates
+            top_left[0] -= epsilon
+            top_right[0] += epsilon
+    
+        # TODO: Is it possible?!
+        if num_unique_corners < 3:
             return None
-        
-        sorter_by_y = sorted(points, key=lambda x: x[1])
-        bottom_points = sorter_by_y[2:]
-        top_points = sorter_by_y[:2]
-        
-        top_left = min(top_points, key=lambda x: x[0])
-        top_right = max(top_points, key=lambda x: x[0])
-        bottom_left = min(bottom_points, key=lambda x: x[0])
-        bottom_right = max(bottom_points, key=lambda x: x[0])
-        
+    
         return np.array([top_left, top_right, bottom_left, bottom_right])
-
+    
     def find_four_corners(self, mask):
         """ Find the four corners of the foreground in the mask. """
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -2410,12 +2427,17 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         contour = max(contours, key=cv2.contourArea)
         epsilon = 0.02 * cv2.arcLength(contour, True)
         approx_corners = cv2.approxPolyDP(contour, epsilon, True)
-        # TODO: Handle cases where the contour is not a quadrilateral 
-        if len(approx_corners) == 4:
-            return self.sort_points(approx_corners.reshape(4, 2))  # Return as (x, y) coordinates
-        else:
+
+        # Reshape the approx_corners array to a 2D array
+        approx_corners = approx_corners.reshape(-1, 2)
+
+        # If the contour has more than 4 corners, then find the extreme corners
+        if len(approx_corners) < 3:
             return None
-        
+
+        approx_corners = self.find_extreme_corners(approx_corners)
+        return approx_corners
+
 #
 # AnonymizeUltrasoundTest
 #
