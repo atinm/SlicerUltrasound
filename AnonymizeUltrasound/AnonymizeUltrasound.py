@@ -27,36 +27,6 @@ from slicer.util import VTKObservationMixin
 from DICOMLib import DICOMUtils
 import datetime
 
-
-def create_logger():
-    # Create logs directory if it doesn't exist
-    log_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'logs')
-    os.makedirs(log_dir, exist_ok=True)
-
-    # Generate log file path with timestamp
-    timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    log_file_path = os.path.join(log_dir, f'{timestamp}.log')
-
-    # Configure logger
-    logger = logging.getLogger('AnonymizeUltrasound')
-    logger.setLevel(logging.DEBUG)
-
-    # Create file handler
-    file_handler = logging.FileHandler(log_file_path)
-    file_handler.setLevel(logging.DEBUG)
-
-    # Create formatter and add it to the handler
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    file_handler.setFormatter(formatter)
-
-    # Add the handler to the logger
-    logger.addHandler(file_handler)
-
-    return logger
-
-# Call the create_logger function
-logger = create_logger()
-
 #
 # AnonymizeUltrasound
 #
@@ -1338,7 +1308,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         self.maskParameters["image_size_rows"] = image_size_rows
         self.maskParameters["image_size_cols"] = image_size_cols
 
-        logger.debug(f"Radius1: {radius1}, Radius2: {radius2}, Angle1: {angle1}, Angle2: {angle2}, Center: ({center_cols_px}, {center_rows_px})") 
+        logging.debug(f"Radius1: {radius1}, Radius2: {radius2}, Angle1: {angle1}, Angle2: {angle2}, Center: ({center_cols_px}, {center_rows_px})") 
         return mask_array
 
     def line_coefficients(self, p1, p2):
@@ -2279,7 +2249,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info(f"The model will run on Device: {device}")
+        logging.info(f"The model will run on Device: {device}")
         
         script_dir = os.path.dirname(os.path.abspath(__file__))
         checkpoint_dir = os.path.join(script_dir, 'Resources/checkpoints/')
@@ -2292,7 +2262,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         config_url = "https://www.dropbox.com/scl/fi/klnwakbysn95nae85lmjz/model_config.yaml?rlkey=p1jada30bvbsihtfiw80dq7h2&st=7a8y0ewy&dl=1"  
     
         if not os.path.exists(model_path):
-            logger.info(f"The AI model does not exist. Starting download...")
+            logging.info(f"The AI model does not exist. Starting download...")
             dialog = AnonymizeUltrasoundWidget.createWaitDialog(self, "Downloading AI Model", "The AI model does not exist. Downloading...")
             success = self.download_model(model_url, model_path)
             dialog.close()
@@ -2300,7 +2270,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
                 return None
     
         if not os.path.exists(model_config_path):
-            logger.info(f"The model config file does not exist. Starting download...")
+            logging.info(f"The model config file does not exist. Starting download...")
             success = self.download_model(config_url, model_config_path)
             if not success:            
                 return None
@@ -2308,8 +2278,8 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         try:
             model = torch.jit.load(model_path).to(device).eval()
         except Exception as e:
-            logger.error(f"Failed to load the model: {e}")
-            logger.error("Automatic mode is disabled. Please define the mask manually.")            
+            logging.error(f"Failed to load the model: {e}")
+            logging.error("Automatic mode is disabled. Please define the mask manually.")            
             # TODO: Disable the button of Auto mask generation?
             return None, None, None
         # Check if the model config loaded successfully
@@ -2319,8 +2289,8 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             input_shape_str = model_config['input_shape']
             input_shape = tuple(map(int, input_shape_str.strip('()').split(',')))
         except Exception as e:
-            logger.error(f"Failed to load the model config: {e}")
-            logger.error("Automatic mode is disabled. Please define the mask manually.")            
+            logging.error(f"Failed to load the model config: {e}")
+            logging.error("Automatic mode is disabled. Please define the mask manually.")            
             # TODO: Disable the button of Auto mask generation?
             return None, None, None
     
@@ -2345,9 +2315,9 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         if len(frame_item.shape) == 3 and frame_item.shape[2] == 3:
             frame_item = cv2.cvtColor(frame_item, cv2.COLOR_RGB2GRAY)
         original_frame_size = frame_item.shape[::-1]
-        logger.debug(f"Original frame size: {str(frame_item.shape)}")
+        logging.debug(f"Original frame size: {str(frame_item.shape)}")
         frame_item = cv2.resize(frame_item, input_shape)
-        logger.debug(f"Resized frame size: {str(input_shape)}")
+        logging.debug(f"Resized frame size: {str(input_shape)}")
 
         with torch.no_grad():
             input_tensor = torch.tensor(np.expand_dims(np.expand_dims(np.array(frame_item), axis=0), axis=0)).float()
@@ -2356,14 +2326,14 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         output = (torch.softmax(output, dim=1) > 0.5).cpu().numpy()
         mask_output = np.uint8(output[0, 1, :, :]) 
         mask_output = cv2.resize(np.uint8(output[0, 1, :, :]), original_frame_size)
-        logger.info(f"({str(mask_output.shape)}) Mask generated successfully")
+        logging.info(f"({str(mask_output.shape)}) Mask generated successfully")
         approx_corners = self.find_four_corners(mask_output)
         
         if approx_corners is None:
-            logger.error("Could not find the four corners of the foreground in the mask")
+            logging.error("Could not find the four corners of the foreground in the mask")
         else:
             top_left, top_right, bottom_right, bottom_left = approx_corners
-            logger.debug(f"Approximate corners - Top-left: {top_left}, Top-right: {top_right}, Bottom-right: {bottom_right}, Bottom-left: {bottom_left}")
+            logging.debug(f"Approximate corners - Top-left: {top_left}, Top-right: {top_right}, Bottom-right: {bottom_right}, Bottom-left: {bottom_left}")
         return approx_corners
     
     def download_model(self, url, output_path):
@@ -2377,10 +2347,10 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             with open(output_path, 'wb') as file:
                 for chunk in response.iter_content(chunk_size=8192):
                     file.write(chunk)
-            logger.info(f"Downloaded file saved to {output_path}")
+            logging.info(f"Downloaded file saved to {output_path}")
             return True
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to download the file: {e}")
+            logging.error(f"Failed to download the file: {e}")
             # TODO: Disable the button of Auto mask generation?
             return False
     
