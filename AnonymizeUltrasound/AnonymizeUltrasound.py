@@ -461,7 +461,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.ui.updateDicomsButton.enabled = True
 
         numInstances = self.logic.getNumberOfInstances()
-        if numInstances > 1:
+        if numInstances > 0:
             self.ui.progressBar.maximum = numInstances
             self.ui.dataProcessingCollapsibleButton.enabled = True
             self.ui.labelsCollapsibleButton.enabled = True
