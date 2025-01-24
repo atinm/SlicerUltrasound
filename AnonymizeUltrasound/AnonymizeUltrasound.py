@@ -1979,18 +1979,20 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         
         # Copy DICOM file to temporary folder
         shutil.copy(nextDicomDfRow['Filepath'], tempDicomDir)
+        logging.info(f"Copied DICOM file {nextDicomDfRow['Filepath']} to {tempDicomDir}")
         
-        # Patch the DICOM file to add spacing information if it is missing, but available from other rows
-        temporaryDicomFilepath = os.path.join(tempDicomDir, os.path.basename(nextDicomDfRow['Filepath']))
-        to_patch = nextDicomDfRow['Patch']
-        if to_patch:
-            physical_delta_x = nextDicomDfRow['PhysicalDeltaX']
-            physical_delta_y = nextDicomDfRow['PhysicalDeltaY']
-            if physical_delta_x is not None and physical_delta_y is not None:
-                ds = pydicom.dcmread(temporaryDicomFilepath)
-                ds.PixelSpacing = [str(physical_delta_x*10.0), str(physical_delta_y*10.0)]  # Convert from cm/pixel to mm/pixel
-                ds.save_as(temporaryDicomFilepath)
-                logging.info(f"Patched DICOM file {temporaryDicomFilepath} with physical delta X and Y")
+        # TODO: Make this an option in the settings becuase some already patched dcm files are not loading with this option
+        # # Patch the DICOM file to add spacing information if it is missing, but available from other rows
+        # temporaryDicomFilepath = os.path.join(tempDicomDir, os.path.basename(nextDicomDfRow['Filepath']))
+        # to_patch = nextDicomDfRow['Patch']
+        # if to_patch:
+        #     physical_delta_x = nextDicomDfRow['PhysicalDeltaX']
+        #     physical_delta_y = nextDicomDfRow['PhysicalDeltaY']
+        #     if physical_delta_x is not None and physical_delta_y is not None:
+        #         ds = pydicom.dcmread(temporaryDicomFilepath)
+        #         ds.PixelSpacing = [str(physical_delta_x*10.0), str(physical_delta_y*10.0)]  # Convert from cm/pixel to mm/pixel
+        #         ds.save_as(temporaryDicomFilepath)
+        #         logging.info(f"Patched DICOM file {temporaryDicomFilepath} with physical delta X and Y")
 
         loadedNodeIDs = []
         with DICOMUtils.TemporaryDICOMDatabase() as db:
