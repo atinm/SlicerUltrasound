@@ -6,24 +6,21 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>481</width>
+    <width>459</width>
     <height>771</height>
    </rect>
   </property>
-  <layout class="QVBoxLayout" name="verticalLayout" stretch="0,0,1,0,0,0">
+  <layout class="QVBoxLayout" name="verticalLayout">
    <item>
     <widget class="ctkCollapsibleButton" name="inputsCollapsibleButton">
      <property name="text">
-      <string>Input and output folders for DICOM files</string>
-     </property>
-     <property name="collapsed">
-      <bool>false</bool>
+      <string>Folders for DICOM files</string>
      </property>
      <layout class="QFormLayout" name="formLayout_2">
       <item row="0" column="0">
-       <widget class="QLabel" name="inputFolderLabel">
+       <widget class="QLabel" name="label">
         <property name="text">
-         <string>Input folder: </string>
+         <string>Input folder:</string>
         </property>
        </widget>
       </item>
@@ -37,14 +34,14 @@
         </property>
        </widget>
       </item>
-      <item row="1" column="0">
-       <widget class="QLabel" name="label">
+      <item row="2" column="0">
+       <widget class="QLabel" name="label_3">
         <property name="text">
          <string>Output folder: </string>
         </property>
        </widget>
       </item>
-      <item row="1" column="1">
+      <item row="2" column="1">
        <widget class="ctkDirectoryButton" name="outputDirectoryButton">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Ignored" vsizetype="Fixed">
@@ -54,22 +51,16 @@
         </property>
        </widget>
       </item>
-      <item row="2" column="0" colspan="2">
-       <widget class="QPushButton" name="updateDicomsButton">
-        <property name="enabled">
-         <bool>true</bool>
-        </property>
+      <item row="3" column="0" colspan="2">
+       <widget class="QPushButton" name="importDicomButton">
         <property name="minimumSize">
          <size>
           <width>0</width>
           <height>40</height>
          </size>
         </property>
-        <property name="toolTip">
-         <string>Run the algorithm.</string>
-        </property>
         <property name="text">
-         <string>Read DICOM folder</string>
+         <string>Import DICOM folder</string>
         </property>
        </widget>
       </item>
@@ -78,22 +69,33 @@
    </item>
    <item>
     <widget class="ctkCollapsibleButton" name="dataProcessingCollapsibleButton">
-     <property name="enabled">
-      <bool>false</bool>
-     </property>
      <property name="text">
-      <string>Data processing</string>
+      <string>Processing</string>
      </property>
-     <layout class="QFormLayout" name="formLayout">
-      <item row="1" column="0">
+     <layout class="QFormLayout" name="formLayout_4">
+      <item row="0" column="0">
        <widget class="QLabel" name="label_2">
         <property name="text">
-         <string>Current patient: </string>
+         <string>Patient ID:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QLabel" name="patientIdLabel">
+        <property name="text">
+         <string>current patient id</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="label_8">
+        <property name="text">
+         <string>SOP Instance UID: </string>
         </property>
        </widget>
       </item>
       <item row="1" column="1">
-       <widget class="QLabel" name="currentPatientLabel">
+       <widget class="QLabel" name="sopInstanceUidLabel">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
           <horstretch>0</horstretch>
@@ -101,68 +103,28 @@
          </sizepolicy>
         </property>
         <property name="text">
-         <string>current patient</string>
+         <string>current SOP Instance UID</string>
         </property>
        </widget>
       </item>
-      <item row="3" column="0">
-       <widget class="QLabel" name="label_3">
-        <property name="text">
-         <string>Current study: </string>
-        </property>
-       </widget>
-      </item>
-      <item row="3" column="1">
-       <widget class="QLabel" name="currentStudyLabel">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="text">
-         <string>current study</string>
-        </property>
-       </widget>
-      </item>
-      <item row="4" column="0">
-       <widget class="QLabel" name="label_4">
-        <property name="text">
-         <string>Current series: </string>
-        </property>
-       </widget>
-      </item>
-      <item row="4" column="1">
-       <widget class="QLabel" name="currentSeriesLabel">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
-        <property name="text">
-         <string>current series</string>
-        </property>
-       </widget>
-      </item>
-      <item row="5" column="0">
-       <widget class="QLabel" name="label_5">
+      <item row="2" column="0">
+       <widget class="QLabel" name="label_10">
         <property name="text">
          <string>Progress: </string>
         </property>
        </widget>
       </item>
-      <item row="5" column="1">
+      <item row="2" column="1">
        <widget class="QProgressBar" name="progressBar">
         <property name="value">
          <number>0</number>
         </property>
        </widget>
       </item>
-      <item row="6" column="0" colspan="2">
-       <layout class="QHBoxLayout" name="horizontalLayout_2">
+      <item row="3" column="0" colspan="2">
+       <layout class="QHBoxLayout" name="horizontalLayout">
         <item>
-         <widget class="QPushButton" name="nextSeriesButton">
+         <widget class="QPushButton" name="nextButton">
           <property name="minimumSize">
            <size>
             <width>0</width>
@@ -175,7 +137,7 @@
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="maskLandmarksButton">
+         <widget class="QPushButton" name="defineMaskButton">
           <property name="minimumSize">
            <size>
             <width>0</width>
@@ -191,7 +153,7 @@
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="exportScanButton">
+         <widget class="QPushButton" name="exportButton">
           <property name="minimumSize">
            <size>
             <width>0</width>
@@ -211,20 +173,11 @@
    <item>
     <widget class="ctkCollapsibleButton" name="labelsCollapsibleButton">
      <property name="text">
-      <string>Add annotation labels</string>
+      <string>Annotation labels</string>
      </property>
-     <property name="collapsed">
-      <bool>false</bool>
-     </property>
-     <layout class="QVBoxLayout" name="verticalLayout_2">
+     <layout class="QVBoxLayout" name="verticalLayout_4">
       <item>
        <widget class="QScrollArea" name="labelsScrollArea">
-        <property name="sizePolicy">
-         <sizepolicy hsizetype="Expanding" vsizetype="Minimum">
-          <horstretch>0</horstretch>
-          <verstretch>0</verstretch>
-         </sizepolicy>
-        </property>
         <property name="widgetResizable">
          <bool>true</bool>
         </property>
@@ -233,34 +186,15 @@
           <rect>
            <x>0</x>
            <y>0</y>
-           <width>459</width>
-           <height>140</height>
+           <width>419</width>
+           <height>60</height>
           </rect>
          </property>
-         <layout class="QVBoxLayout" name="verticalLayout_4"/>
+         <layout class="QVBoxLayout" name="verticalLayout_5"/>
         </widget>
        </widget>
       </item>
      </layout>
-    </widget>
-   </item>
-   <item>
-    <widget class="QLabel" name="statusLabel">
-     <property name="sizePolicy">
-      <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
-       <horstretch>0</horstretch>
-       <verstretch>0</verstretch>
-      </sizepolicy>
-     </property>
-     <property name="text">
-      <string/>
-     </property>
-     <property name="wordWrap">
-      <bool>true</bool>
-     </property>
-     <property name="indent">
-      <number>0</number>
-     </property>
     </widget>
    </item>
    <item>
@@ -271,10 +205,29 @@
      <property name="sizeHint" stdset="0">
       <size>
        <width>20</width>
-       <height>40</height>
+       <height>400</height>
       </size>
      </property>
     </spacer>
+   </item>
+   <item>
+    <widget class="QLabel" name="statusLabel">
+     <property name="sizePolicy">
+      <sizepolicy hsizetype="Ignored" vsizetype="Preferred">
+       <horstretch>0</horstretch>
+       <verstretch>0</verstretch>
+      </sizepolicy>
+     </property>
+     <property name="font">
+      <font>
+       <weight>75</weight>
+       <bold>true</bold>
+      </font>
+     </property>
+     <property name="text">
+      <string>Status label</string>
+     </property>
+    </widget>
    </item>
    <item>
     <widget class="ctkCollapsibleButton" name="settingsCollapsibleButton">
@@ -284,67 +237,52 @@
      <property name="collapsed">
       <bool>false</bool>
      </property>
-     <layout class="QVBoxLayout" name="verticalLayout_3">
+     <layout class="QVBoxLayout" name="verticalLayout_2">
       <item>
-       <widget class="QCheckBox" name="autoDefinedMaskCheckBox">
+       <widget class="QCheckBox" name="autoMaskCheckBox">
+        <property name="toolTip">
+         <string>If checked, values above threshold are set to 0. If unchecked, values below are set to 0.</string>
+        </property>
         <property name="text">
-         <string>Define mask automatically</string>
+         <string>Automatically suggest mask</string>
+        </property>
+        <property name="invertThreshold" stdset="0">
+         <string/>
         </property>
        </widget>
       </item>
       <item>
        <widget class="QCheckBox" name="skipSingleframeCheckBox">
         <property name="text">
-         <string>Skip single-frame input files</string>
+         <string>Skip single-frame input DICOM files</string>
         </property>
        </widget>
       </item>
       <item>
        <widget class="QCheckBox" name="continueProgressCheckBox">
         <property name="text">
-         <string>Skip input if output already exists (continue mode)</string>
+         <string>Continue progress (skip input if matching output exists)</string>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QCheckBox" name="keepFoldersCheckBox">
+       <widget class="QCheckBox" name="hashPatientIdCheckBox">
         <property name="text">
-         <string>Keep input folders and filenames in output folder</string>
+         <string>Hash Patient ID (deidentify patient)</string>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QCheckBox" name="convertGrayscaleCheckBox">
-        <property name="text">
-         <string>Convert color (RGB) to grayscale images</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QCheckBox" name="compressionCheckBox">
-        <property name="text">
-         <string>JPEG compression in DICOM output</string>
-        </property>
-        <property name="checked">
-         <bool>true</bool>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <layout class="QHBoxLayout" name="horizontalLayout">
+       <layout class="QVBoxLayout" name="verticalLayout_3">
         <item>
-         <widget class="QLabel" name="label_9">
+         <widget class="QLabel" name="label_4">
           <property name="text">
-           <string>Labels file: </string>
+           <string>Annotation labels CSV file:</string>
           </property>
          </widget>
         </item>
         <item>
-         <widget class="ctkPathLineEdit" name="labelsFileSelector">
-          <property name="filters">
-           <set>ctkPathLineEdit::Executable|ctkPathLineEdit::Files|ctkPathLineEdit::NoDot|ctkPathLineEdit::NoDotDot|ctkPathLineEdit::Readable</set>
-          </property>
-         </widget>
+         <widget class="ctkPathLineEdit" name="labelsFileSelector"/>
         </item>
        </layout>
       </item>

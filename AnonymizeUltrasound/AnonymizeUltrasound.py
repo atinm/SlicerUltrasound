@@ -1,31 +1,37 @@
-
 from collections import defaultdict
 import csv
+from enum import Enum
 import hashlib
 import io
 import json
 import logging
-import os
-import shutil
-import time
 import numpy as np
-import requests
-
+import os
+import pathlib
 from PIL import Image
 import pydicom
-from pydicom.dataset import Dataset, FileDataset
-from pydicom.encaps import encapsulate
-from pydicom.uid import ImplicitVRLittleEndian, generate_uid, JPEGBaseline
-from pydicom.multival import MultiValue
-from DICOMLib import DICOMUtils
+import shutil
+import requests
+from typing import Annotated, Optional
+
 import qt
 import vtk
 
+from DICOMLib import DICOMUtils
 import slicer
+from slicer.i18n import tr as _
+from slicer.i18n import translate
 from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
-from DICOMLib import DICOMUtils
-import datetime
+from slicer.parameterNodeWrapper import (
+    parameterNodeWrapper,
+    WithinRange,
+)
+
+from slicer import vtkMRMLScalarVolumeNode, vtkMRMLVectorVolumeNode, vtkMRMLVolumeNode
+from slicer import vtkMRMLSequenceBrowserNode, vtkMRMLSequenceNode
+from slicer import vtkMRMLMarkupsFiducialNode
+
 
 #
 # AnonymizeUltrasound
@@ -38,31 +44,37 @@ class AnonymizeUltrasound(ScriptedLoadableModule):
 
     def __init__(self, parent):
         ScriptedLoadableModule.__init__(self, parent)
-        self.parent.title = "Anonymize ultrasound"
-        self.parent.categories = ["Ultrasound"]
-        self.parent.dependencies = []
-        self.parent.contributors = ["Tamas Ungi (Queen's University)"]
-        self.parent.helpText = """
-This is a module for anonymizing ultrasound images and sequences stored in DICOM folders.
-The mask (green contour) signals what part of the image will stay after applying the mask. The image area under the green contour will be kept along with the pixels inside the contour.
-"""
-        self.parent.acknowledgementText = """
-This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc., Andras Lasso, PerkLab,
-and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1.
-"""
+        self.parent.title = _("Anonymize Ultrasound")  # TODO: make this more human readable by adding spaces
+        # TODO: set categories (folders where the module shows up in the module selector)
+        self.parent.categories = [translate("qSlicerAbstractCoreModule", "Ultrasound")]
+        self.parent.dependencies = []  # TODO: add here list of module names that this module requires
+        self.parent.contributors = ["Tamas Ungi (Queen's University)"]  # TODO: replace with "Firstname Lastname (Organization)"
+        # TODO: update with short description of the module and a link to online module documentation
+        # _() function marks text as translatable to other languages
+        self.parent.helpText = _("""
+            This is a module for anonymizing ultrasound images and sequences stored in DICOM folders.
+            The mask (green contour) signals what part of the image will stay after applying the mask.
+            The image area under the green contour will be kept along with the pixels inside the contour.
+            See more information in <a href="https://github.com/SlicerUltrasound/SlicerUltrasound?tab=readme-ov-file#anonymize-ultrasound">module documentation</a>.
+            """)
+        # TODO: replace with organization, grant and thanks
+        self.parent.acknowledgementText = _("""
+            This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc., Andras Lasso, PerkLab,
+            and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1.
+            """)
 
         # Additional initialization step after application startup is complete
-        slicer.app.connect("startupCompleted()", performPostModuleDiscoveryTasks)
+        slicer.app.connect("startupCompleted()", onSlicerStartupCompleted)
 
 #
-# Perform module initialization after the application has started
+# Register sample data sets in Sample Data module
 #
 
-def performPostModuleDiscoveryTasks():
+def onSlicerStartupCompleted():
     """
     Perform some initialization tasks that require the application to be fully started up.
     """
-    logging.info("AnonymizeUltrasound.performPostModuleDiscoveryTasks()")
+    # Install required packages
     
     global pd
     try:
@@ -96,35 +108,66 @@ def performPostModuleDiscoveryTasks():
         import yaml
     
 #
+# AnonymizeUltrasoundParameterNode
+#
+
+class AnonymizerStatus(Enum):
+    INITIAL = 0               # No data loaded yet
+    INPUT_READY = 1           # Valid input folder parsed
+    PATIENT_LOADED = 2        # Cannot mask without landmarks
+    LANDMARK_PLACEMENT = 3    # Landmark placement mode for mouse click
+    LANDMARKS_PLACED = 4      # Ready to mask
+    STATUS_MASKING = 5        # Masking in progress
+
+@parameterNodeWrapper
+class AnonymizeUltrasoundParameterNode:
+    """
+    The parameters needed by module.
+    """
+    ultrasoundVolume: vtkMRMLScalarVolumeNode              # 2D ultrasound image currently selected for processing
+    ultrasoundSequenceBrowser: vtkMRMLSequenceBrowserNode  # Sequence browser whose proxy node is ultrasoundVolume
+    maskMarkups: vtkMRMLMarkupsFiducialNode                # Landmarks for masking
+    overlayVolume: vtkMRMLScalarVolumeNode                 # Overlay volume to represent masking
+    maskVolume: vtkMRMLScalarVolumeNode                    # Volume node to store the mask
+    status: AnonymizerStatus = AnonymizerStatus.INITIAL    # Current status of the anonymizer to decide what actions are allowed
+    patientId: str = ""                                    # Currently loaded patient
+    studyInstanceUid: str = ""                             # Currently loaded study
+    seriesInstanceUid: str = ""                            # Currently loaded series
+
+#
 # AnonymizeUltrasoundWidget
 #
+
 
 class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     """Uses ScriptedLoadableModuleWidget base class, available at:
     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
     """
+    
+    INPUT_FOLDER_SETTING = "AnonymizeUltrasound/InputFolder"
+    OUTPUT_FOLDER_SETTING = "AnonymizeUltrasound/OutputFolder"
+    AUTO_MASK_SETTING = "AnonymizeUltrasound/AutoMask"
+    SKIP_SINGLE_FRAME_SETTING = "AnonymizeUltrasound/SkipSingleFrame"
+    CONTINUE_PROGRESS_SETTING = "AnonymizeUltrasound/ContinueProgress"
+    HASH_PATIENT_ID_SETTING = "AnonymizeUltrasound/HashPatientId"
+    LABELS_PATH_SETTING = "AnonymizeUltrasound/LabelsPath"
 
-    def __init__(self, parent=None):
-        """
-        Called when the user opens the module the first time and the widget is initialized.
-        """
+    def __init__(self, parent=None) -> None:
+        """Called when the user opens the module the first time and the widget is initialized."""
         ScriptedLoadableModuleWidget.__init__(self, parent)
         VTKObservationMixin.__init__(self)  # needed for parameter node observation
         self.logic = None
         self._parameterNode = None
-        self._updatingGUIFromParameterNode = False
-        self.compositingModeExit = 0
-        self.notEnteredYet = True
+        self._parameterNodeGuiTag = None
+        self.compositingModeExit = None
 
-    def setup(self):
-        """
-        Called when the user opens the module the first time and the widget is initialized.
-        """
+    def setup(self) -> None:
+        """Called when the user opens the module the first time and the widget is initialized."""
         ScriptedLoadableModuleWidget.setup(self)
 
         # Load widget from .ui file (created by Qt Designer).
         # Additional widgets can be instantiated manually and added to self.layout.
-        uiWidget = slicer.util.loadUI(self.resourcePath('UI/AnonymizeUltrasound.ui'))
+        uiWidget = slicer.util.loadUI(self.resourcePath("UI/AnonymizeUltrasound.ui"))
         self.layout.addWidget(uiWidget)
         self.ui = slicer.util.childWidgetVariables(uiWidget)
 
@@ -136,71 +179,157 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         # Create logic class. Logic implements all computations that should be possible to run
         # in batch mode, without a graphical user interface.
         self.logic = AnonymizeUltrasoundLogic()
-        
+
         # Connections
 
         # These connections ensure that we update parameter node when scene is closed
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
 
-        # These connections ensure that whenever user changes some settings on the GUI, that is saved in the MRML scene
-        # (in the selected parameter node).
-        self.ui.inputDirectoryButton.directoryChanged.connect(self.updateInputDirectoryFromWidget)
-        self.ui.outputDirectoryButton.directoryChanged.connect(self.updateOutputDirectoryFromWidget)
-        self.ui.skipSingleframeCheckBox.connect('toggled(bool)', self.updateSettingsFromGUI)
-        self.ui.continueProgressCheckBox.connect('toggled(bool)', self.updateSettingsFromGUI)
-        self.ui.keepFoldersCheckBox.connect('toggled(bool)', self.updateSettingsFromGUI)
-        self.ui.convertGrayscaleCheckBox.connect('toggled(bool)', self.updateSettingsFromGUI)
-        self.ui.compressionCheckBox.connect('toggled(bool)', self.updateSettingsFromGUI)
-        self.ui.autoDefinedMaskCheckBox.connect('toggled(bool)', self.updateSettingsFromGUI)
-
         # Buttons
-        self.ui.updateDicomsButton.connect('clicked(bool)', self.onUpdateDicomsButton)
-        self.ui.nextSeriesButton.connect('clicked(bool)', self.onNextSeriesButton)
-        self.ui.maskLandmarksButton.connect('toggled(bool)', self.onMaskLandmarksButton)
-        self.ui.exportScanButton.connect('clicked(bool)', self.onExportScanButton)
-
+        
+        settings = slicer.app.settings()
+        
+        inputFolder = settings.value(self.INPUT_FOLDER_SETTING)
+        if inputFolder:
+            if os.path.exists(inputFolder):
+                self.ui.inputDirectoryButton.directory = inputFolder
+            else:
+                logging.info(f"Settings input folder {inputFolder} does not exist")
+        self.ui.inputDirectoryButton.connect("directoryChanged(QString)",
+                                             lambda newValue: self.onSettingChanged(self.INPUT_FOLDER_SETTING, newValue))
+        
+        outputFolder = settings.value(self.OUTPUT_FOLDER_SETTING)
+        if outputFolder:
+            if os.path.exists(outputFolder):
+                self.ui.outputDirectoryButton.directory = outputFolder
+            else:
+                logging.info(f"Settings output folder {outputFolder} does not exist")
+        self.ui.outputDirectoryButton.connect("directoryChanged(QString)",
+                                              lambda newValue: self.onSettingChanged(self.OUTPUT_FOLDER_SETTING, newValue))
+        
+        self.ui.importDicomButton.connect("clicked(bool)", self.onImportDicomButton)
+        
+        # Workflow control buttons
+        
+        self.ui.nextButton.clicked.connect(self.onNextButton)
+        self.ui.defineMaskButton.toggled.connect(self.onMaskLandmarksButton)
+        self.ui.exportButton.clicked.connect(self.onExportScanButton)
+        
+        # Settings widgets
+        
+        autoMaskStr = settings.value(self.AUTO_MASK_SETTING)
+        if autoMaskStr and autoMaskStr.lower() == "true":
+            self.ui.autoMaskCheckBox.checked = True
+        else:
+            self.ui.autoMaskCheckBox.checked = False
+        self.ui.autoMaskCheckBox.connect('toggled(bool)', lambda newValue: self.onSettingChanged(self.AUTO_MASK_SETTING, str(newValue)))
+        
+        continueProgressStr = settings.value(self.CONTINUE_PROGRESS_SETTING)
+        if continueProgressStr and continueProgressStr.lower() == "true":
+            self.ui.continueProgressCheckBox.checked = True
+        else:
+            self.ui.continueProgressCheckBox.checked = False
+        self.ui.continueProgressCheckBox.connect('toggled(bool)', lambda newValue: self.onSettingChanged(self.CONTINUE_PROGRESS_SETTING, str(newValue)))
+        
+        skipSingleFrameStr = settings.value(self.SKIP_SINGLE_FRAME_SETTING)
+        if skipSingleFrameStr and skipSingleFrameStr.lower() == "true":
+            self.ui.skipSingleframeCheckBox.checked = True
+        else:
+            self.ui.skipSingleframeCheckBox.checked = False
+        self.ui.skipSingleframeCheckBox.connect('toggled(bool)', lambda newValue: self.onSettingChanged(self.SKIP_SINGLE_FRAME_SETTING, str(newValue)))
+        
+        hashPatientIdStr = settings.value(self.HASH_PATIENT_ID_SETTING)
+        if hashPatientIdStr and hashPatientIdStr.lower() == "true":
+            self.ui.hashPatientIdCheckBox.checked = True
+        else:
+            self.ui.hashPatientIdCheckBox.checked = False
+        self.ui.hashPatientIdCheckBox.connect('toggled(bool)', lambda newValue: self.onSettingChanged(self.HASH_PATIENT_ID_SETTING, str(newValue)))
+        
         self.ui.labelsFileSelector.connect('currentPathChanged(QString)', self.onLabelsPathChanged)
-
+        labelsPath = settings.value(self.LABELS_PATH_SETTING)
+        if not labelsPath or labelsPath == '':
+            labelsPath = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'Resources/default_labels.csv')
+        self.ui.labelsFileSelector.currentPath = labelsPath
+        self.ui.labelsCollapsibleButton.collapsed = True
+        
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
         
-    def updateSettingsFromGUI(self):
-        settings = qt.QSettings()
+        # Start on red-only view. Allow other layouts later.
+        slicer.app.layoutManager().setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutOneUpRedSliceView)
 
-        if self.ui.skipSingleframeCheckBox.checked:
-            settings.setValue('AnonymizeUltrasound/SkipSingleframe', "True")
-        else:
-            settings.setValue('AnonymizeUltrasound/SkipSingleframe', "False")
-        
-        if self.ui.continueProgressCheckBox.checked:
-            settings.setValue('AnonymizeUltrasound/ContinueProgress', "True")
-        else:
-            settings.setValue('AnonymizeUltrasound/ContinueProgress', "False")
-        
-        if self.ui.compressionCheckBox.checked:
-            settings.setValue('AnonymizeUltrasound/Compression', "True")
-        else:
-            settings.setValue('AnonymizeUltrasound/Compression', "False")
-        
-        if self.ui.convertGrayscaleCheckBox.checked:
-            settings.setValue('AnonymizeUltrasound/ConvertGrayscale', "True")
-        else:
-            settings.setValue('AnonymizeUltrasound/ConvertGrayscale', "False")
+    def cleanup(self) -> None:
+        """Called when the application closes and the module widget is destroyed."""
+        self.removeObservers()
 
-        if self.ui.keepFoldersCheckBox.checked:
-            settings.setValue('AnonymizeUltrasound/KeepFolderStructure', "True")
-        else:
-            settings.setValue('AnonymizeUltrasound/keepFolderStructure', "False")
+    def enter(self) -> None:
+        """Called each time the user opens this module."""
+        # Make sure parameter node exists and observed
+        self.initializeParameterNode()
+        
+        sliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").mrmlSliceCompositeNode()
+        self.compositingModeExit = sliceCompositeNode.GetCompositing()  # Save compositing mode to restore it when exiting the module
+        sliceCompositeNode.SetCompositing(2)
+                
+        # Collapse DataProbe widget
+        mw = slicer.util.mainWindow()
+        if mw:
+            w = slicer.util.findChild(mw, "DataProbeCollapsibleWidget")
+            if w:
+                w.collapsed = True
 
-        if self.ui.autoDefinedMaskCheckBox.checked:
-            settings.setValue('AnonymizeUltrasound/AutoDefinedMask', "True")
-        else:
-            settings.setValue('AnonymizeUltrasound/AutoDefinedMask', "False")
+
+    def exit(self) -> None:
+        """Called each time the user opens a different module."""
+        # Do not react to parameter node changes (GUI will be updated when the user enters into the module)
+        if self._parameterNode:
+            self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
+            self._parameterNodeGuiTag = None
+            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._onParameterNodeModified)
+        
+        # Restore compositing mode to the value it was before entering the module
+        sliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").mrmlSliceCompositeNode()
+        sliceCompositeNode.SetCompositing(self.compositingModeExit)
+
+    def onSceneStartClose(self, caller, event) -> None:
+        """Called just before the scene is closed."""
+        # Parameter node will be reset, do not use it anymore
+        self.setParameterNode(None)
+
+    def onSceneEndClose(self, caller, event) -> None:
+        """Called just after the scene is closed."""
+        # If this module is shown while the scene is closed then recreate a new parameter node immediately
+        if self.parent.isEntered:
+            self.initializeParameterNode()
+
+    def initializeParameterNode(self) -> None:
+        """Ensure parameter node exists and observed."""
+        # Parameter node stores all user choices in parameter values, node selections, etc.
+        # so that when the scene is saved and reloaded, these settings are restored.
+
+        self.setParameterNode(self.logic.getParameterNode())
+
+    def setParameterNode(self, inputParameterNode: Optional[AnonymizeUltrasoundParameterNode]) -> None:
+        """
+        Set and observe parameter node.
+        Observation is needed because when the parameter node is changed then the GUI must be updated immediately.
+        """
+
+        if self._parameterNode:
+            self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
+            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._onParameterNodeModified)
+        self._parameterNode = inputParameterNode
+        if self._parameterNode:
+            # Note: in the .ui file, a Qt dynamic property called "SlicerParameterName" is set on each
+            # ui element that needs connection.
+            self._parameterNodeGuiTag = self._parameterNode.connectGui(self.ui)
+            self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._onParameterNodeModified)
+            self._onParameterNodeModified()
 
     def onLabelsPathChanged(self, filePath):
         settings = qt.QSettings()
-        settings.setValue('AnonymizeUltrasound/LabelsPath', filePath)
+        settings.setValue(self.LABELS_PATH_SETTING, filePath)
 
         categories = defaultdict(list)
 
@@ -215,7 +344,6 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         # Remove all existing labels from the scroll area
         for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())): 
-            # self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget().setParent(None)
             self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget().deleteLater()
 
         # Populate labels scroll area
@@ -230,295 +358,70 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         
         self.ui.labelsScrollAreaWidgetContents.layout().addStretch(1)
     
-    def updateInputDirectoryFromWidget(self):
+    def onSettingChanged(self, settingName: str, newValue: str) -> None:
         """
-        Called when user changes the directory in the directory browser.
+        Update setting value and GUI based on user selection.
+        @param settingName: setting name
+        @param newValue: new value, if "" then setting is removed
         """
-        # Save current directory in application settings, so it is remembered when the module is re-opened
-
-        directory = self.ui.inputDirectoryButton.directory
-        settings = qt.QSettings()
-        settings.setValue('AnonymizeUltrasound/InputDirectory', directory)
-
-    def updateOutputDirectoryFromWidget(self):
+        settings = slicer.app.settings()
+        if newValue and newValue != "":
+            settings.setValue(settingName, newValue)
+        else:
+            settings.remove(settingName)
+    
+    def _onParameterNodeModified(self, caller=None, event=None) -> None:
         """
-        Called when user changes the directory in the directory browser.
+        Update GUI based on parameter node values.
         """
-        # Save current directory in application settings, so it is remembered when the module is re-opened
-
-        directory = self.ui.outputDirectoryButton.directory
-        settings = qt.QSettings()
-        settings.setValue('AnonymizeUltrasound/OutputDirectory', directory)
-
-    def cleanup(self):
-        """
-        Called when the application closes and the module widget is destroyed.
-        """
-        self.removeObservers()
-
-    def initializeGui(self):
-        moduleWidget = slicer.modules.anonymizeultrasound.widgetRepresentation().self()
-        settings = qt.QSettings()
-
-        # Set default labels file path
-        labelsPath = settings.value('AnonymizeUltrasound/LabelsPath', '')
-        
-        # If labels file does not exist, reset to ''
-        if not os.path.exists(labelsPath):
-            labelsPath = ''
-
-        # If labels file is not set, use the default labels file
-        if labelsPath == '':
-            labelsPath = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'Resources/default_labels.csv')
-        moduleWidget.ui.labelsFileSelector.currentPath = labelsPath
-
-        directory = settings.value('AnonymizeUltrasound/InputDirectory', '')
-        moduleWidget.ui.inputDirectoryButton.directory = directory
-
-        directory = settings.value('AnonymizeUltrasound/OutputDirectory', '')
-        moduleWidget.ui.outputDirectoryButton.directory = directory
-
-        # Set default settings values if they are missing from settings file
-        settingNames =  ["SkipSingleFrame",
-                         "ContinueProgress",
-                         "KeepFolderStructure",
-                         "ConvertGrayscale",
-                         "Compression"]
-        defaultValues = ["True",
-                         "True",
-                         "False",
-                         "False",
-                         "True"]
-        for settingName, defaultValue in zip(settingNames, defaultValues):
-            if settings.value(f'AnonymizeUltrasound/{settingName}', '') == '':
-                settings.setValue(f'AnonymizeUltrasound/{settingName}', defaultValue)
-        
-        # Make sure length/precision setting is at least 3
-        if int(settings.value('length/precision', '0')) < 3:
-            settings.setValue('length/precision', "3")
-            applicationLength = slicer.mrmlScene.GetNodeByID("vtkMRMLUnitNodeApplicationLength")
-            if applicationLength is None:
-                logging.error("Cannot set length precision because node ID not found: vtkMRMLUnitNodeApplicationLength")
-            else:
-                applicationLength.SetPrecision(3)
-
-        # Set GUI values from settings
-        skipSingleFrame = settings.value('AnonymizeUltrasound/SkipSingleframe', "True") == "True"
-        continueProgress = settings.value('AnonymizeUltrasound/ContinueProgress', "True") == "True"
-        keepFolders = settings.value('AnonymizeUltrasound/KeepFolderStructure', "True") == "True"
-        convertGrayscale = settings.value('AnonymizeUltrasound/ConvertGrayscale', "True") == "True"
-        compression = settings.value('AnonymizeUltrasound/Compression', "True") == "True"
-        autoMaskDefined = settings.value('AnonymizeUltrasound/AutoDefinedMask', "True") == "True"
-        moduleWidget.ui.skipSingleframeCheckBox.checked = skipSingleFrame
-        moduleWidget.ui.continueProgressCheckBox.checked = continueProgress
-        moduleWidget.ui.keepFoldersCheckBox.checked = keepFolders
-        moduleWidget.ui.convertGrayscaleCheckBox.checked = convertGrayscale
-        moduleWidget.ui.compressionCheckBox.checked = compression
-        moduleWidget.ui.autoDefinedMaskCheckBox.checked = autoMaskDefined
-
-        # Set initial states of widgets
-        self.ui.inputsCollapsibleButton.collapsed = False
-        self.ui.dataProcessingCollapsibleButton.collapsed = True
-        self.ui.labelsCollapsibleButton.collapsed = True
-        self.ui.settingsCollapsibleButton.collapsed = True
-        
-    def enter(self):
-        """
-        Called each time the user opens this module.
-        """
-        # Make sure parameter node exists and observed
-        self.initializeParameterNode()
-        
-        # If this is the first enter, initialize GUI
-        if self.notEnteredYet:
-            self.notEnteredYet = False
-            self.initializeGui()
-            slicer.app.layoutManager().setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutOneUpRedSliceView)
-
-        sliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").mrmlSliceCompositeNode()
-        self.compositingModeExit = sliceCompositeNode.GetCompositing()
-        sliceCompositeNode.SetCompositing(2)
-
-        # Make sure all nodes exist
-        self.logic.setupScene()
-        
-        # Collapse DataProbe widget
-        mw = slicer.util.mainWindow()
-        if mw:
-            w = slicer.util.findChild(mw, "DataProbeCollapsibleWidget")
-            if w:
-                w.collapsed = True
-
-
-    def exit(self):
-        """
-        Called each time the user opens a different module.
-        """
-        # Do not react to parameter node changes (GUI wlil be updated when the user enters into the module)
-        self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromData)
-        sliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").mrmlSliceCompositeNode()
-        sliceCompositeNode.SetCompositing(self.compositingModeExit)
-
-    def onSceneStartClose(self, caller, event):
-        """
-        Called just before the scene is closed.
-        """
-        # Parameter node will be reset, do not use it anymore
-        self.setParameterNode(None)
-
-    def onSceneEndClose(self, caller, event):
-        """
-        Called just after the scene is closed.
-        """
-        # If this module is shown while the scene is closed then recreate a new parameter node immediately
-        if self.parent.isEntered:
-            self.initializeParameterNode()
-
-    def initializeParameterNode(self):
-        """
-        Ensure parameter node exists and observed.
-        """
-        # Parameter node stores all user choices in parameter values, node selections, etc.
-        # so that when the scene is saved and reloaded, these settings are restored.
-
-        self.setParameterNode(self.logic.getParameterNode())
-
-        # Select default input nodes if nothing is selected yet to save a few clicks for the user
-        if not self._parameterNode.GetNodeReference("InputVolume"):
-            firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
-            if firstVolumeNode:
-                self._parameterNode.SetNodeReferenceID("InputVolume", firstVolumeNode.GetID())
-
-    def setParameterNode(self, inputParameterNode):
-        """
-        Set and observe parameter node.
-        Observation is needed because when the parameter node is changed then the GUI must be updated immediately.
-        """
-
-        if inputParameterNode:
-            self.logic.setDefaultParameters(inputParameterNode)
-
-        # Unobserve previously selected parameter node and add an observer to the newly selected.
-        # Changes of parameter node are observed so that whenever parameters are changed by a script or any other module
-        # those are reflected immediately in the GUI.
-        if self._parameterNode is not None and self.hasObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromData):
-            self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromData)
-        self._parameterNode = inputParameterNode
-        if self._parameterNode is not None:
-            self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromData)
-
-        # Initial GUI update
-        self.updateGUIFromData()
-
-    def updateGUIFromData(self, caller=None, event=None):
-        """
-        This method is called whenever parameter node is changed.
-        The module GUI is updated to show the current state of the parameter node.
-        """
-
-        if self._parameterNode is None or self._updatingGUIFromParameterNode:
+        if not self._parameterNode:
+            logging.error("Parameter node not set")
             return
-
-        # Make sure GUI changes do not call updateParameterNodeFromGUI (it could cause infinite loop)
-        self._updatingGUIFromParameterNode = True
-
-        # Update widgets
-
-        if self.logic.currentDicomDataset:
-            currentPatientId = self.logic.currentDicomDataset.PatientName
-            if currentPatientId:
-                self.ui.currentPatientLabel.text = currentPatientId
-            else:
-                self.ui.currentPatientLabel.text = 'None'
-
-            currentStudyId = self.logic.currentDicomDataset.StudyID
-            if currentStudyId:
-                self.ui.currentStudyLabel.text = currentStudyId
-            else:
-                self.ui.currentStudyLabel.text = 'None'
-
-            currentSeriesId = self.logic.currentDicomDataset.SeriesNumber
-            if currentSeriesId:
-                self.ui.currentSeriesLabel.text = currentSeriesId
-            else:
-                self.ui.currentSeriesLabel.text = 'None'
-
-        status = self._parameterNode.GetParameter(self.logic.STATUS)
-        if status == self.logic.STATUS_LANDMARK_PLACEMENT:
-            # Set mouse interaction mode to landmark placement
-            interactionNode = slicer.app.applicationLogic().GetInteractionNode()
-            interactionNode.SetCurrentInteractionMode(interactionNode.Place)
-            self.ui.maskLandmarksButton.checked = True
-            self.ui.statusLabel.text = "Click of four corners of the ultrasound image area"
-        elif status == self.logic.STATUS_LANDMARKS_PLACED:
-            # Set mouse interaction mode to default
-            interactionNode = slicer.app.applicationLogic().GetInteractionNode()
-            interactionNode.SetCurrentInteractionMode(interactionNode.ViewTransform)
-            self.ui.maskLandmarksButton.checked = False
-            self.ui.statusLabel.text = "Click Export to save DICOM file in output folder"
-
-        # Update buttons states and tooltips
         
-        self.ui.updateDicomsButton.enabled = True
-
         numInstances = self.logic.getNumberOfInstances()
         if numInstances > 0:
             self.ui.progressBar.maximum = numInstances
+            self.ui.inputsCollapsibleButton.collapsed = True
+            self.ui.dataProcessingCollapsibleButton.collapsed = False
             self.ui.dataProcessingCollapsibleButton.enabled = True
             self.ui.labelsCollapsibleButton.enabled = True
         else:
+            self.ui.inputsCollapsibleButton.collapsed = False
+            self.ui.dataProcessingCollapsibleButton.collapsed = True
             self.ui.dataProcessingCollapsibleButton.enabled = False
             self.ui.labelsCollapsibleButton.enabled = False
             self.ui.statusLabel.text = "Select input folder and press Read DICOM folder button to load DICOM files"
 
-        # All the GUI updates are done
-        self._updatingGUIFromParameterNode = False
-
-    def updateParameterNodeFromGUI(self, caller=None, event=None):
-        """
-        This method is called when the user makes any change in the GUI.
-        The changes are saved into the parameter node (so that they are restored when the scene is saved and loaded).
-        """
-
-        if self._parameterNode is None or self._updatingGUIFromParameterNode:
-            return
-
-        wasModified = self._parameterNode.StartModify()  # Modify all properties in a single batch
-
-        # self._parameterNode.SetNodeReferenceID("InputVolume", self.ui.inputSelector.currentNodeID)
-
-        self._parameterNode.EndModify(wasModified)
-
-    def onUpdateDicomsButton(self):
-        """
-        Run processing when user clicks "Read DICOM folder" button.
-        """
-        logging.info('onUpdateDicomsButton')
-
-        # Check if input directory is specified
+        
+        
+    def onImportDicomButton(self) -> None:
+        logging.info("Import DICOM button clicked")
+        
+        # Check input and output folders
+        
         inputDirectory = self.ui.inputDirectoryButton.directory
         if not inputDirectory:
-            qt.QMessageBox.critical(slicer.util.mainWindow(), "AnonymizeUltrasound", "Input directory must be specified")
+            qt.QMessageBox.critical(slicer.util.mainWindow(), "Anonymize Ultrasound", "Please select an input directory")
             return
-            
-        # Check if the specified input directory exists. The folder can be renamed after selecting it, so in theory this is possible.
         if not os.path.exists(inputDirectory):
-            qt.QMessageBox.critical(slicer.util.mainWindow(), "AnonymizeUltrasound", "Input directory does not exist")
+            qt.QMessageBox.critical(slicer.util.mainWindow(), "Anonymize Ultrasound", "Input directory does not exist")
             return
         
-        # Check if output directory is specified
         outputDirectory = self.ui.outputDirectoryButton.directory
         if not outputDirectory:
-            qt.QMessageBox.critical(slicer.util.mainWindow(), "AnonymizeUltrasound", "Output directory must be specified")
+            qt.QMessageBox.critical(slicer.util.mainWindow(), "Anonymize Ultrasound", "Please select an output directory")
             return
-        
-        # Check if the specified output directory exists. The folder can be renamed after selecting it, so in theory this is possible.
         if not os.path.exists(outputDirectory):
-            qt.QMessageBox.critical(slicer.util.mainWindow(), "AnonymizeUltrasound", "Output directory does not exist")
+            qt.QMessageBox.critical(slicer.util.mainWindow(), "Anonymize Ultrasound", "Output directory does not exist")
             return
         
-        # Find all DICOM files in the input directory
         numFiles = self.logic.updateDicomDf(inputDirectory, self.ui.skipSingleframeCheckBox.checked)
+        logging.info(f"Found {numFiles} DICOM files in input folder")
+        
+        if numFiles > 0:
+            self._parameterNode.status = AnonymizerStatus.INPUT_READY
+        else:
+            self._parameterNode.status = AnonymizerStatus.INITIAL
         
         # Export self.logic.dicomDf as a CSV file in the outputDirectory to make sure original keys to anonymized IDs are saved
         outputDirectory = self.ui.outputDirectoryButton.directory
@@ -541,39 +444,44 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             else:
                 statusText += '\n' + str(numDone) + ' files already processed in output folder. Continue at next.'
         self.ui.statusLabel.text = statusText
-
-        # Update widgets to represent loaded data
-        self.updateGUIFromData()
-
-        if numFiles > 1:
-            self.ui.inputsCollapsibleButton.collapsed = True
-            self.ui.dataProcessingCollapsibleButton.collapsed = False
-            self.ui.labelsCollapsibleButton.collapsed = False
-        else:
-            self.ui.inputsCollapsibleButton.collapsed = False
-            self.ui.dataProcessingCollapsibleButton.collapsed = True
-            self.ui.labelsCollapsibleButton.collapsed = True
-
-    def onNextSeriesButton(self):
-        logging.info('onNextSeriesButton')
-
-        dialog = self.createWaitDialog("Loading series", "Please wait until the DICOM instance is loaded...")
-
+    
+    def onNextButton(self) -> None:
+        logging.info("Next button clicked")
+        
+        # Remove observers for the mask markups node, because loading a new series will reset the scene and createa a new markups node
+        
+        maskMarkupsNode = self._parameterNode.maskMarkups
+        if maskMarkupsNode:
+            self.removeObserver(maskMarkupsNode, slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self.onPointModified)
+        
         # Load the next series
-
-        currentDicomDfIndex = self.logic.loadNextSequence()
-        if currentDicomDfIndex is None:
-            statusText = "No more series to load"
-            self.ui.statusLabel.text = statusText
+        
+        dialog = self.createWaitDialog("Loading series", "Please wait until the DICOM file is loaded...")
+        currentDicomDfIndex = None
+        try:
+            outputDirectory = self.ui.outputDirectoryButton.directory
+            continueProgress = self.ui.continueProgressCheckBox.checked
+            currentDicomDfIndex = self.logic.loadNextSequence(outputDirectory, continueProgress)
+            if currentDicomDfIndex is None:
+                statusText = "No more series to load"
+                self.ui.statusLabel.text = statusText
+                dialog.close()
+                return
+            else:
+                self.ui.progressBar.value = currentDicomDfIndex
+                dialog.close()
+        except Exception as e:
             dialog.close()
-            return
-        else:
-            self.ui.progressBar.value = currentDicomDfIndex
-
-        dialog.close()
-
+            logging.warning("Error loading series: " + str(e))  # Known error is raised on Windows if loading from outside C: drive
+        
+        # Add observers for the mask markups node
+        
+        maskMarkupsNode = self._parameterNode.maskMarkups
+        if maskMarkupsNode:
+            self.addObserver(maskMarkupsNode, slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self.onPointModified)
         
         # Uncheck all label checkboxes
+
         for i in range(self.ui.labelsScrollAreaWidgetContents.layout().count()): 
             groupBox = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
             if groupBox is None:
@@ -586,27 +494,19 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         # Update GUI
 
-        patientUID = self.logic.currentDicomDataset.PatientName
-        if patientUID:
-            self.ui.currentPatientLabel.text = patientUID
+        patientID = self.logic.currentDicomDataset.PatientID
+        if patientID:
+            self.ui.patientIdLabel.text = patientID
         else:
-            self.ui.currentPatientLabel.text = 'None'
-
-        studyID = self.logic.currentDicomDataset.StudyID
-        if studyID:
-            self.ui.currentStudyLabel.text = studyID
-        else:
-            self.ui.currentStudyLabel.text = 'None'
-
-        seriesID = self.logic.currentDicomDataset.SeriesInstanceUID
-        if seriesID:
-            self.ui.currentSeriesLabel.text = seriesID
-        else:
-            self.ui.currentSeriesLabel.text = 'None'
+            logging.error("Patient ID is missing")
+            self.ui.patientIdLabel.text = 'None'
 
         instanceUID = self.logic.currentDicomDataset.SOPInstanceUID
         if instanceUID is None:
-            self.ui.currentInstanceLabel.text = 'None'
+            logging.error("Instance UID is missing")
+            self.ui.sopInstanceUidLabel.text = 'None'
+        else:
+            self.ui.sopInstanceUidLabel.text = instanceUID
 
         statusText = f"Instance {instanceUID} loaded from file:\n"
 
@@ -622,98 +522,142 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         # Set red slice compositing mode to 2
         sliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").mrmlSliceCompositeNode()
         sliceCompositeNode.SetCompositing(2)
-
+    
+    #
+    # Placement of mask markups
+    #
+    
     def onMaskLandmarksButton(self, toggled):
         logging.info('Mask landmarks button pressed')
 
-        landmarkNode = self._parameterNode.GetNodeReference(self.logic.MASK_FAN_LANDMARKS)
-        if landmarkNode is None:
+        maskMarkupsNode = self._parameterNode.maskMarkups
+        if maskMarkupsNode is None:
             logging.error(f"Landmark node not found: {self.logic.MASK_FAN_LANDMARKS}")
             return
         
-        if self.ui.autoDefinedMaskCheckBox.checked:
+        autoMaskSuccessful = False
+        if self.ui.autoMaskCheckBox.checked:
             # Get the mask control points
-            maskFiducialsNode = self._parameterNode.GetNodeReference(self.logic.MASK_FAN_LANDMARKS)
-            maskFiducialsNode.RemoveAllControlPoints()
+            maskMarkupsNode.RemoveAllControlPoints()
             coords_IJK = self.logic.getAutoMask()
             if coords_IJK is None:
                 logging.error("Auto mask not found")
-                return
-            # Get IJK to RAS matrix from the volume node
+            else:
+                autoMaskSuccessful = True
+            
+            # Try to apply the automatic mask markups
             currentVolumeNode = self.logic.getCurrentProxyNode()
-            if currentVolumeNode is None:
-                logging.error("Current volume node not found")
-                return
-
-            ijkToRas = vtk.vtkMatrix4x4()
-            currentVolumeNode.GetIJKToRASMatrix(ijkToRas)
-            
-            num_points = coords_IJK.shape[0]
-            coords_RAS = np.zeros((num_points, 4))
-            for i in range(num_points):
-                point_IJK = np.array([coords_IJK[i, 0], coords_IJK[i, 1], 0, 1])
-                # convert to IJK
-                coords_RAS[i, :] = ijkToRas.MultiplyPoint(point_IJK)
-            
-            for i in range(num_points):
-                coord = coords_RAS[i, :]
-                maskFiducialsNode.AddControlPoint(coord[0], coord[1], coord[2])
-            
-            # if coords_IJK is not None:
-            #     for x, y in coords_IJK:
-            #         coord = [-x, -y, 0]
-            #         maskFiducialsNode.AddControlPoint(coord[0], coord[1], coord[2])
+            if autoMaskSuccessful == True and currentVolumeNode is not None:
+                ijkToRas = vtk.vtkMatrix4x4()
+                currentVolumeNode.GetIJKToRASMatrix(ijkToRas)
                 
-            # Update the status
-            self._parameterNode.SetParameter(self.logic.STATUS, self.logic.STATUS_LANDMARKS_PLACED)
-            toggled = False
+                num_points = coords_IJK.shape[0]
+                coords_RAS = np.zeros((num_points, 4))
+                for i in range(num_points):
+                    point_IJK = np.array([coords_IJK[i, 0], coords_IJK[i, 1], 0, 1])
+                    # convert to IJK
+                    coords_RAS[i, :] = ijkToRas.MultiplyPoint(point_IJK)
+                
+                for i in range(num_points):
+                    coord = coords_RAS[i, :]
+                    maskMarkupsNode.AddControlPoint(coord[0], coord[1], coord[2])
+                    
+                # Update the status
+                self._parameterNode.status = AnonymizerStatus.LANDMARKS_PLACED
+                self.ui.defineMaskButton.checked = False
+            else:
+                logging.error("Ultraosund volume node not found")
+                autoMaskSuccessful = False
+        
+        # If markups are not automatically defined, start the manual process using mouse interactions
+        
+        if toggled and autoMaskSuccessful == False:
+            maskMarkupsNode = self._parameterNode.maskMarkups
+            maskMarkupsNode.RemoveAllControlPoints()
+            self.logic.updateMaskVolume()
+            
+            self._parameterNode.status = AnonymizerStatus.LANDMARK_PLACEMENT
+            self.addObserver(maskMarkupsNode, slicer.vtkMRMLMarkupsNode.PointAddedEvent, self.onPointAdded)
+            self.addObserver(maskMarkupsNode, slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self.onPointDefined)
 
-        if toggled:
-            self.logic.resetMaskLandmarks()
-            self._parameterNode.SetParameter(self.logic.STATUS, self.logic.STATUS_LANDMARK_PLACEMENT)
-            landmarkNodeId = landmarkNode.GetID()
-            landmarkNode.SetDisplayVisibility(True)
+            maskMarkupsNode.SetDisplayVisibility(True)
 
             selectionNode = slicer.app.applicationLogic().GetSelectionNode()
-            if landmarkNode:
-                selectionNode.SetReferenceActivePlaceNodeClassName(landmarkNode.GetClassName())
-            selectionNode.SetReferenceActivePlaceNodeID(landmarkNodeId)
-
+            selectionNode.SetReferenceActivePlaceNodeClassName(maskMarkupsNode.GetClassName())
+            selectionNode.SetReferenceActivePlaceNodeID(maskMarkupsNode.GetID())
+            
+            # Switch mouse mode to place mode
             interactionNode = slicer.app.applicationLogic().GetInteractionNode()
             interactionNode.SwitchToPersistentPlaceMode()
             interactionNode.SetCurrentInteractionMode(interactionNode.Place)
         else:
+            # Make sure mouse mode is default
             interactionNode = slicer.app.applicationLogic().GetInteractionNode()
             interactionNode.SetCurrentInteractionMode(interactionNode.ViewTransform)
+    
+    def onPointModified(self, caller=None, event=None):
+        markupsNode = self._parameterNode.maskMarkups
+        if not markupsNode:
+            logging.error("Markups node not found")
+            return
+
+        if markupsNode.GetNumberOfControlPoints() > 3:
+            self.logic.updateMaskVolume()
+            maskContourVolumeNode = self._parameterNode.overlayVolume
+            if maskContourVolumeNode:
+                sliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").mrmlSliceCompositeNode()
+                if sliceCompositeNode.GetForegroundVolumeID() != maskContourVolumeNode.GetID():
+                    sliceCompositeNode.SetForegroundVolumeID(maskContourVolumeNode.GetID())
+                    sliceCompositeNode.SetForegroundOpacity(0.5)
+                    displayNode = maskContourVolumeNode.GetDisplayNode()
+                    displayNode.SetWindow(1)
+                    displayNode.SetLevel(0.5)
+
+    def onPointAdded(self, caller=None, event=None):
+        logging.info('Point added')
         
-    def createWaitDialog(self, title, message):
-        dialog = qt.QDialog(slicer.util.mainWindow())
-        dialog.setWindowTitle(title)
-        dialogLayout = qt.QVBoxLayout(dialog)
-        dialogLayout.setContentsMargins(20, 14, 20, 14)
-        dialogLayout.setSpacing(4)
-        dialogLayout.addStretch(1)
-        dialogLabel = qt.QLabel(message)
-        dialogLabel.setAlignment(qt.Qt.AlignCenter)
-        dialogLayout.addWidget(dialogLabel)
-        dialogLayout.addStretch(1)
-        dialog.show()
-        slicer.app.processEvents()
+        markupsNode = self._parameterNode.maskMarkups
+        if markupsNode.GetNumberOfControlPoints() > 3:
+            self.logic.updateMaskVolume()
+            self.logic.showMaskContour()
+        else:
+            slicer.util.setSliceViewerLayers(foreground=None)
 
-        return dialog
+    def onPointDefined(self, caller=None, event=None):
+        logging.info('Point defined')
+        
+        markupsNode = self._parameterNode.maskMarkups
+        if not markupsNode:
+            logging.error("Markups node not found")
+            return
 
+        if markupsNode.GetNumberOfControlPoints() > 2:
+            self.logic.updateMaskVolume()
+
+        if markupsNode.GetNumberOfControlPoints() > 3:
+            self._parameterNode.status = AnonymizerStatus.LANDMARKS_PLACED
+            self.removeObserver(markupsNode, slicer.vtkMRMLMarkupsNode.PointAddedEvent, self.onPointAdded)
+            self.removeObserver(markupsNode, slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self.onPointDefined)
+            
+            # Switch mouse mode to default
+            interactionNode = slicer.app.applicationLogic().GetInteractionNode()
+            interactionNode.SetCurrentInteractionMode(interactionNode.ViewTransform)
+            
+            # Pop the markup button
+            self.ui.defineMaskButton.checked = False
+    #
+    # Export scan
+    # 
+    
     def onExportScanButton(self):
         """
         Callback function for the export scan button.
         """
         logging.info('Export scan button pressed')
 
-        convertToGrayscale = self.ui.convertGrayscaleCheckBox.checked
-
-        # Create modal dialog asking the user to wait until the export is complete. Use QDialog instead of QProgressDialog
-
-        # Save current frame index for sequence
-        currentSequenceBrowser = self._parameterNode.GetNodeReference(self.logic.CURRENT_SEQUENCE)
+        # Save current frame index for sequence so we can restore it after exporting the scan
+        
+        currentSequenceBrowser = self._parameterNode.ultrasoundSequenceBrowser
         if currentSequenceBrowser is None:
             self.ui.statusLabel.text = "Load a DICOM sequence before trying to export"
             return
@@ -721,7 +665,8 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         
         dialog = self.createWaitDialog("Exporting scan", "Please wait until the scan is exported...")
         
-        # Check if any labels are checked
+        # Check if any labels are checked. If yes, we need to save them as annotations
+        
         annotationLabels = []
         for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())): 
             groupBox = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
@@ -733,26 +678,20 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                 if isinstance(checkBox, qt.QCheckBox) and checkBox.isChecked():
                     annotationLabels.append(checkBox.text)
         
-        # Mask images
+        # Mask images to erase the unwanted parts
+        
         self.logic.maskSequence()
         
-        # Check setting if original folder and filename should be kept
-        inputDirectory = self.ui.inputDirectoryButton.directory
+        # Set up output directory and filename
+        
+        hashPatientId = self.ui.hashPatientIdCheckBox.checked
         outputDirectory = self.ui.outputDirectoryButton.directory
-        if self.ui.keepFoldersCheckBox.checked:
-            outputRelativePath, filename = self.logic.currentRelativePath(inputDicomFolder=inputDirectory)
-            if not filename.endswith(".dcm"):
-                filename += ".dcm"
-            outputPath = os.path.join(outputDirectory, outputRelativePath)
-        else:
-            outputPath = outputDirectory
-            filename, _, _ = self.logic.generateNameFromDicomData(self.logic.currentDicomDataset)
+        filename, _, _ = self.logic.generateNameFromDicomData(self.logic.currentDicomDataset, hashPatientId)
             
         # Export the scan
         dicomFilePath, jsonFilePath, dicomHeaderFilePath = self.logic.exportDicom(
-            outputDirectory=outputPath,
+            outputDirectory=outputDirectory,
             outputFilename=filename,
-            convertToGrayscale=convertToGrayscale,
             labels = annotationLabels,
             compression=self.ui.compressionCheckBox.checked)
         
@@ -770,8 +709,47 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         dialog.close()
 
+    #
+    # Dialog helpers
+    #    
+    
+    def createWaitDialog(self, title, message):
+        dialog = qt.QDialog(slicer.util.mainWindow())
+        dialog.setWindowTitle(title)
+        dialogLayout = qt.QVBoxLayout(dialog)
+        dialogLayout.setContentsMargins(20, 14, 20, 14)
+        dialogLayout.setSpacing(4)
+        dialogLayout.addStretch(1)
+        dialogLabel = qt.QLabel(message)
+        dialogLabel.setAlignment(qt.Qt.AlignCenter)
+        dialogLayout.addWidget(dialogLabel)
+        dialogLayout.addStretch(1)
+        dialog.show()
+        slicer.app.processEvents()
+
+        return dialog
+    
+    def createWaitDialog(self, title, message):
+        dialog = qt.QDialog(slicer.util.mainWindow())
+        dialog.setWindowTitle(title)
+        dialogLayout = qt.QVBoxLayout(dialog)
+        dialogLayout.setContentsMargins(20, 14, 20, 14)
+        dialogLayout.setSpacing(4)
+        dialogLayout.addStretch(1)
+        dialogLabel = qt.QLabel(message)
+        dialogLabel.setAlignment(qt.Qt.AlignCenter)
+        dialogLayout.addWidget(dialogLabel)
+        dialogLayout.addStretch(1)
+        dialog.show()
+        slicer.app.processEvents()
+
+        return dialog
+ 
+
+#
 # AnonymizeUltrasoundLogic
 #
+
 
 class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
     """This class should implement all the actual
@@ -783,104 +761,25 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
     """
 
-    CURRENT_PATIENT_ID = "CurrentPatientID"
-    CURRENT_STUDY_ID = "CurrentStudyID"
-    CURRENT_SERIES_ID = "CurrentSeriesID"
-    CURRENT_SEQUENCE = "CurrentSequence"
-
-    MASK_FAN_LANDMARKS = "MaskFanLandmarks"
-    MARK_RECTANGLE_LANDMARKS = "MarkRectangleLandmarks"
-    MASK_VOLUME = "MaskVolume"
-    MASK_CONTOUR_VOLUME = "MaskContourVolume"
-
-    STATUS = "Status"
-    STATUS_INITIAL = "StatusInitial"  # When the application is just started, no data parsed or loaded yet
-    STATUS_PATIENT_LOADED = "StatusPatientloaded"
-    STATUS_LANDMARK_PLACEMENT = "StatusLandmarkPlacement"
-    STATUS_LANDMARKS_PLACED = "StatusLandmarksPlaced"
-    STATUS_MASKING = "StatusMasking"
-
-    def __init__(self):
-        """
-        Called when the logic class is instantiated. Can be used for initializing member variables.
-        """
+    def __init__(self) -> None:
+        """Called when the logic class is instantiated. Can be used for initializing member variables."""
         ScriptedLoadableModuleLogic.__init__(self)
-        VTKObservationMixin.__init__(self)
-
-        self.loadedSequenceBrowserNodeIds = []
-        self.currentDicomHeader = None
-        self.currentDicomDataset = None
-        self.maskParameters = {}
-        self.seriesQueue = []
-        self.currentSeries = None
+        
         self.dicomDf = None
         self.nextDicomDfIndex = 0
 
-    def setDefaultParameters(self, parameterNode):
+    def getParameterNode(self):
+        return AnonymizeUltrasoundParameterNode(super().getParameterNode())
+    
+    def updateDicomDf(self, inputDirectory: str, skipSingleFrame: bool) -> int:
         """
-        Initialize parameter node with default settings.
+        Update dicomDf with a list of all DICOM files in the input directory.
         """
-        if not parameterNode.GetParameter(self.CURRENT_PATIENT_ID):
-            parameterNode.SetParameter(self.CURRENT_PATIENT_ID, "")
-        if not parameterNode.GetParameter(self.CURRENT_STUDY_ID):
-            parameterNode.SetParameter(self.CURRENT_STUDY_ID, "")
-        if not parameterNode.GetParameter(self.CURRENT_SERIES_ID):
-            parameterNode.SetParameter(self.CURRENT_SERIES_ID, "")
-        if not parameterNode.GetParameter(self.CURRENT_SEQUENCE):
-            parameterNode.SetParameter(self.CURRENT_SEQUENCE, "")
-        if not parameterNode.GetParameter(self.STATUS):
-            parameterNode.SetParameter(self.STATUS, self.STATUS_INITIAL)
-
-    def setupScene(self, maskControlPointsList=None):
-
-        # Make sure fan mask markups fudicual node exists and referenced by the parameter node
-
-        parameterNode = self.getParameterNode()
-        markupsNode = parameterNode.GetNodeReference(self.MASK_FAN_LANDMARKS)
-        if not markupsNode:
-            markupsNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode")
-            markupsNode.SetName(self.MASK_FAN_LANDMARKS)
-            markupsNode.GetDisplayNode().SetTextScale(0.0)
-            parameterNode.SetNodeReferenceID(self.MASK_FAN_LANDMARKS, markupsNode.GetID())
-        
-        if maskControlPointsList:
-            markupsNode.RemoveAllControlPoints()
-            for controlPoint in maskControlPointsList:
-                markupsNode.AddControlPoint(controlPoint)
-        # TODO: Double check if this is need to remove all observers 
-        self.addObserver(markupsNode, slicer.vtkMRMLMarkupsNode.PointAddedEvent, self.onPointAdded)
-        self.addObserver(markupsNode, slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent, self.onPointDefined)
-        self.addObserver(markupsNode, slicer.vtkMRMLMarkupsNode.PointModifiedEvent, self.onPointModified)
-
-        # Add observer for node added to mrmlScene
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.NodeAddedEvent, self.onNodeAdded)
-
-        # Make sure rectangle mask markups fudicual node exists and referenced by the parameter node
-
-        if not parameterNode.GetNodeReference(self.MARK_RECTANGLE_LANDMARKS):
-            markupsNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode")
-            markupsNode.SetName(self.MARK_RECTANGLE_LANDMARKS)
-            parameterNode.SetNodeReferenceID(self.MARK_RECTANGLE_LANDMARKS, markupsNode.GetID())
-
-    def onNodeAdded(self, caller, event):
-        """
-        Called when a node is added to the scene.
-        """
-        node = caller
-        if node.IsA("vtkMRMLSequenceBrowserNode"):
-            logging.info(f"Sequence browser node added: {node.GetID()}")
-            # Set newly added sequence browser node as current sequence browser node
-            parameterNode = self.getParameterNode()
-            parameterNode.SetNodeReferenceID(self.CURRENT_SEQUENCE, node.GetID())
-
-    def updateDicomDf(self, input_folder, skip_singleframe=False):
-        """
-        Update dicomDf with a list of all DICOM files in the input folder.
-        """
+        logging.info(f"Reading DICOM files from {inputDirectory}")
         dicom_data = []
     
         # Get the total number of files
-        total_files = sum([len(files) for root, dirs, files in os.walk(input_folder)])
+        total_files = sum([len(files) for root, dirs, files in os.walk(inputDirectory)])
 
         # Create a QProgressDialog
         progress_dialog = qt.QProgressDialog("Parsing DICOM files...", "Cancel", 0, total_files, slicer.util.mainWindow())
@@ -890,7 +789,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
 
         # Recursively walk through the input folder
         file_count = 0
-        for root, dirs, files in os.walk(input_folder):
+        for root, dirs, files in os.walk(inputDirectory):
             dirs.sort()
             files.sort()
             for file in files:
@@ -918,19 +817,22 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
                                 to_patch = False
                     
                     # Extract required information
-                    patient_uid = dicom_ds.PatientID if 'PatientID' in dicom_ds else None
+                    patient_id = dicom_ds.PatientID if 'PatientID' in dicom_ds else None
                     study_uid = dicom_ds.StudyInstanceUID if 'StudyInstanceUID' in dicom_ds else None
                     series_uid = dicom_ds.SeriesInstanceUID if 'SeriesInstanceUID' in dicom_ds else None
                     instance_uid = dicom_ds.SOPInstanceUID if 'SOPInstanceUID' in dicom_ds else None
                     
+                    if patient_id is None:
+                        logging.warning(f"Patient ID missing in file {file_path}")
+                    
                     exp_filename, _, _ = self.generateNameFromDicomData(dicom_ds)
                     
-                    if skip_singleframe and ('NumberOfFrames' not in dicom_ds or dicom_ds.NumberOfFrames < 2):
+                    if skipSingleFrame and ('NumberOfFrames' not in dicom_ds or dicom_ds.NumberOfFrames < 2):
                         continue
 
                     # Append the information to the list, if PatientID, StudyInstanceUID, and SeriesInstanceUID are present
-                    if patient_uid and study_uid and series_uid and instance_uid:
-                        dicom_data.append([file_path, exp_filename, patient_uid, study_uid, series_uid, instance_uid, physical_delta_x, physical_delta_y, to_patch])
+                    if patient_id and study_uid and series_uid and instance_uid:
+                        dicom_data.append([file_path, exp_filename, patient_id, study_uid, series_uid, instance_uid, physical_delta_x, physical_delta_y, to_patch])
                 except Exception as e:
                     # If the file is not a valid DICOM file, continue to the next file
                     continue
@@ -957,6 +859,212 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         # Return the number of rows in the dataframe
         return len(self.dicomDf)
     
+    def loadNextSequence(self, outputDirectory, continueProgress=True):
+        """
+        Load next sequence in the list of DICOM files.
+        Returns the index of the loaded sequence in the dataframe of DICOM files, or None if no more sequences are available.
+        """
+        self.resetScene()
+        
+        parameterNode = self.getParameterNode()
+
+        # Get next filepath from dicomDf. If nextDicomDfIndex is larger than the number of rows in dicomDf, then
+        # return None.
+        if self.nextDicomDfIndex is None or self.nextDicomDfIndex >= len(self.dicomDf):
+            return None
+        nextDicomDfRow = self.dicomDf.iloc[self.nextDicomDfIndex]
+
+        # Make sure a temporary folder for the DICOM files exists
+        tempDicomDir = slicer.app.temporaryPath + '/AnonymizeUltrasound'
+        logging.info("Temporary DICOM directory: " + tempDicomDir)
+        if not os.path.exists(tempDicomDir):
+            os.makedirs(tempDicomDir)
+        
+        # Delete all files in the temporary folder
+        for file in os.listdir(tempDicomDir):
+            os.remove(os.path.join(tempDicomDir, file))
+        
+        # Copy DICOM file to temporary folder
+        shutil.copy(nextDicomDfRow['Filepath'], tempDicomDir)
+        logging.info(f"Copied DICOM file {nextDicomDfRow['Filepath']} to {tempDicomDir}")
+        
+        # TODO: Make this an option in the settings becuase some already patched dcm files are not loading with this option
+        # # Patch the DICOM file to add spacing information if it is missing, but available from other rows
+        # temporaryDicomFilepath = os.path.join(tempDicomDir, os.path.basename(nextDicomDfRow['Filepath']))
+        # to_patch = nextDicomDfRow['Patch']
+        # if to_patch:
+        #     physical_delta_x = nextDicomDfRow['PhysicalDeltaX']
+        #     physical_delta_y = nextDicomDfRow['PhysicalDeltaY']
+        #     if physical_delta_x is not None and physical_delta_y is not None:
+        #         ds = pydicom.dcmread(temporaryDicomFilepath)
+        #         ds.PixelSpacing = [str(physical_delta_x*10.0), str(physical_delta_y*10.0)]  # Convert from cm/pixel to mm/pixel
+        #         ds.save_as(temporaryDicomFilepath)
+        #         logging.info(f"Patched DICOM file {temporaryDicomFilepath} with physical delta X and Y")
+
+        loadedNodeIDs = []
+        with DICOMUtils.TemporaryDICOMDatabase() as db:
+            DICOMUtils.importDicom(tempDicomDir, db)
+            patientUIDs = db.patients()
+            for patientUID in patientUIDs:
+                loadedNodeIDs.extend(DICOMUtils.loadPatientByUID(patientUID))
+
+        logging.info(f"Loaded {len(loadedNodeIDs)} nodes")
+
+        # Check loadedNodeIDs and collect sequence browser nodes to display them later
+        currentSequenceBrowser = None
+        for nodeID in loadedNodeIDs:
+            currentSequenceBrowser = slicer.mrmlScene.GetNodeByID(nodeID)
+            if currentSequenceBrowser is not None and currentSequenceBrowser.IsA("vtkMRMLSequenceBrowserNode"):
+                parameterNode.ultrasoundSequenceBrowser = currentSequenceBrowser
+                self.currentDicomHeader = self.dicomHeaderDictForBrowserNode(currentSequenceBrowser)
+                # Add a "DicomFile" attribute to the currentSequenceBrowser, so we can check the source file later for information
+                currentSequenceBrowser.SetAttribute("DicomFile", nextDicomDfRow['Filepath'])
+                if self.currentDicomHeader is None:
+                    logging.error(f"Could not find DICOM header for sequence browser node {currentSequenceBrowser.GetID()}")
+                break
+
+        # If accidentally pixel data gets in the dicom header, remove it
+        if "Pixel Data" in self.currentDicomHeader:
+            del self.currentDicomHeader["Pixel Data"]
+
+        # Increment nextDicomDfIndex
+        nextIndex = self.incrementDicomDfIndex(outputDirectory, skip_existing=continueProgress)
+        if nextIndex is None:
+            logging.info("No more DICOM files to process")
+            return None
+
+        # Delete files from temporary folder
+        for file in os.listdir(tempDicomDir):
+            os.remove(os.path.join(tempDicomDir, file))
+        
+        # Make this sequence browser node the current one in the toolbar
+        slicer.modules.sequences.setToolBarActiveBrowserNode(currentSequenceBrowser)
+
+        # Get the proxy node of the master sequence node of the selected sequence browser node
+        masterSequenceNode = currentSequenceBrowser.GetMasterSequenceNode()
+        if masterSequenceNode is None:
+            logging.error("Master sequence node of sequence browser node with ID " + currentSequenceBrowser.GetID() + " not found")
+            return None
+        proxyNode = currentSequenceBrowser.GetProxyNode(masterSequenceNode)
+        if proxyNode is None:
+            logging.error("Proxy node of master sequence node with ID " + masterSequenceNode.GetID() + " not found")
+            return None
+
+        # If proxyNode is a vtkMRMLScalarVolumeNode or vtkMRMLVectorVolumeNode, then set it as the background volume
+        if proxyNode.IsA("vtkMRMLScalarVolumeNode") or proxyNode.IsA("vtkMRMLVectorVolumeNode"):
+            backgroundVolumeNode = proxyNode
+            layoutManager = slicer.app.layoutManager()
+            sliceLogic = layoutManager.sliceWidget('Red').sliceLogic()
+            compositeNode = sliceLogic.GetSliceCompositeNode()
+            compositeNode.SetBackgroundVolumeID(backgroundVolumeNode.GetID())
+        
+        return self.nextDicomDfIndex - 1
+    
+    def dicomHeaderDictForBrowserNode(self, browserNode):
+        """
+        Return DICOM header for the given browser node.
+        Also sets up self.currentDicomDataset variable as a pydicom dataset with same contents as returned dictionary.
+
+        :param browserNode: Sequence browser node
+        :return: DICOM header dictionary
+        """
+        if browserNode is None:
+            return None
+
+        # Get the proxy node of the master sequence node of the selected sequence browser node
+        masterSequenceNode = browserNode.GetMasterSequenceNode()
+        proxyNode = browserNode.GetProxyNode(masterSequenceNode)
+
+        # Get DICOM.instanceUID attribute from proxy node
+        instanceUID = proxyNode.GetAttribute("DICOM.instanceUIDs")
+        if instanceUID is None:
+            logging.error("DICOM.instanceUIDs attribute not found in proxy node")
+            return None
+
+        # If instanceUID is a list, keep only the first item
+        if isinstance(instanceUID, list):
+            instanceUID = instanceUID[0]
+
+        # Find row in self.dicomDf where instanceUID matches first instanceUID in instanceUIDs
+        filepath = self.getFileForBrowserNode(browserNode)
+        if filepath is None:
+            logging.error(f"Could not find DICOM file for instanceUID {instanceUID}")
+            return None
+
+        ds = pydicom.dcmread(filepath)
+        dsInstanceUID = ds["0008", "0018"].value
+        if dsInstanceUID == instanceUID:
+            self.currentDicomDataset = pydicom.dcmread(filepath)
+            dicomHeaderDict = self.dicomHeaderToDict(ds)
+            return dicomHeaderDict
+
+        return None
+
+    def dicomHeaderToDict(self, ds, parent=None):
+        """
+        Convert a DICOM dataset to a Python dictionary.
+        """
+        if parent is None:
+            parent = {}
+        for elem in ds:
+            if elem.VR == "SQ":
+                parent[elem.name] = []
+                for item in elem:
+                    child = {}
+                    self.dicomHeaderToDict(item, child)
+                    parent[elem.name].append(child)
+            else:
+                parent[elem.name] = elem.value
+        return parent
+
+    def resetScene(self, leaveMaskFiducials=True):
+        """
+        Reset the scene by clearing it and setting it up again.
+
+        leaveMaskFiducials: If True, then leave the mask fiducials in the scene. If False, then remove them.
+        """
+        parameterNode = self.getParameterNode()
+        
+        # Save mask fiducials
+        maskFiducialsList = []
+        if leaveMaskFiducials:
+            # Save mask fiducials    
+            maskFiducials = parameterNode.maskMarkups
+            if maskFiducials is not None:
+                # Store all control point coordinates in a list
+                for i in range(maskFiducials.GetNumberOfControlPoints()):
+                    coord = [0, 0, 0]
+                    maskFiducials.GetNthControlPointPosition(i, coord)
+                    maskFiducialsList.append(coord)
+        
+        logging.info(f"Saved {len(maskFiducialsList)} mask fiducials")
+
+        # Clear the scene
+        slicer.mrmlScene.Clear(0)
+        self.currentDicomDataset = None
+        self.currentDicomHeader = None
+        self.setupScene(maskControlPointsList=maskFiducialsList)
+
+        logging.info(f"Restored {len(maskFiducialsList)} mask fiducials")   
+    
+    def setupScene(self, maskControlPointsList=None):
+        # Make sure fan mask markups fudicual node exists and referenced by the parameter node
+
+        parameterNode = self.getParameterNode()
+        markupsNode = parameterNode.maskMarkups
+        if not markupsNode:
+            markupsNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode", "MaskFiducials")
+            markupsNode.GetDisplayNode().SetTextScale(0.0)
+            parameterNode.maskMarkups = markupsNode
+        
+        if maskControlPointsList:
+            markupsNode.RemoveAllControlPoints()
+            for controlPoint in maskControlPointsList:
+                markupsNode.AddControlPoint(controlPoint)
+        
+        # Add observer for node added to mrmlScene
+        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.NodeAddedEvent, self.onNodeAdded)
+
     def updateProgressDicomDf(self, input_folder, output_folder, keep_folders=False):
         """
         Check the output folder to see what input files are already processed.
@@ -970,118 +1078,57 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         self.incrementDicomDfIndex(input_folder, output_folder, skip_existing=True, keep_folders=keep_folders)
         return self.nextDicomDfIndex
     
-    def getNumberOfSeries(self):
+    def incrementDicomDfIndex(self, output_directory, skip_existing=False):
         """
-        Return the number of series in the current DICOM dataframe.
+        Increment the index of the DICOM dataframe. If skipExistingOutput is True, then skip the rows that have already been processed.
+        
+        :param skip_existing: If True, skip the rows that have already been processed.
+        :param keep_folders: If True, keep the folder structure of the input DICOM files in the output directory.
+        :return: None
         """
-        return self.dicomDf.SeriesUID.nunique()
+        listOfIndices = self.dicomDf.index.tolist()
+        listOfIndices.sort()
+        
+        if self.nextDicomDfIndex is None:
+            nextIndexIndex = 0
+        else:
+            nextIndexIndex = listOfIndices.index(self.nextDicomDfIndex)
+            nextIndexIndex += 1
+        
+        if skip_existing:
+            while nextIndexIndex < len(listOfIndices):
+                nextDicomDfRow = self.dicomDf.iloc[listOfIndices[nextIndexIndex]]
+                
+                output_path = output_directory
+                output_filename = nextDicomDfRow['AnonFilename']
+                output_fullpath = os.path.join(output_path, output_filename)
+                
+                # Make sure output_fullpath has a .dcm extension
+                if not output_fullpath.endswith('.dcm'):
+                    output_fullpath += '.dcm'
+                
+                if not os.path.exists(output_fullpath):
+                    break
+                
+                nextIndexIndex += 1
+        
+        if nextIndexIndex < len(listOfIndices):
+            self.nextDicomDfIndex = listOfIndices[nextIndexIndex]
+            logging.info(f"Next DICOM dataframe index: {self.nextDicomDfIndex}")
+        else:
+            self.nextDicomDfIndex = None
+            logging.info("No more DICOM files to process")
+        
+        return self.nextDicomDfIndex
     
-    def getNumberOfInstances(self):
-        """
-        Return the number of instances in the current DICOM dataframe.
-        """
-        if self.dicomDf is None:
-            return 0
-        else:
-            return len(self.dicomDf)
-
-    def removeMarkupObservers(self):
-        self.removeObservers(self.onPointAdded)
-        self.removeObservers(self.onPointDefined)
-        self.removeObservers(self.onPointModified)
-
-    def resetMaskLandmarks(self):
-        parameterNode = self.getParameterNode()
-        markupsNode = parameterNode.GetNodeReference(self.MASK_FAN_LANDMARKS)
-        if markupsNode:
-            markupsNode.RemoveAllControlPoints()
-
-    def onPointAdded(self, caller=None, event=None):
-        logging.info('Point added')
-        parameterNode = self.getParameterNode()
-
-        markupsNode = parameterNode.GetNodeReference(self.MASK_FAN_LANDMARKS)
-        if not markupsNode:
-            logging.error("Markups node not found")
-            return
-
-        if markupsNode.GetNumberOfControlPoints() > 3:
-            self.updateMaskVolume()
-            self.showMaskContour()
-        else:
-            slicer.util.setSliceViewerLayers(foreground=None)
-
-    def showMaskContour(self, show=True):
-        parameterNode = self.getParameterNode()
-        maskContourVolumeNode = parameterNode.GetNodeReference(self.MASK_CONTOUR_VOLUME)
-
-        # Set mask contour as foreground volume in slice viewers, and make sure it has 50% opacity
-        if maskContourVolumeNode and show:
-            slicer.util.setSliceViewerLayers(foreground=maskContourVolumeNode)
-            sliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").mrmlSliceCompositeNode()
-            sliceCompositeNode.SetForegroundOpacity(0.5)
-            # Make sure background and foreground are not alpha blended but added
-            sliceCompositeNode.SetCompositing(2) # Add foreground and background
-            # Set window and level so that mask is visible
-            displayNode = maskContourVolumeNode.GetDisplayNode()
-            displayNode.SetWindow(1)
-            displayNode.SetLevel(0.5)
-        else:
-            slicer.util.setSliceViewerLayers(foreground=None)
-
-    def onPointModified(self, caller=None, event=None):
-        parameterNode = self.getParameterNode()
-
-        markupsNode = parameterNode.GetNodeReference(self.MASK_FAN_LANDMARKS)
-        if not markupsNode:
-            logging.error("Markups node not found")
-            return
-
-        if markupsNode.GetNumberOfControlPoints() > 3:
-            self.updateMaskVolume()
-            maskContourVolumeNode = parameterNode.GetNodeReference(self.MASK_CONTOUR_VOLUME)
-            if maskContourVolumeNode:
-                sliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").mrmlSliceCompositeNode()
-                if sliceCompositeNode.GetForegroundVolumeID() != maskContourVolumeNode.GetID():
-                    sliceCompositeNode.SetForegroundVolumeID(maskContourVolumeNode.GetID())
-                    sliceCompositeNode.SetForegroundOpacity(0.5)
-                    displayNode = maskContourVolumeNode.GetDisplayNode()
-                    displayNode.SetWindow(1)
-                    displayNode.SetLevel(0.5)
-
-
-    def onPointDefined(self, caller=None, event=None):
-        logging.info('Point defined')
-        parameterNode = self.getParameterNode()
-
-        markupsNode = parameterNode.GetNodeReference(self.MASK_FAN_LANDMARKS)
-        if not markupsNode:
-            logging.error("Markups node not found")
-            return
-
-        if markupsNode.GetNumberOfControlPoints() > 2:
-            self.updateMaskVolume()
-
-        if markupsNode.GetNumberOfControlPoints() > 3:
-            parameterNode.SetParameter(self.STATUS, self.STATUS_LANDMARKS_PLACED)
-        else:
-            parameterNode.SetParameter(self.STATUS, self.STATUS_LANDMARK_PLACEMENT)
-
-    def getCurrentPatientName(self):
-        if self.currentDicomDataset is None:
-            logging.error("Current DICOM dataset is not set, cannot return patient name")
-            return None
-        else:
-            return self.currentDicomDataset.PatientName
-
     def getCurrentProxyNode(self):
         """
         Get the proxy node of the master sequence node of the currently selected sequence browser node
         """
         parameterNode = self.getParameterNode()
-        currentBrowserNode = parameterNode.GetNodeReference(self.CURRENT_SEQUENCE)
+        currentBrowserNode = parameterNode.ultrasoundSequenceBrowser
         if currentBrowserNode is None:
-            logging.error("Current sequence browser node not found using reference: " + self.CURRENT_SEQUENCE)
+            logging.error("Current sequence browser node not found")
             return None
 
         # Get the proxy node of the master sequence node of the selected sequence browser node
@@ -1097,6 +1144,251 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             return None
 
         return proxyNode
+    
+    def getFileForBrowserNode(self, browserNode):
+        if browserNode is None:
+            return None
+
+        # Get the proxy node of the master sequence node of the selected sequence browser node
+        masterSequenceNode = browserNode.GetMasterSequenceNode()
+        proxyNode = browserNode.GetProxyNode(masterSequenceNode)
+
+        # Get DICOM.instanceUID attribute from proxy node
+        instanceUID = proxyNode.GetAttribute("DICOM.instanceUIDs")
+        if instanceUID is None:
+            logging.error("DICOM.instanceUIDs attribute not found in proxy node")
+            return None
+
+        # If instanceUID is a list, keep only the first item
+        if isinstance(instanceUID, list):
+            instanceUID = instanceUID[0]
+
+        # Find row in self.dicomDf where instanceUID matches first instanceUID in instanceUIDs
+        filepath = None
+        for index, row in self.dicomDf.iterrows():
+            rowInstanceUID = row['InstanceUID']
+            currentInstanceUID = instanceUID
+            if rowInstanceUID == currentInstanceUID:
+                filepath = row['Filepath']
+                break
+        if filepath is None:
+            logging.error(f"Could not find DICOM file for instanceUID {instanceUID}")
+            return None
+
+        return filepath
+
+    def getNumberOfInstances(self):
+        """
+        Return the number of instances in the current DICOM dataframe.
+        """
+        if self.dicomDf is None:
+            return 0
+        else:
+            return len(self.dicomDf)
+
+    def getAutoMask(self):
+        if not hasattr(self, 'currentDicomDataset'):
+            logging.error("No current DICOM dataset loaded")
+            return None
+        model, input_shape, device = self.downloadAndPrepareModel()
+        if model is None:
+            return None
+        return self.findMaskAutomatic(model, input_shape, device)
+    
+    def downloadAndPrepareModel(self):
+        """ Download the AI model and prepare it for inference """
+        # Set the Device to run the model on
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logging.info(f"The model will run on Device: {device}")
+        
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        checkpoint_dir = os.path.join(script_dir, 'Resources/checkpoints/')
+        os.makedirs(os.path.dirname(checkpoint_dir), exist_ok=True)
+
+        model_path = os.path.join(checkpoint_dir, 'model_traced.pt')
+        model_config_path = os.path.join(checkpoint_dir, 'model_config.yaml')
+    
+        model_url = "https://www.dropbox.com/scl/fi/abgn6ln13thh0v9mq5kqj/model_traced.pt?rlkey=8a9eugxbqeuzwrglz55sh7hkd&st=mwclwtgv&dl=1"
+        config_url = "https://www.dropbox.com/scl/fi/klnwakbysn95nae85lmjz/model_config.yaml?rlkey=p1jada30bvbsihtfiw80dq7h2&st=7a8y0ewy&dl=1"  
+    
+        if not os.path.exists(model_path):
+            logging.info(f"The AI model does not exist. Starting download...")
+            dialog = AnonymizeUltrasoundWidget.createWaitDialog(self, "Downloading AI Model", "The AI model does not exist. Downloading...")
+            success = self.download_model(model_url, model_path)
+            dialog.close()
+            if not success:
+                return None, None, None
+    
+        if not os.path.exists(model_config_path):
+            logging.info(f"The model config file does not exist. Starting download...")
+            success = self.download_model(config_url, model_config_path)
+            if not success:            
+                return None, None, None
+        # Check if the model loaded successfully
+        try:
+            model = torch.jit.load(model_path).to(device).eval()
+        except Exception as e:
+            logging.error(f"Failed to load the model: {e}")
+            logging.error("Automatic mode is disabled. Please define the mask manually.")            
+            # TODO: Disable the button of Auto mask generation?
+            return None, None, None
+        # Check if the model config loaded successfully
+        try:
+            with open(model_config_path, 'r') as file:
+                model_config = yaml.safe_load(file)
+            input_shape_str = model_config['input_shape']
+            input_shape = tuple(map(int, input_shape_str.strip('()').split(',')))
+        except Exception as e:
+            logging.error(f"Failed to load the model config: {e}")
+            logging.error("Automatic mode is disabled. Please define the mask manually.")            
+            # TODO: Disable the button of Auto mask generation?
+            return None, None, None
+    
+        return model, input_shape, device
+    
+    def findMaskAutomatic(self, model, input_shape, device):
+        """ Generate a mask automatically using the AI model """
+        slicer.app.pauseRender()
+        currentSequenceBrowser = self.getParameterNode().GetNodeReference(self.CURRENT_SEQUENCE)
+        masterSequenceNode = currentSequenceBrowser.GetMasterSequenceNode()
+        currentVolumeNode = masterSequenceNode.GetNthDataNode(0)
+        currentVolumeArray = slicer.util.arrayFromVolume(currentVolumeNode)
+        maxVolumeArray = np.copy(currentVolumeArray)
+        
+        for i in range(1, masterSequenceNode.GetNumberOfDataNodes()):
+            currentVolumeNode = masterSequenceNode.GetNthDataNode(i)
+            currentVolumeArray = slicer.util.arrayFromVolume(currentVolumeNode)
+            maxVolumeArray = np.maximum(maxVolumeArray, currentVolumeArray)
+        frame_item = maxVolumeArray[0, :, :]
+        slicer.app.resumeRender()
+    
+        if len(frame_item.shape) == 3 and frame_item.shape[2] == 3:
+            frame_item = cv2.cvtColor(frame_item, cv2.COLOR_RGB2GRAY)
+        original_frame_size = frame_item.shape[::-1]
+        logging.debug(f"Original frame size: {str(frame_item.shape)}")
+        frame_item = cv2.resize(frame_item, input_shape)
+        logging.debug(f"Resized frame size: {str(input_shape)}")
+
+        with torch.no_grad():
+            input_tensor = torch.tensor(np.expand_dims(np.expand_dims(np.array(frame_item), axis=0), axis=0)).float()
+            input_tensor = input_tensor.to(device)
+            output = model(input_tensor)
+        output = (torch.softmax(output, dim=1) > 0.5).cpu().numpy()
+        mask_output = np.uint8(output[0, 1, :, :]) 
+        mask_output = cv2.resize(np.uint8(output[0, 1, :, :]), original_frame_size)
+        logging.info(f"({str(mask_output.shape)}) Mask generated successfully")
+        approx_corners = self.find_four_corners(mask_output)
+        
+        if approx_corners is None:
+            logging.error("Could not find the four corners of the foreground in the mask")
+        else:
+            top_left, top_right, bottom_right, bottom_left = approx_corners
+            logging.debug(f"Approximate corners - Top-left: {top_left}, Top-right: {top_right}, Bottom-right: {bottom_right}, Bottom-left: {bottom_left}")
+        return approx_corners
+    
+    def download_model(self, url, output_path):
+        """ Download a file from a URL """
+        try:
+            # Send a GET request to the URL
+            response = requests.get(url, stream=True)
+            # Raise an exception if the request was unsuccessful
+            response.raise_for_status()
+            # Write the content to the file
+            with open(output_path, 'wb') as file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    file.write(chunk)
+            logging.info(f"Downloaded file saved to {output_path}")
+            return True
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Failed to download the file: {e}")
+            # TODO: Disable the button of Auto mask generation?
+            return False
+    
+    def find_extreme_corners(self, points):
+        # Convert points to a numpy array for easier manipulation
+        points = np.array(points)
+        # Find the top-left corner (minimum x + y)
+        top_left = list(points[np.argmin(points[:, 0] + points[:, 1])])
+        # Find the top-right corner (maximum x - y)
+        top_right = list(points[np.argmax(points[:, 0] - points[:, 1])])
+        # Find the bottom-left corner (minimum x - y)
+        bottom_left = list(points[np.argmin(points[:, 0] - points[:, 1])])
+        # Find the bottom-right corner (maximum x + y)
+        bottom_right = list(points[np.argmax(points[:, 0] + points[:, 1])])
+
+        corners = [tuple(top_left), tuple(top_right), tuple(bottom_left), tuple(bottom_right)]
+        unique_corners = set(corners)
+        num_unique_corners = len(unique_corners)
+
+        # If there are 3 unique corners, then the mask is a triangle
+        epsilon = 2 
+        if num_unique_corners == 3:
+            # Define the top point (which one is higher from top-left and top-right, higher means less y)
+            top_point = top_left if top_left[1] < top_right[1] else top_right
+            # Set top-left and top-right equal to top_point
+            top_left = list(top_point)
+            top_right = list(top_point)
+            # Adjust x coordinates
+            top_left[0] -= epsilon
+            top_right[0] += epsilon
+    
+        # TODO: Is it possible?!
+        if num_unique_corners < 3:
+            return None
+    
+        return np.array([top_left, top_right, bottom_left, bottom_right])
+    
+    def find_four_corners(self, mask):
+        """ Find the four corners of the foreground in the mask. """
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if len(contours) == 0:
+            return None
+        # Assuming the largest contour is the foreground
+        contour = max(contours, key=cv2.contourArea)
+        epsilon = 0.02 * cv2.arcLength(contour, True)
+        approx_corners = cv2.approxPolyDP(contour, epsilon, True)
+
+        # Reshape the approx_corners array to a 2D array
+        approx_corners = approx_corners.reshape(-1, 2)
+
+        # If the contour has more than 4 corners, then find the extreme corners
+        if len(approx_corners) < 3:
+            return None
+
+        approx_corners = self.find_extreme_corners(approx_corners)
+        return approx_corners
+
+    def showMaskContour(self, show=True):
+        parameterNode = self.getParameterNode()
+        maskContourVolumeNode = parameterNode.overlayVolume
+
+        # Set mask contour as foreground volume in slice viewers, and make sure it has 50% opacity
+        if maskContourVolumeNode and show:
+            slicer.util.setSliceViewerLayers(foreground=maskContourVolumeNode)
+            sliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").mrmlSliceCompositeNode()
+            sliceCompositeNode.SetForegroundOpacity(0.5)
+            # Make sure background and foreground are not alpha blended but added
+            sliceCompositeNode.SetCompositing(2) # Add foreground and background
+            # Set window and level so that mask is visible
+            displayNode = maskContourVolumeNode.GetDisplayNode()
+            displayNode.SetWindow(1)
+            displayNode.SetLevel(0.5)
+        else:
+            slicer.util.setSliceViewerLayers(foreground=None)
+
+    def onNodeAdded(self, caller, event):
+        """
+        Called when a node is added to the scene.
+        If a sequence browser node is added, make that the current cultrasound sequence browser node.
+        """
+        node = caller
+        if node.IsA("vtkMRMLSequenceBrowserNode"):
+            logging.info(f"Sequence browser node added: {node.GetID()}")
+            # Set newly added sequence browser node as current sequence browser node
+            parameterNode = self.getParameterNode()
+            parameterNode.ultrasoundSequenceBrowser = node
 
     def updateMaskVolume(self):
         """
@@ -1104,8 +1396,15 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         """
         parameterNode = self.getParameterNode()
 
-        fanMaskMarkupsNode = self.getParameterNode().GetNodeReference(self.MASK_FAN_LANDMARKS)
+        fanMaskMarkupsNode = parameterNode.maskMarkups
         if fanMaskMarkupsNode.GetNumberOfControlPoints() < 4:
+            # Clear the overlay volume
+            maskContourVolumeNode = parameterNode.overlayVolume
+            if maskContourVolumeNode is not None:
+                maskContourArray = slicer.util.arrayFromVolume(maskContourVolumeNode)
+                maskContourArray.fill(0)
+                slicer.util.updateVolumeFromArray(maskContourVolumeNode, maskContourArray)
+            
             logging.info("At least four control points are needed to define a mask")
             return("At least four control points are needed to define a mask")
 
@@ -1170,10 +1469,10 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         mask_contour_array_eroded = cv2.erode(mask_contour_array, masking_kernel, iterations=3)
         mask_contour_array = mask_contour_array - mask_contour_array_eroded
 
-        maskContourVolumeNode = parameterNode.GetNodeReference(self.MASK_CONTOUR_VOLUME)
+        maskContourVolumeNode = parameterNode.overlayVolume
         if maskContourVolumeNode is None:
-            maskContourVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", self.MASK_CONTOUR_VOLUME)
-            parameterNode.SetNodeReferenceID(self.MASK_CONTOUR_VOLUME, maskContourVolumeNode.GetID())
+            maskContourVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "AnonymizeUltrasound Overlay")
+            parameterNode.overlayVolume = maskContourVolumeNode
             maskContourVolumeNode.CreateDefaultDisplayNodes()
             maskContourDisplayNode = maskContourVolumeNode.GetDisplayNode()
             maskContourDisplayNode.SetAndObserveColorNodeID("vtkMRMLColorTableNodeGreen")
@@ -1192,11 +1491,10 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
 
         # Create a new volume node for the mask
 
-        maskVolumeNode = parameterNode.GetNodeReference(self.MASK_VOLUME)
+        maskVolumeNode = parameterNode.maskVolume
         if maskVolumeNode is None:
-            maskVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
-            maskVolumeNode.SetName("Mask")
-            parameterNode.SetNodeReferenceID(self.MASK_VOLUME, maskVolumeNode.GetID())
+            maskVolumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode", "AnonymizeUltrasound Mask")
+            parameterNode.maskVolume = maskVolumeNode
 
         maskVolumeNode.SetSpacing(currentVolumeNode.GetSpacing())
         maskVolumeNode.SetOrigin(currentVolumeNode.GetOrigin())
@@ -1367,7 +1665,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         self.updateMaskVolume()
 
         parameterNode = self.getParameterNode()
-        currentSequenceBrowser = parameterNode.GetNodeReference(self.CURRENT_SEQUENCE)
+        currentSequenceBrowser = parameterNode.ultrasoundSequenceBrowser
 
         if currentSequenceBrowser is None:
             logging.error("No sequence browser node loaded!")
@@ -1375,7 +1673,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
 
         # Get mask volume
 
-        maskVolumeNode = parameterNode.GetNodeReference(self.MASK_VOLUME)
+        maskVolumeNode = parameterNode.maskVolume
         if maskVolumeNode is None:
             logging.error("No mask volume loaded!")
             return
@@ -1429,9 +1727,11 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             image.save(output, format="JPEG", quality=quality)
             return output.getvalue()
 
-    def generateNameFromDicomData(self, ds):
+    def generateNameFromDicomData(self, ds, hashPatientId = True):
         """
-        Generate a filename from a DICOM header dictionary. The name will consist of two parts:
+        Generate a filename from a DICOM header dictionary.
+        Optionally, the name will be a hash of the PatientID and the SOP Instance UID.
+        The name will consist of two parts:
         X_Y.dcm
         X is generated by hashing the original patient UID to a 10-digit number.
         Y is generated from the DICOM instance UID, but limited to 8 digits
@@ -1449,7 +1749,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         if instanceUID is None or instanceUID == "":
             logging.error("SOPInstanceUID not found in DICOM header dict")
             return ""
-
+        
         hash_object = hashlib.sha256()
         hash_object.update(str(patientUID).encode())
         patientId = int(hash_object.hexdigest(), 16) % 10**10
@@ -1486,12 +1786,12 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         
         return 'N/A'
     
-    def saveDicomFile(self, dicomFilePath, convertToGrayscale = False, compression = True):
+    def saveDicomFile(self, dicomFilePath, compression = True):
         parameterNode = self.getParameterNode()
 
         # Collect all image frames in a numpy array
 
-        currentSequenceBrowser = parameterNode.GetNodeReference(self.CURRENT_SEQUENCE)
+        currentSequenceBrowser = parameterNode.ultrasoundSequenceBrowser
         masterSequenceNode = currentSequenceBrowser.GetMasterSequenceNode()
         proxyNode = self.getCurrentProxyNode()
 
@@ -1505,13 +1805,6 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             currentVolumeNode = masterSequenceNode.GetNthDataNode(index)
             currentVolumeArray = slicer.util.arrayFromVolume(currentVolumeNode)
             imageArray[index, :, :, :] = currentVolumeArray
-
-        # Convert to grayscale if data is RGB and option checked
-        dims = len(imageArray.shape)
-        numberOfFrames = currentSequenceBrowser.GetNumberOfItems()
-        if numberOfFrames > 1 and dims > 3 and convertToGrayscale:
-            # Keep only R channel from RGB for grayscale conversion
-            imageArray = imageArray[:,:,:,0]
 
         # Create a new DICOM dataset
         ds = Dataset()
@@ -1657,7 +1950,6 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
     def exportDicom(self,
                     outputDirectory,
                     outputFilename = None,
-                    convertToGrayscale = False,
                     labels = None,
                     compression = True):
         """
@@ -1679,9 +1971,6 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             'GrayscaleConversion': False
         }
 
-        if convertToGrayscale:
-            sequenceInfo['GrayscaleConversion'] = True
-
         # Create output directory if it doesn't exist
         if not os.path.exists(outputDirectory):
             os.makedirs(outputDirectory)
@@ -1692,7 +1981,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         if outputFilename == "":
             return None, None, None
         dicomFilePath = os.path.join(outputDirectory, outputFilename)
-        self.saveDicomFile(dicomFilePath, convertToGrayscale=convertToGrayscale, compression=compression)
+        self.saveDicomFile(dicomFilePath, compression=compression)
         
         # Save original DICOM header to a json file. This may not be completely anonymized.
         dicomHeaderFileName = outputFilename.replace(".dcm", "_DICOMHeader.json")
@@ -1716,703 +2005,11 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
 
         return dicomFilePath, sequenceInfoFilePath, dicomHeaderFilePath
 
-    def exportArrays(self, outputDirectory = None, outputFilename = None, convertToGrayscale = False, labels = None, compression = False):
-        """
-        DEPRECATED: The module only exports in DICOM format. This function may be removed in the future.
-
-        Export image array to a file in numpy format.
-
-        :param outputDirectory: Output directory where the image array file will be saved.
-        :param outputFilename: Output file name without extension. If None, a file name will be generated based on patient ID and sequence name.
-        :param convertToGrayscale: If True, convert RGB images to grayscale.
-        :param labels: List of annotation labels.
-        :param compression: If True, save the image array as a compressed numpy array.
-        :return: Tuple of file paths: (imageArrayFilePath, sequenceInfoFilePath, dicomHeaderFilePath)        
-        """
-        parameterNode = self.getParameterNode()
-
-        # Collect all image frames in a numpy array
-
-        currentSequenceBrowser = parameterNode.GetNodeReference(self.CURRENT_SEQUENCE)
-        masterSequenceNode = currentSequenceBrowser.GetMasterSequenceNode()
-        proxyNode = self.getCurrentProxyNode()
-
-        proxyNodeArray = slicer.util.arrayFromVolume(proxyNode)
-
-        imageArray = np.zeros((masterSequenceNode.GetNumberOfDataNodes(),
-                               proxyNodeArray.shape[1], proxyNodeArray.shape[2], proxyNodeArray.shape[3]), dtype=np.int8)
-
-        for index in range(masterSequenceNode.GetNumberOfDataNodes()):
-            currentSequenceBrowser.SetSelectedItemNumber(index)
-            currentVolumeNode = masterSequenceNode.GetNthDataNode(index)
-            currentVolumeArray = slicer.util.arrayFromVolume(currentVolumeNode)
-            imageArray[index, :, :, :] = currentVolumeArray
-
-        # If output directory is not given, try to get it from application settings
-
-        if outputDirectory is None:
-            settings = qt.QSettings()
-            outputDirectory = settings.value('AnonymizeUltrasound/OutputDirectory', '')
-            if outputDirectory == '':
-                outputDirectory = qt.QDir.homePath()
-
-        # Create output directory if it doesn't exist
-
-        if not os.path.exists(outputDirectory):
-            os.makedirs(outputDirectory)
-
-        # Generate a file name for the image array file using patient ID and sequence name
-        currentSequenceBrowserName = currentSequenceBrowser.GetName()
-
-        # Remove characters that are not allowed in file names
-        currentSequenceBrowserName = currentSequenceBrowserName.replace(" ", "_")
-        currentSequenceBrowserName = currentSequenceBrowserName.replace(":", "_")
-        currentSequenceBrowserName = currentSequenceBrowserName.replace("/", "_")
-        currentSequenceBrowserName = currentSequenceBrowserName.replace("\\", "_")
-        currentSequenceBrowserName = currentSequenceBrowserName.replace("*", "_")
-        currentSequenceBrowserName = currentSequenceBrowserName.replace("?", "_")
-        currentSequenceBrowserName = currentSequenceBrowserName.replace("\"", "_")
-        currentSequenceBrowserName = currentSequenceBrowserName.replace("<", "_")
-        currentSequenceBrowserName = currentSequenceBrowserName.replace(">", "_")
-        currentSequenceBrowserName = currentSequenceBrowserName.replace("|", "_")
-
-        if outputFilename is None:
-            imageArrayFileName = f"{parameterNode.GetParameter(self.CURRENT_PATIENT_ID)}_{currentSequenceBrowserName}.npy"
-        else:
-            imageArrayFileName = outputFilename + ".npy"
-
-        imageArrayFilePath = os.path.join(outputDirectory, imageArrayFileName)
-        
-        # Record sequence related information to a dictionary
-        sequenceInfo = {
-            'PatientID': parameterNode.GetParameter(self.CURRENT_PATIENT_ID),
-            'SequenceName': currentSequenceBrowser.GetName(),
-            'GrayscaleConversion': False
-        }
-
-        # Convert to grayscale if data is RGB and option checked
-        dims = len(imageArray.shape)
-        numberOfFrames = currentSequenceBrowser.GetNumberOfItems()
-        if numberOfFrames > 1 and dims > 3 and convertToGrayscale:
-            # Keep only R channel from RGB for grayscale conversion
-            imageArray = imageArray[:,:,:,0]
-            sequenceInfo['GrayscaleConversion'] = True
-
-        # Save image array to file.
-        # If compression setting is enabled, then save as compressed numpy array.
-        if compression:
-            # Change the extension to .npz
-            imageArrayFilePath = os.path.splitext(imageArrayFilePath)[0] + ".npz"
-            np.savez_compressed(imageArrayFilePath, imageArray)
-        else:
-            np.save(imageArrayFilePath, imageArray)
-
-        # Add mask parameters to sequenceInfo
-        for key, value in self.maskParameters.items():
-            sequenceInfo[key] = value
-        if outputFilename is None:
-            sequenceInfoFileName = f"{parameterNode.GetParameter(self.CURRENT_PATIENT_ID)}_{currentSequenceBrowserName}.json"
-        else:
-            sequenceInfoFileName = outputFilename + ".json"
-        sequenceInfoFilePath = os.path.join(outputDirectory, sequenceInfoFileName)
-
-        # Add annotation labels to sequenceInfo
-        if labels is not None:
-            sequenceInfo["AnnotationLabels"] = labels
-
-        # Save sequenceInfo to a file
-        with open(sequenceInfoFilePath, 'w') as outfile:
-            json.dump(sequenceInfo, outfile)
-
-        # Save current DICOM header dictionary to a file
-        if outputFilename is None:
-            dicomHeaderFileName = f"{parameterNode.GetParameter(self.CURRENT_PATIENT_ID)}_{currentSequenceBrowserName}_DICOMHeader.json"
-        else:
-            dicomHeaderFileName = outputFilename + "_DICOMHeader.json"
-        dicomHeaderFilePath = os.path.join(outputDirectory, dicomHeaderFileName)
-
-        with open(dicomHeaderFilePath, 'w') as outfile:
-            json.dump(self.currentDicomHeader, outfile, default=self.convertToJsonCompatible)
-
-        return imageArrayFilePath, sequenceInfoFilePath, dicomHeaderFilePath
-
-    def importData(self, inputDirectory):
-        """
-        Import folder in temporary DICOM database and return loaded node IDs.
-        """
-        # instantiate a new DICOM browser
-        slicer.util.selectModule("DICOM")
-        dicomBrowser = slicer.modules.DICOMWidget.browserWidget.dicomBrowser
-
-        dicomBrowser.importDirectory(inputDirectory, dicomBrowser.ImportDirectoryAddLink)
-
-        dicomBrowser.waitForImportFinished()
-
-        db = slicer.dicomDatabase
-        patientUIDs = db.patients()
-
-        return patientUIDs
-
-    def needToLoadPatient(self):
-        logging.warning("needToLoadPatient is deprecated, use loadNextSequence instead")
-        return False
-    
-        # parameterNode = self.getParameterNode()
-        # currentSequenceBrowser = parameterNode.GetNodeReference(self.CURRENT_SEQUENCE)
-        # if not currentSequenceBrowser:
-        #     return True
-        # currentSequenceIndex = self.loadedSequenceBrowserNodeIds.index(currentSequenceBrowser.GetID())
-        # return currentSequenceIndex == len(self.loadedSequenceBrowserNodeIds) - 1
-
-    def filesForSeries(seriesUID):
-        """
-        Returns a list of file paths for the given series UID.
-        """
-        db = slicer.dicomDatabase
-        files = []
-        for instanceUID in db.fileLists(seriesUID):
-            files.append(db.fileForInstance(instanceUID))
-        return files
-
-    def resetScene(self, leaveMaskFiducials=True):
-        """
-        Reset the scene by clearing it and setting it up again.
-
-        leaveMaskFiducials: If True, then leave the mask fiducials in the scene. If False, then remove them.
-        """
-        parameterNode = self.getParameterNode()
-        maskFiducialsList = []
-
-        if leaveMaskFiducials:
-            # Save mask fiducials    
-            maskFiducials = parameterNode.GetNodeReference(self.MASK_FAN_LANDMARKS)
-            if maskFiducials is not None:
-                # Store all control point coordinates in a list
-                for i in range(maskFiducials.GetNumberOfControlPoints()):
-                    coord = [0, 0, 0]
-                    maskFiducials.GetNthControlPointPosition(i, coord)
-                    maskFiducialsList.append(coord)
-        
-        logging.info(f"Saved {len(maskFiducialsList)} mask fiducials")
-
-        # Clear the scene
-        slicer.mrmlScene.Clear(0)
-        self.currentDicomDataset = None
-        self.currentDicomHeader = None
-        self.setupScene(maskControlPointsList=maskFiducialsList)
-
-        logging.info(f"Restored {len(maskFiducialsList)} mask fiducials")   
-    
-    def incrementDicomDfIndex(self, input_directory, output_directory, skip_existing=False, keep_folders=False):
-        """
-        Increment the index of the DICOM dataframe. If skipExistingOutput is True, then skip the rows that have already been processed.
-        
-        :param skip_existing: If True, skip the rows that have already been processed.
-        :param keep_folders: If True, keep the folder structure of the input DICOM files in the output directory.
-        :return: None
-        """
-        listOfIndices = self.dicomDf.index.tolist()
-        listOfIndices.sort()
-        
-        if self.nextDicomDfIndex is None:
-            nextIndexIndex = 0
-        else:
-            nextIndexIndex = listOfIndices.index(self.nextDicomDfIndex)
-            nextIndexIndex += 1
-        
-        if skip_existing:
-            while nextIndexIndex < len(listOfIndices):
-                nextDicomDfRow = self.dicomDf.iloc[listOfIndices[nextIndexIndex]]
-                input_file = nextDicomDfRow['Filepath']
-                
-                # Check if the output file already exists
-                if keep_folders:
-                    relative_path = os.path.relpath(input_file, input_directory)
-                    output_fullpath = os.path.join(output_directory, relative_path)
-                else:
-                    output_path = output_directory
-                    output_filename = nextDicomDfRow['AnonFilename']
-                    output_fullpath = os.path.join(output_path, output_filename)
-                
-                # Make sure output_fullpath has a .dcm extension
-                if not output_fullpath.endswith('.dcm'):
-                    output_fullpath += '.dcm'
-                
-                if not os.path.exists(output_fullpath):
-                    break
-                
-                nextIndexIndex += 1
-        
-        if nextIndexIndex < len(listOfIndices):
-            self.nextDicomDfIndex = listOfIndices[nextIndexIndex]
-            logging.info(f"Next DICOM dataframe index: {self.nextDicomDfIndex}")
-        else:
-            self.nextDicomDfIndex = None
-            logging.info("No more DICOM files to process")
-        
-        return self.nextDicomDfIndex
-        
-    def loadNextSequence(self):
-        """
-        Load next sequence in the list of DICOM files.
-        Returns the index of the loaded sequence in the dataframe of DICOM files, or None if no more sequences are available.
-        """
-        self.resetScene()
-        
-        parameterNode = self.getParameterNode()
-
-        # Get next filepath from dicomDf. If nextDicomDfIndex is larger than the number of rows in dicomDf, then
-        # return None.
-        if self.nextDicomDfIndex is None or self.nextDicomDfIndex >= len(self.dicomDf):
-            return None
-        nextDicomDfRow = self.dicomDf.iloc[self.nextDicomDfIndex]
-
-        # Make sure a temporary folder for the DICOM files exists
-        tempDicomDir = slicer.app.temporaryPath + '/AnonymizeUltrasound'
-        logging.info("Temporary DICOM directory: " + tempDicomDir)
-        if not os.path.exists(tempDicomDir):
-            os.makedirs(tempDicomDir)
-        
-        # Delete all files in the temporary folder
-        for file in os.listdir(tempDicomDir):
-            os.remove(os.path.join(tempDicomDir, file))
-        
-        # Copy DICOM file to temporary folder
-        shutil.copy(nextDicomDfRow['Filepath'], tempDicomDir)
-        logging.info(f"Copied DICOM file {nextDicomDfRow['Filepath']} to {tempDicomDir}")
-        
-        # TODO: Make this an option in the settings becuase some already patched dcm files are not loading with this option
-        # # Patch the DICOM file to add spacing information if it is missing, but available from other rows
-        # temporaryDicomFilepath = os.path.join(tempDicomDir, os.path.basename(nextDicomDfRow['Filepath']))
-        # to_patch = nextDicomDfRow['Patch']
-        # if to_patch:
-        #     physical_delta_x = nextDicomDfRow['PhysicalDeltaX']
-        #     physical_delta_y = nextDicomDfRow['PhysicalDeltaY']
-        #     if physical_delta_x is not None and physical_delta_y is not None:
-        #         ds = pydicom.dcmread(temporaryDicomFilepath)
-        #         ds.PixelSpacing = [str(physical_delta_x*10.0), str(physical_delta_y*10.0)]  # Convert from cm/pixel to mm/pixel
-        #         ds.save_as(temporaryDicomFilepath)
-        #         logging.info(f"Patched DICOM file {temporaryDicomFilepath} with physical delta X and Y")
-
-        loadedNodeIDs = []
-        with DICOMUtils.TemporaryDICOMDatabase() as db:
-            DICOMUtils.importDicom(tempDicomDir, db)
-            patientUIDs = db.patients()
-            for patientUID in patientUIDs:
-                loadedNodeIDs.extend(DICOMUtils.loadPatientByUID(patientUID))
-
-        logging.info(f"Loaded {len(loadedNodeIDs)} nodes")
-
-        # Check loadedNodeIDs and collect sequence browser nodes to display them later
-        currentSequenceBrowser = None
-        for nodeID in loadedNodeIDs:
-            currentSequenceBrowser = slicer.mrmlScene.GetNodeByID(nodeID)
-            if currentSequenceBrowser is not None and currentSequenceBrowser.IsA("vtkMRMLSequenceBrowserNode"):
-                parameterNode.SetNodeReferenceID(self.CURRENT_SEQUENCE, currentSequenceBrowser.GetID())
-                self.currentDicomHeader = self.dicomHeaderDictForBrowserNode(currentSequenceBrowser)
-                # Add a "DicomFile" attribute to the currentSequenceBrowser, so we can check the source file later for information
-                currentSequenceBrowser.SetAttribute("DicomFile", nextDicomDfRow['Filepath'])
-                if self.currentDicomHeader is None:
-                    logging.error(f"Could not find DICOM header for sequence browser node {currentSequenceBrowser.GetID()}")
-                break
-
-        # If accidentally pixel data gets in the dicom header, remove it
-        if "Pixel Data" in self.currentDicomHeader:
-            del self.currentDicomHeader["Pixel Data"]
-
-        # Increment nextDicomDfIndex
-        settings = qt.QSettings()
-        continueProgress = settings.value('AnonymizeUltrasound/ContinueProgress', "True") == "True"
-        keepFolders = settings.value('AnonymizeUltrasound/KeepFolderStructure', "True") == "True"
-        inputDirectory = settings.value('AnonymizeUltrasound/InputDirectory', "")
-        outputDirectory = settings.value('AnonymizeUltrasound/OutputDirectory', "")
-        nextIndex = self.incrementDicomDfIndex(inputDirectory, outputDirectory, skip_existing=continueProgress, keep_folders=keepFolders)
-        if nextIndex is None:
-            logging.info("No more DICOM files to process")
-            return None
-
-        # Delete files from temporary folder
-        for file in os.listdir(tempDicomDir):
-            os.remove(os.path.join(tempDicomDir, file))
-        
-        # Make this sequence browser node the current one in the toolbar
-        slicer.modules.sequences.setToolBarActiveBrowserNode(currentSequenceBrowser)
-
-        # Get the proxy node of the master sequence node of the selected sequence browser node
-        masterSequenceNode = currentSequenceBrowser.GetMasterSequenceNode()
-        if masterSequenceNode is None:
-            logging.error("Master sequence node of sequence browser node with ID " + currentSequenceBrowser.GetID() + " not found")
-            return None
-        proxyNode = currentSequenceBrowser.GetProxyNode(masterSequenceNode)
-        if proxyNode is None:
-            logging.error("Proxy node of master sequence node with ID " + masterSequenceNode.GetID() + " not found")
-            return None
-
-        # If proxyNode is a vtkMRMLScalarVolumeNode or vtkMRMLVectorVolumeNode, then set it as the background volume
-        if proxyNode.IsA("vtkMRMLScalarVolumeNode") or proxyNode.IsA("vtkMRMLVectorVolumeNode"):
-            backgroundVolumeNode = proxyNode
-            layoutManager = slicer.app.layoutManager()
-            sliceLogic = layoutManager.sliceWidget('Red').sliceLogic()
-            compositeNode = sliceLogic.GetSliceCompositeNode()
-            compositeNode.SetBackgroundVolumeID(backgroundVolumeNode.GetID())
-        
-        return self.nextDicomDfIndex - 1
-
-    def dicomHeaderToDict(self, ds, parent=None):
-        """
-        Convert a DICOM dataset to a Python dictionary.
-        """
-        if parent is None:
-            parent = {}
-        for elem in ds:
-            if elem.VR == "SQ":
-                parent[elem.name] = []
-                for item in elem:
-                    child = {}
-                    self.dicomHeaderToDict(item, child)
-                    parent[elem.name].append(child)
-            else:
-                parent[elem.name] = elem.value
-        return parent
-
-    def anonymizeDicomHeaderDict(self, dicomHeaderDict):
-        """
-        Anonymize DICOM header dictionary.
-        """
-        keysToAnonymize = {
-            "Accession Number": "AccessionNumber",
-            "Other Patient IDs": "OtherPatientIDs",
-            "Patient's Address": "PatientAddress",
-            "Patient's Name": "PatientName",
-            "Patient ID": "PatientID",
-            "Patient's Birth Date": "00000000",
-            "Referring Physician's Name": "ReferringPhysicianName",
-            "Study Date": "StudyDate",
-            "Study Time": "StudyTime",
-            "Series Date": "SeriesDate",
-            "Series Time": "SeriesTime",
-            "Series Number": "SeriesNumber",
-        }
-
-        # Loop through all keys in the dictionary and replace the ones that need to be anonymized
-        # with the corresponding key from the keysToAnonymize dictionary.
-        # If the value is a dictionary, then call this function recursively.
-        # If the value is a list, then call this function for each item in the list.
-
-        anonymizedDicomHeaderDict = {}
-        for key, value in dicomHeaderDict.items():
-            if key in keysToAnonymize:
-                anonymizedDicomHeaderDict[key] = keysToAnonymize[key]
-            elif isinstance(value, dict):
-                self.anonymizeDicomHeaderDict(value)
-            elif isinstance(value, list):
-                for item in value:
-                    self.anonymizeDicomHeaderDict(item)
-            else:
-                anonymizedDicomHeaderDict[key] = value
-        return anonymizedDicomHeaderDict
-
-    def dicomHeaderDictForBrowserNode(self, browserNode):
-        """
-        Return DICOM header for the given browser node.
-        Also sets up self.currentDicomDataset variable as a pydicom dataset with same contents as returned dictionary.
-
-        :param browserNode: Sequence browser node
-        :return: DICOM header dictionary
-        """
-        if browserNode is None:
-            return None
-
-        # Get the proxy node of the master sequence node of the selected sequence browser node
-        masterSequenceNode = browserNode.GetMasterSequenceNode()
-        proxyNode = browserNode.GetProxyNode(masterSequenceNode)
-
-        # Get DICOM.instanceUID attribute from proxy node
-        instanceUID = proxyNode.GetAttribute("DICOM.instanceUIDs")
-        if instanceUID is None:
-            logging.error("DICOM.instanceUIDs attribute not found in proxy node")
-            return None
-
-        # If instanceUID is a list, keep only the first item
-        if isinstance(instanceUID, list):
-            instanceUID = instanceUID[0]
-
-        # Find row in self.dicomDf where instanceUID matches first instanceUID in instanceUIDs
-        filepath = self.getFileForBrowserNode(browserNode)
-        if filepath is None:
-            logging.error(f"Could not find DICOM file for instanceUID {instanceUID}")
-            return None
-
-        ds = pydicom.dcmread(filepath)
-        dsInstanceUID = ds["0008", "0018"].value
-        if dsInstanceUID == instanceUID:
-            self.currentDicomDataset = pydicom.dcmread(filepath)
-            self.anonymizeDicomDataset(ds)
-            dicomHeaderDict = self.dicomHeaderToDict(ds)
-            return dicomHeaderDict
-
-        return None
-
-    def getFileForBrowserNode(self, browserNode):
-        if browserNode is None:
-            return None
-
-        # Get the proxy node of the master sequence node of the selected sequence browser node
-        masterSequenceNode = browserNode.GetMasterSequenceNode()
-        proxyNode = browserNode.GetProxyNode(masterSequenceNode)
-
-        # Get DICOM.instanceUID attribute from proxy node
-        instanceUID = proxyNode.GetAttribute("DICOM.instanceUIDs")
-        if instanceUID is None:
-            logging.error("DICOM.instanceUIDs attribute not found in proxy node")
-            return None
-
-        # If instanceUID is a list, keep only the first item
-        if isinstance(instanceUID, list):
-            instanceUID = instanceUID[0]
-
-        # Find row in self.dicomDf where instanceUID matches first instanceUID in instanceUIDs
-        filepath = None
-        for index, row in self.dicomDf.iterrows():
-            rowInstanceUID = row['InstanceUID']
-            currentInstanceUID = instanceUID
-            if rowInstanceUID == currentInstanceUID:
-                filepath = row['Filepath']
-                break
-        if filepath is None:
-            logging.error(f"Could not find DICOM file for instanceUID {instanceUID}")
-            return None
-
-        return filepath
-
-    def currentRelativePath(self, inputDicomFolder):
-        """
-        Return path of DICOM file of current sequence. The path is relative to the input dicom folder
-        """
-        parameterNode = self.getParameterNode()
-        currentBrowserNode = parameterNode.GetNodeReference(self.CURRENT_SEQUENCE)
-        dicomFile = self.getFileForBrowserNode(currentBrowserNode)
-        if dicomFile is None:
-            logging.error(f"Could not find DICOM file for current sequence!")
-            return None
-
-        relativePath = os.path.relpath(dicomFile, inputDicomFolder)
-
-        # Save file name without extension
-        filenameWithoutExtension = os.path.splitext(os.path.basename(relativePath))[0]
-
-        # Remove filename from relative path
-        relativePath = os.path.dirname(relativePath)
-
-        return relativePath, filenameWithoutExtension
-
-    def person_names_callback(self, dataset, data_element):
-        if data_element.VR == "PN":
-            data_element.value = "anonymous"
-
-    def anonymizeDicomDataset(self, ds, removePrivateTags = False):
-        """Anonymize a DICOM dataset"""
-
-        _, patientId, instanceId = self.generateNameFromDicomData(ds)
-
-        # Remove patient name and any other person names
-        ds.walk(self.person_names_callback)
-        ds.PatientID = patientId
-        ds.PatientName = patientId
-
-        # Remove data elements (should only do so if DICOM type 3 optional)
-        # Use general loop so easy to add more later
-        # Could also have done: del ds.OtherPatientIDs, etc.
-        for name in ["OtherPatientIDs", "OtherPatientIDsSequence"]:
-            if name in ds:
-                delattr(ds, name)
-
-        # Keep only year from patient birth date
-
-        if "PatientBirthDate" in ds:
-            ds.PatientBirthDate = ds.PatientBirthDate[0:4] + "0101"
-
-        # Remove private tags
-        if removePrivateTags:
-            ds.remove_private_tags()
-    
-    def getAutoMask(self):
-        if not hasattr(self, 'currentDicomDataset'):
-            logging.error("No current DICOM dataset loaded")
-            return None
-        model, input_shape, device = self.downloadAndPrepareModel()
-        if model is None:
-            return None
-        return self.findMaskAutomatic(model, input_shape, device)
-    
-    def downloadAndPrepareModel(self):
-        """ Download the AI model and prepare it for inference """
-        # Set the Device to run the model on
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        logging.info(f"The model will run on Device: {device}")
-        
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        checkpoint_dir = os.path.join(script_dir, 'Resources/checkpoints/')
-        os.makedirs(os.path.dirname(checkpoint_dir), exist_ok=True)
-
-        model_path = os.path.join(checkpoint_dir, 'model_traced.pt')
-        model_config_path = os.path.join(checkpoint_dir, 'model_config.yaml')
-    
-        model_url = "https://www.dropbox.com/scl/fi/abgn6ln13thh0v9mq5kqj/model_traced.pt?rlkey=8a9eugxbqeuzwrglz55sh7hkd&st=mwclwtgv&dl=1"
-        config_url = "https://www.dropbox.com/scl/fi/klnwakbysn95nae85lmjz/model_config.yaml?rlkey=p1jada30bvbsihtfiw80dq7h2&st=7a8y0ewy&dl=1"  
-    
-        if not os.path.exists(model_path):
-            logging.info(f"The AI model does not exist. Starting download...")
-            dialog = AnonymizeUltrasoundWidget.createWaitDialog(self, "Downloading AI Model", "The AI model does not exist. Downloading...")
-            success = self.download_model(model_url, model_path)
-            dialog.close()
-            if not success:
-                return None
-    
-        if not os.path.exists(model_config_path):
-            logging.info(f"The model config file does not exist. Starting download...")
-            success = self.download_model(config_url, model_config_path)
-            if not success:            
-                return None
-        # Check if the model loaded successfully
-        try:
-            model = torch.jit.load(model_path).to(device).eval()
-        except Exception as e:
-            logging.error(f"Failed to load the model: {e}")
-            logging.error("Automatic mode is disabled. Please define the mask manually.")            
-            # TODO: Disable the button of Auto mask generation?
-            return None, None, None
-        # Check if the model config loaded successfully
-        try:
-            with open(model_config_path, 'r') as file:
-                model_config = yaml.safe_load(file)
-            input_shape_str = model_config['input_shape']
-            input_shape = tuple(map(int, input_shape_str.strip('()').split(',')))
-        except Exception as e:
-            logging.error(f"Failed to load the model config: {e}")
-            logging.error("Automatic mode is disabled. Please define the mask manually.")            
-            # TODO: Disable the button of Auto mask generation?
-            return None, None, None
-    
-        return model, input_shape, device
-    
-    def findMaskAutomatic(self, model, input_shape, device):
-        """ Generate a mask automatically using the AI model """
-        slicer.app.pauseRender()
-        currentSequenceBrowser = self.getParameterNode().GetNodeReference(self.CURRENT_SEQUENCE)
-        masterSequenceNode = currentSequenceBrowser.GetMasterSequenceNode()
-        currentVolumeNode = masterSequenceNode.GetNthDataNode(0)
-        currentVolumeArray = slicer.util.arrayFromVolume(currentVolumeNode)
-        maxVolumeArray = np.copy(currentVolumeArray)
-        
-        for i in range(1, masterSequenceNode.GetNumberOfDataNodes()):
-            currentVolumeNode = masterSequenceNode.GetNthDataNode(i)
-            currentVolumeArray = slicer.util.arrayFromVolume(currentVolumeNode)
-            maxVolumeArray = np.maximum(maxVolumeArray, currentVolumeArray)
-        frame_item = maxVolumeArray[0, :, :]
-        slicer.app.resumeRender()
-    
-        if len(frame_item.shape) == 3 and frame_item.shape[2] == 3:
-            frame_item = cv2.cvtColor(frame_item, cv2.COLOR_RGB2GRAY)
-        original_frame_size = frame_item.shape[::-1]
-        logging.debug(f"Original frame size: {str(frame_item.shape)}")
-        frame_item = cv2.resize(frame_item, input_shape)
-        logging.debug(f"Resized frame size: {str(input_shape)}")
-
-        with torch.no_grad():
-            input_tensor = torch.tensor(np.expand_dims(np.expand_dims(np.array(frame_item), axis=0), axis=0)).float()
-            input_tensor = input_tensor.to(device)
-            output = model(input_tensor)
-        output = (torch.softmax(output, dim=1) > 0.5).cpu().numpy()
-        mask_output = np.uint8(output[0, 1, :, :]) 
-        mask_output = cv2.resize(np.uint8(output[0, 1, :, :]), original_frame_size)
-        logging.info(f"({str(mask_output.shape)}) Mask generated successfully")
-        approx_corners = self.find_four_corners(mask_output)
-        
-        if approx_corners is None:
-            logging.error("Could not find the four corners of the foreground in the mask")
-        else:
-            top_left, top_right, bottom_right, bottom_left = approx_corners
-            logging.debug(f"Approximate corners - Top-left: {top_left}, Top-right: {top_right}, Bottom-right: {bottom_right}, Bottom-left: {bottom_left}")
-        return approx_corners
-    
-    def download_model(self, url, output_path):
-        """ Download a file from a URL """
-        try:
-            # Send a GET request to the URL
-            response = requests.get(url, stream=True)
-            # Raise an exception if the request was unsuccessful
-            response.raise_for_status()
-            # Write the content to the file
-            with open(output_path, 'wb') as file:
-                for chunk in response.iter_content(chunk_size=8192):
-                    file.write(chunk)
-            logging.info(f"Downloaded file saved to {output_path}")
-            return True
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Failed to download the file: {e}")
-            # TODO: Disable the button of Auto mask generation?
-            return False
-    
-    def find_extreme_corners(self, points):
-        # Convert points to a numpy array for easier manipulation
-        points = np.array(points)
-        # Find the top-left corner (minimum x + y)
-        top_left = list(points[np.argmin(points[:, 0] + points[:, 1])])
-        # Find the top-right corner (maximum x - y)
-        top_right = list(points[np.argmax(points[:, 0] - points[:, 1])])
-        # Find the bottom-left corner (minimum x - y)
-        bottom_left = list(points[np.argmin(points[:, 0] - points[:, 1])])
-        # Find the bottom-right corner (maximum x + y)
-        bottom_right = list(points[np.argmax(points[:, 0] + points[:, 1])])
-
-        corners = [tuple(top_left), tuple(top_right), tuple(bottom_left), tuple(bottom_right)]
-        unique_corners = set(corners)
-        num_unique_corners = len(unique_corners)
-
-        # If there are 3 unique corners, then the mask is a triangle
-        epsilon = 2 
-        if num_unique_corners == 3:
-            # Define the top point (which one is higher from top-left and top-right, higher means less y)
-            top_point = top_left if top_left[1] < top_right[1] else top_right
-            # Set top-left and top-right equal to top_point
-            top_left = list(top_point)
-            top_right = list(top_point)
-            # Adjust x coordinates
-            top_left[0] -= epsilon
-            top_right[0] += epsilon
-    
-        # TODO: Is it possible?!
-        if num_unique_corners < 3:
-            return None
-    
-        return np.array([top_left, top_right, bottom_left, bottom_right])
-    
-    def find_four_corners(self, mask):
-        """ Find the four corners of the foreground in the mask. """
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if len(contours) == 0:
-            return None
-        # Assuming the largest contour is the foreground
-        contour = max(contours, key=cv2.contourArea)
-        epsilon = 0.02 * cv2.arcLength(contour, True)
-        approx_corners = cv2.approxPolyDP(contour, epsilon, True)
-
-        # Reshape the approx_corners array to a 2D array
-        approx_corners = approx_corners.reshape(-1, 2)
-
-        # If the contour has more than 4 corners, then find the extreme corners
-        if len(approx_corners) < 3:
-            return None
-
-        approx_corners = self.find_extreme_corners(approx_corners)
-        return approx_corners
 
 #
 # AnonymizeUltrasoundTest
 #
+
 
 class AnonymizeUltrasoundTest(ScriptedLoadableModuleTest):
     """
@@ -2422,18 +2019,16 @@ class AnonymizeUltrasoundTest(ScriptedLoadableModuleTest):
     """
 
     def setUp(self):
-        """ Do whatever is needed to reset the state - typically a scene clear will be enough.
-        """
+        """Do whatever is needed to reset the state - typically a scene clear will be enough."""
         slicer.mrmlScene.Clear()
 
     def runTest(self):
-        """Run as few or as many tests as needed here.
-        """
+        """Run as few or as many tests as needed here."""
         self.setUp()
         self.test_AnonymizeUltrasound1()
 
     def test_AnonymizeUltrasound1(self):
-        """ Ideally you should have several levels of tests.  At the lowest level
+        """Ideally you should have several levels of tests.  At the lowest level
         tests should exercise the functionality of the logic with different inputs
         (both valid and invalid).  At higher levels your tests should emulate the
         way the user would interact with your code and confirm that it still works
@@ -2446,7 +2041,35 @@ class AnonymizeUltrasoundTest(ScriptedLoadableModuleTest):
 
         self.delayDisplay("Starting the test")
 
-        # Get/create input data ...
+        # Get/create input data
 
+        import SampleData
 
-        self.delayDisplay('Test passed')
+        onSlicerStartupCompleted()
+        inputVolume = SampleData.downloadSample("AnonymizeUltrasound1")
+        self.delayDisplay("Loaded test data set")
+
+        inputScalarRange = inputVolume.GetImageData().GetScalarRange()
+        self.assertEqual(inputScalarRange[0], 0)
+        self.assertEqual(inputScalarRange[1], 695)
+
+        outputVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
+        threshold = 100
+
+        # Test the module logic
+
+        logic = AnonymizeUltrasoundLogic()
+
+        # Test algorithm with non-inverted threshold
+        logic.process(inputVolume, outputVolume, threshold, True)
+        outputScalarRange = outputVolume.GetImageData().GetScalarRange()
+        self.assertEqual(outputScalarRange[0], inputScalarRange[0])
+        self.assertEqual(outputScalarRange[1], threshold)
+
+        # Test algorithm with inverted threshold
+        logic.process(inputVolume, outputVolume, threshold, False)
+        outputScalarRange = outputVolume.GetImageData().GetScalarRange()
+        self.assertEqual(outputScalarRange[0], inputScalarRange[0])
+        self.assertEqual(outputScalarRange[1], inputScalarRange[1])
+
+        self.delayDisplay("Test passed")
