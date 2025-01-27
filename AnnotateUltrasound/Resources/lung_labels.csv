@@ -1,0 +1,19 @@
+anatomy, liver
+anatomy, spleen
+anatomy, heart
+pathology, effusion
+pathology, consolidation
+pathology, subpleural consolidation
+quality, good
+quality, limited
+quality, unusable
+zone, L1
+zone, L2
+zone, L3
+zone, L4
+zone, L4V
+zone, R1
+zone, R2
+zone, R3
+zone, R4
+zone, R4V
