@@ -237,9 +237,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Settings
         settings = slicer.app.settings()
-        autoSave = settings.value('AnnotateUltrasound/AutoSave', True)
+        autoSave = settings.value('AnnotateUltrasound/AutoSave', 'true')
         self.ui.autoSaveCheckBox.setChecked(autoSave.lower() == 'true')
-        showPleuraPercentage = settings.value('AnnotateUltrasound/ShowPleuraPercentage', False)
+        showPleuraPercentage = settings.value('AnnotateUltrasound/ShowPleuraPercentage', 'false')
         self.ui.showPleuraPercentageCheckBox.setChecked(showPleuraPercentage.lower() == 'true')
         
         self.ui.autoSaveCheckBox.connect('toggled(bool)', self.saveUserSettings)
@@ -269,7 +269,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     
     def saveUserSettings(self):
         settings = qt.QSettings()
-        settings.setValue('AnnotateUltrasound/AutoSave', self.ui.autoSaveCheckBox.checked)
+        settings.setValue('AnnotateUltrasound/AutoSave', 'true' if self.ui.autoSaveCheckBox.checked else 'false')
         settings.setValue('AnnotateUltrasound/ShowPleuraPercentage', self.ui.showPleuraPercentageCheckBox.checked)
         settings.setValue('AnnotateUltrasound/DepthGuide', self.ui.depthGuideCheckBox.checked)
         ratio = self.logic.updateOverlayVolume()
@@ -858,7 +858,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 self._parameterNode.inputVolume = firstVolumeNode
         
         settings = slicer.app.settings()
-        showDepthGuide = settings.value('AnnotateUltrasound/DepthGuide', False)
+        showDepthGuide = settings.value('AnnotateUltrasound/DepthGuide', 'false')
         self.ui.depthGuideCheckBox.setChecked(showDepthGuide.lower() == 'true')
         
 
