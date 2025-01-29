@@ -12,6 +12,13 @@ This module reads a folder of ultrasound cine loops in DICOM format and iterates
 1. Click **Define mask** and click on the four corners of the ultrasound area. Corner points can be modified later by dragging.
 1. Click **Export** to produce three files in the output folder: the anonymized DICOM, an annotation file with the corner points, and a json file with all the original DICOM tags that went through light anonymization.
 
+### Anonymization steps
+- The area outside the defined fan or rectangle region is erased on all frames.
+- A PatientUID is generated as a 10-digit hash of the input DICOM Patient ID, and a FileUID is generated as an 8-digit hash of the DICOM SOP Intance UID.
+- The exported output file will be named **PatientUID_FileUID.dcm**
+- When **Hash Patient ID** is selected, the patient name is replaced the PatientUID and the Series Description is replaced by PatientUID_FileUID.
+- New SOP Series UID is generated for every exported file (cine loop) so all DICOM browsers can load them one-by-one. (Most DICOM browsers load all instances of a series at a time, but some ultrasound machines export all cine loops of an exam under a single series UID.)
+
 Options under Settings collapsible button:
 - **Skip single-frame input files**: use this for efficiency if you only need to export multi-frame DICOM files.
 - **Skip input if output already exists**: prevents repeated loading of files whose output already exists.

@@ -146,10 +146,12 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
     
     INPUT_FOLDER_SETTING = "AnonymizeUltrasound/InputFolder"
     OUTPUT_FOLDER_SETTING = "AnonymizeUltrasound/OutputFolder"
+    HEADERS_FOLDER_SETTING = "AnonymizeUltrasound/HeadersFolder"
     AUTO_MASK_SETTING = "AnonymizeUltrasound/AutoMask"
     SKIP_SINGLE_FRAME_SETTING = "AnonymizeUltrasound/SkipSingleFrame"
     CONTINUE_PROGRESS_SETTING = "AnonymizeUltrasound/ContinueProgress"
     HASH_PATIENT_ID_SETTING = "AnonymizeUltrasound/HashPatientId"
+    FILENAME_PREFIX_SETTING = "AnonymizeUltrasound/FilenamePrefix"
     LABELS_PATH_SETTING = "AnonymizeUltrasound/LabelsPath"
 
     def __init__(self, parent=None) -> None:
@@ -208,6 +210,15 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.ui.outputDirectoryButton.connect("directoryChanged(QString)",
                                               lambda newValue: self.onSettingChanged(self.OUTPUT_FOLDER_SETTING, newValue))
         
+        headersFolder = settings.value(self.HEADERS_FOLDER_SETTING)
+        if headersFolder:
+            if os.path.exists(headersFolder):
+                self.ui.headersDirectoryButton.directory = headersFolder
+            else:
+                logging.info(f"Settings headers folder {headersFolder} does not exist")
+        self.ui.headersDirectoryButton.connect("directoryChanged(QString)",
+                                               lambda newValue: self.onSettingChanged(self.HEADERS_FOLDER_SETTING, newValue))
+        
         self.ui.importDicomButton.connect("clicked(bool)", self.onImportDicomButton)
         
         # Workflow control buttons
@@ -245,6 +256,11 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         else:
             self.ui.hashPatientIdCheckBox.checked = False
         self.ui.hashPatientIdCheckBox.connect('toggled(bool)', lambda newValue: self.onSettingChanged(self.HASH_PATIENT_ID_SETTING, str(newValue)))
+        
+        filenamePrefix = settings.value(self.FILENAME_PREFIX_SETTING)
+        if filenamePrefix:
+            self.ui.namePrefixLineEdit.text = filenamePrefix
+        self.ui.namePrefixLineEdit.connect('textChanged(QString)', lambda newValue: self.onSettingChanged(self.FILENAME_PREFIX_SETTING, newValue))
         
         self.ui.labelsFileSelector.connect('currentPathChanged(QString)', self.onLabelsPathChanged)
         labelsPath = settings.value(self.LABELS_PATH_SETTING)
@@ -655,15 +671,13 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         """
         logging.info('Export scan button pressed')
 
-        # Save current frame index for sequence so we can restore it after exporting the scan
-        
         currentSequenceBrowser = self._parameterNode.ultrasoundSequenceBrowser
         if currentSequenceBrowser is None:
             self.ui.statusLabel.text = "Load a DICOM sequence before trying to export"
+            logging.info("No sequence browser found, nothing exported.")
             return
-        selectedItemNumber = currentSequenceBrowser.GetSelectedItemNumber()
         
-        dialog = self.createWaitDialog("Exporting scan", "Please wait until the scan is exported...")
+        selectedItemNumber = currentSequenceBrowser.GetSelectedItemNumber()  # Save current frame index for sequence so we can restore it after exporting the scan
         
         # Check if any labels are checked. If yes, we need to save them as annotations
         
@@ -678,6 +692,12 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                 if isinstance(checkBox, qt.QCheckBox) and checkBox.isChecked():
                     annotationLabels.append(checkBox.text)
         
+        # If there are not mask markups, confirm with the user that they really want to proceed.
+        
+        if self._parameterNode.maskMarkups.GetNumberOfControlPoints() < 4:
+            if not slicer.util.confirmOkCancelDisplay("No mask defined. Do you want to proceed without masking?"):
+                return
+        
         # Mask images to erase the unwanted parts
         
         self.logic.maskSequence()
@@ -685,15 +705,35 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         # Set up output directory and filename
         
         hashPatientId = self.ui.hashPatientIdCheckBox.checked
+        
+        # If hashPatientId is not checked, confirm with the user that they really want to proceed.
+        
+        if not hashPatientId:
+            if not slicer.util.confirmOkCancelDisplay("Patient ID will not be hashed. Do you want to proceed?"):
+                return
+        
         outputDirectory = self.ui.outputDirectoryButton.directory
-        filename, _, _ = self.logic.generateNameFromDicomData(self.logic.currentDicomDataset, hashPatientId)
-            
+        headersDirectory = self.ui.headersDirectoryButton.directory
+        
+        filename, patient_uid, file_uid = self.logic.generateNameFromDicomData(self.logic.currentDicomDataset, hashPatientId)
+        
+        dialog = self.createWaitDialog("Exporting scan", "Please wait until the scan is exported...")
+        
+        if hashPatientId:
+            new_patient_name = f"{self.ui.namePrefixLineEdit.text}_{patient_uid}"
+            new_patient_id = patient_uid
+        else:
+            new_patient_name = None
+            new_patient_id = None
+        
         # Export the scan
         dicomFilePath, jsonFilePath, dicomHeaderFilePath = self.logic.exportDicom(
             outputDirectory=outputDirectory,
             outputFilename=filename,
+            headersDirectory=headersDirectory,
             labels = annotationLabels,
-            compression=self.ui.compressionCheckBox.checked)
+            new_patient_name = new_patient_name,
+            new_patient_id = new_patient_id)
         
         # Restore selected item number in sequence browser
         currentSequenceBrowser.SetSelectedItemNumber(selectedItemNumber)
@@ -1606,7 +1646,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         self.maskParameters["image_size_rows"] = image_size_rows
         self.maskParameters["image_size_cols"] = image_size_cols
 
-        logging.debug(f"Radius1: {radius1}, Radius2: {radius2}, Angle1: {angle1}, Angle2: {angle2}, Center: ({center_cols_px}, {center_rows_px})") 
+        # logging.debug(f"Radius1: {radius1}, Radius2: {radius2}, Angle1: {angle1}, Angle2: {angle2}, Center: ({center_cols_px}, {center_rows_px})") 
         return mask_array
 
     def line_coefficients(self, p1, p2):
@@ -1700,7 +1740,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         proxyNode.GetImageData().Modified()
 
     def convertToJsonCompatible(self, obj):
-        if isinstance(obj, MultiValue):
+        if isinstance(obj, pydicom.multival.MultiValue):
             return list(obj)
         if isinstance(obj, pydicom.valuerep.PersonName):
             return str(obj)
@@ -1750,9 +1790,12 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             logging.error("SOPInstanceUID not found in DICOM header dict")
             return ""
         
-        hash_object = hashlib.sha256()
-        hash_object.update(str(patientUID).encode())
-        patientId = int(hash_object.hexdigest(), 16) % 10**10
+        if hashPatientId:
+            hash_object = hashlib.sha256()
+            hash_object.update(str(patientUID).encode())
+            patientId = int(hash_object.hexdigest(), 16) % 10**10
+        else:
+            patientId = patientUID
 
         hash_object_instance = hashlib.sha256()
         hash_object_instance.update(str(instanceUID).encode())
@@ -1786,7 +1829,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         
         return 'N/A'
     
-    def saveDicomFile(self, dicomFilePath, compression = True):
+    def saveDicomFile(self, dicomFilePath, new_patient_name = None, new_patient_id = None):
         parameterNode = self.getParameterNode()
 
         # Collect all image frames in a numpy array
@@ -1807,7 +1850,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             imageArray[index, :, :, :] = currentVolumeArray
 
         # Create a new DICOM dataset
-        ds = Dataset()
+        anonymized_ds = pydicom.Dataset()
 
         dicom_header_data = self.currentDicomHeader
 
@@ -1815,7 +1858,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         original_ds = self.currentDicomDataset
         if hasattr(original_ds, "SequenceOfUltrasoundRegions"):
             if len(original_ds.SequenceOfUltrasoundRegions) > 0:
-                ds.SequenceOfUltrasoundRegions = original_ds.SequenceOfUltrasoundRegions
+                anonymized_ds.SequenceOfUltrasoundRegions = original_ds.SequenceOfUltrasoundRegions
 
         # Copy spacing to conventional PixelSpacing tag for DICOM readers that don't support ultrasound regions
         deltaX = self.findKeyInDict(dicom_header_data, 'Physical Delta X')
@@ -1823,54 +1866,50 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         if deltaX != 'N/A' and deltaY != 'N/A':
             deltaXmm = float(deltaX) * 10
             deltaYmm = float(deltaY) * 10
-            ds.PixelSpacing = [str(deltaXmm), str(deltaYmm)]
+            anonymized_ds.PixelSpacing = [str(deltaXmm), str(deltaYmm)]
 
         # Verify array shape and set DICOM tags accordingly
         if len(imageArray.shape) == 4:  # Multi-frame format
             frames, height, width, channels = imageArray.shape
-            ds.Rows = height
-            ds.Columns = width
-            ds.NumberOfFrames = frames
-            ds.SamplesPerPixel = channels
+            anonymized_ds.Rows = height
+            anonymized_ds.Columns = width
+            anonymized_ds.NumberOfFrames = frames
+            anonymized_ds.SamplesPerPixel = channels
         elif len(imageArray.shape) == 3:  # Muti-frame, grayscale
             frames, height, width = imageArray.shape
-            ds.Rows = height
-            ds.Columns = width
-            ds.NumberOfFrames = frames
-            ds.SamplesPerPixel = 1
+            anonymized_ds.Rows = height
+            anonymized_ds.Columns = width
+            anonymized_ds.NumberOfFrames = frames
+            anonymized_ds.SamplesPerPixel = 1
         elif len(imageArray.shape) == 2:  # Single frame, Grayscale
             height, width = imageArray.shape
-            ds.Rows = height
-            ds.Columns = width
-            ds.SamplesPerPixel = 1
+            anonymized_ds.Rows = height
+            anonymized_ds.Columns = width
+            anonymized_ds.SamplesPerPixel = 1
 
         # Set PhotometricInterpretation based on number of channels
-        if ds.SamplesPerPixel == 1:
-            ds.PhotometricInterpretation = "MONOCHROME2"
-        elif ds.SamplesPerPixel == 3:
-            ds.PhotometricInterpretation = "RGB"
-            if compression == True:
-                ds.PhotometricInterpretation = "YBR_FULL_422"
+        if anonymized_ds.SamplesPerPixel == 1:
+            anonymized_ds.PhotometricInterpretation = "MONOCHROME2"
+        elif anonymized_ds.SamplesPerPixel == 3:
+            anonymized_ds.PhotometricInterpretation = "YBR_FULL_422"  # For JPEG compressed images
 
         # Ensure the data type of numpy array matches the expected pixel data type
-        ds.Modality = 'US'
+        anonymized_ds.Modality = 'US'
         
         # Set the pixel data
-        if compression == True:
-            # Compress each frame and collect the bytes
-            compressed_frames = []
-            for frame in imageArray:
-                compressed_frame = self.compressFrameToJpeg(frame)
-                compressed_frames.append(compressed_frame)
-            ds.PixelData = encapsulate(compressed_frames)
-            ds['PixelData'].is_undefined_length = True
-            ds.LossyImageCompression = '01'
-            ds.LossyImageCompressionMethod = 'ISO_10918_1'
-        else:
-            ds.PixelData = imageArray.tobytes()
+        # Compress each frame and collect the bytes
+        compressed_frames = []
+        for frame in imageArray:
+            compressed_frame = self.compressFrameToJpeg(frame)
+            compressed_frames.append(compressed_frame)
+        anonymized_ds.PixelData = pydicom.encaps.encapsulate(compressed_frames)
+        anonymized_ds['PixelData'].VR = 'OB'
+        anonymized_ds['PixelData'].is_undefined_length = True
+        anonymized_ds.LossyImageCompression = '01'
+        anonymized_ds.LossyImageCompressionMethod = 'ISO_10918_1'
         
         if hasattr(original_ds, "Manufacturer") and original_ds.Manufacturer:
-            ds.Manufacturer = original_ds.Manufacturer
+            anonymized_ds.Manufacturer = original_ds.Manufacturer
         # Define a mapping between DICOM tags and keys in the dicom_header_data
         
         dicom_tag_mapping = {
@@ -1879,18 +1918,13 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             "HighBit": "High Bit",
             "ManufacturerModelName": "Manufacturer's Model Name",
             "PatientAge": "Patient's Age",
-            "PatientID": "Patient ID",
-            "PatientName": "Patient's Name",
             "PatientSex": "Patient's Sex",
             "PixelRepresentation": "Pixel Representation",
             "SeriesNumber": "Series Number",
-            "SOPClassUID": "SOP Class UID",
-            "SOPInstanceUID": "SOP Instance UID",
             "StationName": "Station Name",
             "StudyDate": "Study Date",
             "StudyDescription": "Study Description",
             "StudyID": "Study ID",
-            "StudyInstanceUID": "Study Instance UID",
             "StudyTime": "Study Time",
             "TransducerType": "Transducer Data"
         }
@@ -1898,51 +1932,64 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         # Set the DICOM tags from the JSON header file
         for dicom_tag, header_key in dicom_tag_mapping.items():
             if header_key in dicom_header_data:
-                setattr(ds, dicom_tag, dicom_header_data[header_key])
+                setattr(anonymized_ds, dicom_tag, dicom_header_data[header_key])
             else:
                 if dicom_tag in ["BitsAllocated", "BitsStored", "HighBit", "PixelRepresentation"]:  # Mandatory for OHIF
                     logging.error(f"{dicom_tag} not found for DICOM header file: {dicomFilePath}")
 
-        # Handle special cases for UIDs
-        if "series instance uid" in dicom_header_data:
-            ds.SeriesInstanceUID = dicom_header_data["series instance uid"]
+        # These UIDs should be consistent with the original dataset
+        if original_ds.SOPClassUID is None or len(original_ds.SOPClassUID) < 1:
+            logging.error(f"SOPClassUID not found. Generating new one for {dicomFilePath}. Exported data may be untraceable.")
+            anonymized_ds.SOPClassUID = pydicom.uid.generate_uid()
         else:
-            ds.SeriesInstanceUID = generate_uid()
+            anonymized_ds.SOPClassUID = original_ds.SOPClassUID
 
-        if "sop instance uid" in dicom_header_data:
-            ds.SOPInstanceUID = dicom_header_data["sop instance uid"]
+        if original_ds.SOPInstanceUID is None or len(original_ds.SOPInstanceUID) < 1:
+            logging.error(f"SOPInstanceUID not found. Generating new one for {dicomFilePath}. Exported data may be untraceable.")
+            anonymized_ds.SOPInstanceUID = pydicom.uid.generate_uid()
         else:
-            ds.SOPInstanceUID = generate_uid()
+            anonymized_ds.SOPInstanceUID = original_ds.SOPInstanceUID
         
-        # Set default SOPClassUID if not present
-        if not hasattr(ds, 'SOPClassUID'):
-            ds.SOPClassUID = '1.2.840.10008.5.1.4.1.1.7'  # UID for Secondary Capture Image
-            logging.warning(f"SOPClassUID not found. Using default UID {ds.SOPClassUID}.")
+        # Generate a unique SeriesInstanceUID. This is because ultrasound machines often reuse the same SeriesInstanceUID, which can cause issues in the viewer.
+        anonymized_ds.SeriesInstanceUID = pydicom.uid.generate_uid()
+        
+        if original_ds.StudyInstanceUID is None or len(original_ds.StudyInstanceUID) < 1:
+            logging.error(f"StudyInstanceUID not found. Generating new one for {dicomFilePath}. Exported data may be untraceable.")
+            anonymized_ds.StudyInstanceUID = pydicom.uid.generate_uid()
+        else:
+            anonymized_ds.StudyInstanceUID = original_ds.StudyInstanceUID
+        
+        if new_patient_name is not None:
+            anonymized_ds.PatientName = new_patient_name
+        else:
+            anonymized_ds.PatientName = original_ds.PatientName
+            
+        if new_patient_id is not None:
+            anonymized_ds.PatientID = new_patient_id
+        else:
+            anonymized_ds.PatientID = original_ds.PatientID
+            
+        # Make the series desciption the filename, so we can easily identify the file later in the viewer
+        new_series_description = os.path.basename(dicomFilePath)
+        anonymized_ds.SeriesDescription = new_series_description
 
         # Set meta information for the DICOM file
-        meta = Dataset()
-        meta.MediaStorageSOPClassUID = ds.SOPClassUID  # This should match the SOPClassUID of the dataset
-        meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID  # This should match the SOPInstanceUID of the dataset
-        meta.ImplementationClassUID = generate_uid(None)  # Generate a new UID for our implementation
-        if compression == True:
-            meta.TransferSyntaxUID = JPEGBaseline
-        else:
-            meta.TransferSyntaxUID = ImplicitVRLittleEndian  # This is the default transfer syntax
-
-        file_ds = FileDataset(None, {}, file_meta=meta, preamble=b"\0" * 128)
+        meta = pydicom.Dataset()
+        meta.MediaStorageSOPClassUID = anonymized_ds.SOPClassUID  # This should match the SOPClassUID of the dataset
+        meta.MediaStorageSOPInstanceUID = anonymized_ds.SOPInstanceUID  # This should match the SOPInstanceUID of the dataset
+        meta.ImplementationClassUID = pydicom.uid.generate_uid(None)  # Generate a new UID for our implementation
+        meta.TransferSyntaxUID = pydicom.uid.JPEGBaseline
+        
+        file_ds = pydicom.dataset.FileDataset(None, {}, file_meta=meta, preamble=b"\0" * 128)
 
         # Copy over the dataset values from ds to file_ds
-        for elem in ds:
+        for elem in anonymized_ds:
             file_ds.add(elem)
 
         # Set the is_implicit_VR and is_little_endian attributes for the encoding
-        if compression == True:
-            file_ds.is_implicit_VR = False
-            file_ds.is_little_endian = True
-        else:
-            file_ds.is_implicit_VR = True
-            file_ds.is_little_endian = True
-
+        file_ds.is_implicit_VR = False
+        file_ds.is_little_endian = True
+        
         # Save the DICOM file
         file_ds.save_as(dicomFilePath)
         logging.info(f"DICOM generated successfully: {dicomFilePath}")
@@ -1950,8 +1997,10 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
     def exportDicom(self,
                     outputDirectory,
                     outputFilename = None,
+                    headersDirectory = None,
                     labels = None,
-                    compression = True):
+                    new_patient_name = None,
+                    new_patient_id = None):
         """
         Export image array to DICOM files.
 
@@ -1981,13 +2030,16 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         if outputFilename == "":
             return None, None, None
         dicomFilePath = os.path.join(outputDirectory, outputFilename)
-        self.saveDicomFile(dicomFilePath, compression=compression)
+        self.saveDicomFile(dicomFilePath, new_patient_name, new_patient_id)
         
         # Save original DICOM header to a json file. This may not be completely anonymized.
-        dicomHeaderFileName = outputFilename.replace(".dcm", "_DICOMHeader.json")
-        dicomHeaderFilePath = os.path.join(outputDirectory, dicomHeaderFileName)
-        with open(dicomHeaderFilePath, 'w') as outfile:
-            json.dump(self.currentDicomHeader, outfile, default=self.convertToJsonCompatible)
+        if headersDirectory is not None:
+            if not os.path.exists(headersDirectory):
+                os.makedirs(headersDirectory)   
+            dicomHeaderFileName = outputFilename.replace(".dcm", "_DICOMHeader.json")
+            dicomHeaderFilePath = os.path.join(headersDirectory, dicomHeaderFileName)
+            with open(dicomHeaderFilePath, 'w') as outfile:
+                json.dump(self.currentDicomHeader, outfile, default=self.convertToJsonCompatible)
         
         # Add mask parameters to sequenceInfo
         for key, value in self.maskParameters.items():

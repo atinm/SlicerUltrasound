@@ -32,6 +32,9 @@
           <verstretch>0</verstretch>
          </sizepolicy>
         </property>
+        <property name="toolTip">
+         <string>All DICOM files will be processed in this folder and all its subfolders</string>
+        </property>
        </widget>
       </item>
       <item row="2" column="0">
@@ -49,9 +52,12 @@
           <verstretch>0</verstretch>
          </sizepolicy>
         </property>
+        <property name="toolTip">
+         <string>Deidentified DICOM files will be saved here</string>
+        </property>
        </widget>
       </item>
-      <item row="3" column="0" colspan="2">
+      <item row="4" column="0" colspan="2">
        <widget class="QPushButton" name="importDicomButton">
         <property name="minimumSize">
          <size>
@@ -61,6 +67,20 @@
         </property>
         <property name="text">
          <string>Import DICOM folder</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="label_6">
+        <property name="text">
+         <string>Headers folder: </string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="ctkDirectoryButton" name="headersDirectoryButton">
+        <property name="toolTip">
+         <string>Original DICOM headers will be saved here. May contain PHI!</string>
         </property>
        </widget>
       </item>
@@ -159,6 +179,9 @@
             <width>0</width>
             <height>40</height>
            </size>
+          </property>
+          <property name="toolTip">
+           <string>Applies mask and exports anonymized DICOM file</string>
           </property>
           <property name="text">
            <string>Export</string>
@@ -267,10 +290,31 @@
       </item>
       <item>
        <widget class="QCheckBox" name="hashPatientIdCheckBox">
+        <property name="toolTip">
+         <string>Should only be unchecked if the input DICOM files are already have anonymized headers</string>
+        </property>
         <property name="text">
          <string>Hash Patient ID (deidentify patient)</string>
         </property>
        </widget>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="horizontalLayout_2">
+        <item>
+         <widget class="QLabel" name="label_5">
+          <property name="text">
+           <string>Prefix for patient name: </string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLineEdit" name="namePrefixLineEdit">
+          <property name="toolTip">
+           <string>All patient names will start with this text if Patient ID hashing is selected</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
       </item>
       <item>
        <layout class="QVBoxLayout" name="verticalLayout_3">
@@ -316,5 +360,22 @@
   </customwidget>
  </customwidgets>
  <resources/>
- <connections/>
+ <connections>
+  <connection>
+   <sender>hashPatientIdCheckBox</sender>
+   <signal>toggled(bool)</signal>
+   <receiver>namePrefixLineEdit</receiver>
+   <slot>setEnabled(bool)</slot>
+   <hints>
+    <hint type="sourcelabel">
+     <x>229</x>
+     <y>668</y>
+    </hint>
+    <hint type="destinationlabel">
+     <x>291</x>
+     <y>694</y>
+    </hint>
+   </hints>
+  </connection>
+ </connections>
 </ui>
