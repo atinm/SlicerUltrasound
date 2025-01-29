@@ -124,7 +124,6 @@ class AnonymizeUltrasoundParameterNode:
     """
     The parameters needed by module.
     """
-    ultrasoundVolume: vtkMRMLScalarVolumeNode              # 2D ultrasound image currently selected for processing
     ultrasoundSequenceBrowser: vtkMRMLSequenceBrowserNode  # Sequence browser whose proxy node is ultrasoundVolume
     maskMarkups: vtkMRMLMarkupsFiducialNode                # Landmarks for masking
     overlayVolume: vtkMRMLScalarVolumeNode                 # Overlay volume to represent masking
@@ -709,7 +708,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         # If hashPatientId is not checked, confirm with the user that they really want to proceed.
         
         if not hashPatientId:
-            if not slicer.util.confirmOkCancelDisplay("Patient ID will not be hashed. Do you want to proceed?"):
+            if not slicer.util.confirmOkCancelDisplay("Patient name will not be masked. Do you want to proceed?"):
                 return
         
         outputDirectory = self.ui.outputDirectoryButton.directory
@@ -1291,7 +1290,8 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
     def findMaskAutomatic(self, model, input_shape, device):
         """ Generate a mask automatically using the AI model """
         slicer.app.pauseRender()
-        currentSequenceBrowser = self.getParameterNode().GetNodeReference(self.CURRENT_SEQUENCE)
+        parameterNode = self.getParameterNode()
+        currentSequenceBrowser = parameterNode.ultrasoundSequenceBrowser
         masterSequenceNode = currentSequenceBrowser.GetMasterSequenceNode()
         currentVolumeNode = masterSequenceNode.GetNthDataNode(0)
         currentVolumeArray = slicer.util.arrayFromVolume(currentVolumeNode)
