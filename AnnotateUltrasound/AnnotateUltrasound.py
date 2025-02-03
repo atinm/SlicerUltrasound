@@ -3,6 +3,7 @@ Useful scripts for debugging
 
 moduleWidget = slicer.modules.annotateultrasound.widgetRepresentation().self()
 moduleLogic = moduleWidget.logic
+moduleNode = moduleLogic.getParameterNode()
 
 moduleLogic.updateOverlayVolume()
 '''
@@ -551,7 +552,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         """
         # Add annotation line control points to the annotations dictionary and save it to file
         if self.logic.annotations is None:
-            logging.error("No annotations loaded")
+            logging.error("saveAnnotations: No annotations loaded")
             return
         
         waitDialog = self.createWaitDialog("Saving annotations", "Saving annotations...")
@@ -1169,7 +1170,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             if not (inputUltrasoundNode.IsA("vtkMRMLScalarVolumeNode") or inputUltrasoundNode.IsA("vtkMRMLVectorVolumeNode")):
                 logging.error(f"Proxy node is not a volume node")
                 return None
-            
+        
+        previousNodeState = parameterNode.StartModify()
+        
         self.sequenceBrowserNode = currentSequenceBrowser
         parameterNode.inputVolume = inputUltrasoundNode
         
@@ -1200,6 +1203,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         ratio = self.updateOverlayVolume()
         parameterNode = self.getParameterNode()
         parameterNode.pleuraPercentage = ratio * 100
+        
+        parameterNode.EndModify(previousNodeState)
         
         # Set overlay volume as foreground in slice viewers
         redSliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").sliceLogic().GetSliceCompositeNode()
@@ -1633,11 +1638,11 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         parameterNode = self.getParameterNode()
         
         if parameterNode.overlayVolume is None:
-            logging.debug("No overlay volume found! Cannot update overlay volume.")
+            logging.debug("updateOverlayVolume: No overlay volume found! Cannot update overlay volume.")
             return None
         
         if self.annotations is None:
-            logging.warning("No annotations loaded")
+            logging.warning("updateOverlayVolume: No annotations loaded")
             # Make sure all voxels are set to 0
             parameterNode.overlayVolume.GetImageData().GetPointData().GetScalars().Fill(0)
             return None
