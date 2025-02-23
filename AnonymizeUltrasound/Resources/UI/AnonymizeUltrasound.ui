@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>459</width>
+    <width>465</width>
     <height>771</height>
    </rect>
   </property>
@@ -128,20 +128,34 @@
        </widget>
       </item>
       <item row="2" column="0">
+       <widget class="QLabel" name="label_5">
+        <property name="text">
+         <string>Prefix for patient name: </string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QLineEdit" name="namePrefixLineEdit">
+        <property name="toolTip">
+         <string>All patient names will start with this text if Patient ID hashing is selected</string>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0">
        <widget class="QLabel" name="label_10">
         <property name="text">
          <string>Progress: </string>
         </property>
        </widget>
       </item>
-      <item row="2" column="1">
+      <item row="4" column="1">
        <widget class="QProgressBar" name="progressBar">
         <property name="value">
          <number>0</number>
         </property>
        </widget>
       </item>
-      <item row="3" column="0" colspan="2">
+      <item row="5" column="0" colspan="2">
        <layout class="QHBoxLayout" name="horizontalLayout">
         <item>
          <widget class="QPushButton" name="nextButton">
@@ -209,7 +223,7 @@
           <rect>
            <x>0</x>
            <y>0</y>
-           <width>419</width>
+           <width>425</width>
            <height>60</height>
           </rect>
          </property>
@@ -225,10 +239,13 @@
      <property name="orientation">
       <enum>Qt::Vertical</enum>
      </property>
+     <property name="sizeType">
+      <enum>QSizePolicy::Expanding</enum>
+     </property>
      <property name="sizeHint" stdset="0">
       <size>
        <width>20</width>
-       <height>400</height>
+       <height>10</height>
       </size>
      </property>
     </spacer>
@@ -297,24 +314,6 @@
          <string>Hash Patient ID (deidentify patient)</string>
         </property>
        </widget>
-      </item>
-      <item>
-       <layout class="QHBoxLayout" name="horizontalLayout_2">
-        <item>
-         <widget class="QLabel" name="label_5">
-          <property name="text">
-           <string>Prefix for patient name: </string>
-          </property>
-         </widget>
-        </item>
-        <item>
-         <widget class="QLineEdit" name="namePrefixLineEdit">
-          <property name="toolTip">
-           <string>All patient names will start with this text if Patient ID hashing is selected</string>
-          </property>
-         </widget>
-        </item>
-       </layout>
       </item>
       <item>
        <layout class="QVBoxLayout" name="verticalLayout_3">
