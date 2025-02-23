@@ -256,10 +256,14 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             self.ui.hashPatientIdCheckBox.checked = False
         self.ui.hashPatientIdCheckBox.connect('toggled(bool)', lambda newValue: self.onSettingChanged(self.HASH_PATIENT_ID_SETTING, str(newValue)))
         
-        filenamePrefix = settings.value(self.FILENAME_PREFIX_SETTING)
+        filenamePrefix = settings.value(self.FILENAME_PREFIX_SETTING)  # This has been moved to Processing tab on the UI
         if filenamePrefix:
             self.ui.namePrefixLineEdit.text = filenamePrefix
         self.ui.namePrefixLineEdit.connect('textChanged(QString)', lambda newValue: self.onSettingChanged(self.FILENAME_PREFIX_SETTING, newValue))
+        
+        self.ui.settingsCollapsibleButton.collapsed = True
+        
+        # Annotation labels
         
         self.ui.labelsFileSelector.connect('currentPathChanged(QString)', self.onLabelsPathChanged)
         labelsPath = settings.value(self.LABELS_PATH_SETTING)
