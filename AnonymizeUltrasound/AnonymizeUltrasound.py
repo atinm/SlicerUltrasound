@@ -461,7 +461,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             statusText += " dicom files found in input folder."
         
         if self.ui.continueProgressCheckBox.checked:
-            numDone = self.logic.updateProgressDicomDf(inputDirectory, outputDirectory, self.ui.keepFoldersCheckBox.checked)
+            numDone = self.logic.updateProgressDicomDf(inputDirectory, outputDirectory)
             if numDone is None:
                 statusText += '\nAll files have been processed. Cannot load more files from input folder.'
             elif numDone < 1:
@@ -977,7 +977,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             del self.currentDicomHeader["Pixel Data"]
 
         # Increment nextDicomDfIndex
-        nextIndex = self.incrementDicomDfIndex(outputDirectory, skip_existing=continueProgress)
+        nextIndex = self.incrementDicomDfIndex(None, outputDirectory, skip_existing=continueProgress)
         if nextIndex is None:
             logging.info("No more DICOM files to process")
             return None
@@ -1124,10 +1124,10 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         :return:  index for dicomDf that points to the next row that needs to be processed.
         """
         self.nextDicomDfIndex = None
-        self.incrementDicomDfIndex(input_folder, output_folder, skip_existing=True, keep_folders=keep_folders)
+        self.incrementDicomDfIndex(input_folder, output_folder, skip_existing=True)
         return self.nextDicomDfIndex
     
-    def incrementDicomDfIndex(self, output_directory, skip_existing=False):
+    def incrementDicomDfIndex(self, input_folder=None, output_directory=None, skip_existing=False):
         """
         Increment the index of the DICOM dataframe. If skipExistingOutput is True, then skip the rows that have already been processed.
         
@@ -2084,7 +2084,13 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             dicomHeaderFileName = outputFilename.replace(".dcm", "_DICOMHeader.json")
             dicomHeaderFilePath = os.path.join(headersDirectory, dicomHeaderFileName)
             with open(dicomHeaderFilePath, 'w') as outfile:
-                json.dump(self.currentDicomHeader, outfile, default=self.convertToJsonCompatible)
+                anonymizedDicomHeader = self.currentDicomHeader.copy()
+                # Make the PatientName equal to the outputFilename without extension
+                anonymizedDicomHeader.pop("PatientName", outputFilename.split(".")[0])
+                # Make the month and day of the patient birth date 01 to anonymize the patient
+                if "PatientBirthDate" in anonymizedDicomHeader:
+                    anonymizedDicomHeader["PatientBirthDate"] = anonymizedDicomHeader["PatientBirthDate"][:4] + "0101"
+                json.dump(anonymizedDicomHeader, outfile, default=self.convertToJsonCompatible)
         
         # Add mask parameters to sequenceInfo
         for key, value in self.maskParameters.items():
