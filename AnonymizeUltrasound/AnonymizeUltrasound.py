@@ -2086,10 +2086,11 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             with open(dicomHeaderFilePath, 'w') as outfile:
                 anonymizedDicomHeader = self.currentDicomHeader.copy()
                 # Make the PatientName equal to the outputFilename without extension
-                anonymizedDicomHeader.pop("PatientName", outputFilename.split(".")[0])
+                if "Patient's Name" in anonymizedDicomHeader:
+                    anonymizedDicomHeader["Patient's Name"] = outputFilename.split(".")[0]
                 # Make the month and day of the patient birth date 01 to anonymize the patient
-                if "PatientBirthDate" in anonymizedDicomHeader:
-                    anonymizedDicomHeader["PatientBirthDate"] = anonymizedDicomHeader["PatientBirthDate"][:4] + "0101"
+                if "Patient's Birth Date" in anonymizedDicomHeader:
+                    anonymizedDicomHeader["Patient's Birth Date"] = anonymizedDicomHeader["Patient's Birth Date"][:4] + "0101"
                 json.dump(anonymizedDicomHeader, outfile, default=self.convertToJsonCompatible)
         
         # Add mask parameters to sequenceInfo
