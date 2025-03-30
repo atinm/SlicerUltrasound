@@ -1,10 +1,12 @@
 from collections import defaultdict
 import csv
+import datetime
 from enum import Enum
 import hashlib
 import io
 import json
 import logging
+import random
 import numpy as np
 import os
 import pathlib
@@ -871,6 +873,9 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
                     series_uid = dicom_ds.SeriesInstanceUID if 'SeriesInstanceUID' in dicom_ds else None
                     instance_uid = dicom_ds.SOPInstanceUID if 'SOPInstanceUID' in dicom_ds else None
                     
+                    content_date = dicom_ds.ContentDate if 'ContentDate' in dicom_ds else '19000101'
+                    content_time = dicom_ds.ContentTime if 'ContentTime' in dicom_ds else '000000'
+                    
                     if patient_id is None:
                         logging.warning(f"Patient ID missing in file {file_path}")
                     
@@ -881,14 +886,18 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
 
                     # Append the information to the list, if PatientID, StudyInstanceUID, and SeriesInstanceUID are present
                     if patient_id and study_uid and series_uid and instance_uid:
-                        dicom_data.append([file_path, exp_filename, patient_id, study_uid, series_uid, instance_uid, physical_delta_x, physical_delta_y, to_patch])
+                        dicom_data.append([file_path, exp_filename, patient_id, study_uid, series_uid, instance_uid, physical_delta_x, physical_delta_y, content_date, content_time, to_patch])
                 except Exception as e:
                     # If the file is not a valid DICOM file, continue to the next file
                     continue
 
         # Update dicomDf
-        self.dicomDf = pd.DataFrame(dicom_data, columns=['Filepath', 'AnonFilename', 'PatientUID', 'StudyUID', 'SeriesUID', 'InstanceUID', 'PhysicalDeltaX', 'PhysicalDeltaY', 'Patch'])
-        self.dicomDf = self.dicomDf.sort_values(by='Filepath')  # This makes a difference on Mac, not on Windows.
+        self.dicomDf = pd.DataFrame(dicom_data, columns=['Filepath', 'AnonFilename', 'PatientUID', 'StudyUID',
+            'SeriesUID', 'InstanceUID', 'PhysicalDeltaX', 'PhysicalDeltaY', 'ContentDate', 'ContentTime', 'Patch'])
+        self.dicomDf = self.dicomDf.sort_values(by=['Filepath', 'ContentDate', 'ContentTime'])  # This makes a difference on Mac, not on Windows.
+        
+        # Add a new column to dicomDf named 'SeriesNumber' that is the index of the row in the group of rows with the same PatientUID and StudyUID.
+        self.dicomDf['SeriesNumber'] = self.dicomDf.groupby(['PatientUID', 'StudyUID']).cumcount() + 1
         
         # This is a workaround for the issue that some DICOM files do not have spacing information. The information may be used when loading each file,
         # but patching the DICOM files before importing them would be a better option.
@@ -1990,6 +1999,31 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             anonymized_ds.ReferringPhysicianName = ''
         if not hasattr(anonymized_ds, 'AccessionNumber'):
             anonymized_ds.AccessionNumber = ''
+        
+        patientId = original_ds.PatientID
+        random.seed(patientId)
+        random_number = random.randint(0, 30)
+        
+        # Get the Series Date and Content Data from the header, and add the random_number as an offset to the day, shifting the month if necessary
+        study_date = original_ds.StudyDate if hasattr(original_ds, 'StudyDate') else '19000101'
+        series_date = original_ds.SeriesDate if hasattr(original_ds, 'SeriesDate') else '19000101'
+        content_date = original_ds.ContentDate if hasattr(original_ds, 'ContentDate') else '19000101'
+        
+        study_date = datetime.datetime.strptime(study_date, "%Y%m%d") + datetime.timedelta(days=random_number)
+        series_date = datetime.datetime.strptime(series_date, "%Y%m%d") + datetime.timedelta(days=random_number)
+        content_date = datetime.datetime.strptime(content_date, "%Y%m%d") + datetime.timedelta(days=random_number)
+        anonymized_ds.StudyDate = study_date.strftime("%Y%m%d")
+        anonymized_ds.SeriesDate = series_date.strftime("%Y%m%d")
+        anonymized_ds.ContentDate = content_date.strftime("%Y%m%d")
+        
+        anonymized_ds.StudyTime = original_ds.StudyTime if hasattr(original_ds, 'StudyTime') else ''
+        anonymized_ds.SeriesTime = original_ds.SeriesTime if hasattr(original_ds, 'SeriesTime') else ''
+        anonymized_ds.ContentTime = original_ds.ContentTime if hasattr(original_ds, 'ContentTime') else ''
+        
+        # Get the SeriesNumber from the self.dicomDf table corresponding to the current DICOM file
+        
+        series_number = self.dicomDf.loc[self.dicomDf['InstanceUID'] == original_ds.SOPInstanceUID, 'SeriesNumber'].values
+        anonymized_ds.SeriesNumber = series_number[0] if len(series_number) > 0 else '1'
         
         # Conditional elements: provide empty defaults if unknown.
         if not hasattr(anonymized_ds, 'Laterality'):
