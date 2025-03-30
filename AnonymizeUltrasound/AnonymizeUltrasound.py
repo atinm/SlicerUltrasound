@@ -1,10 +1,12 @@
 from collections import defaultdict
 import csv
+import datetime
 from enum import Enum
 import hashlib
 import io
 import json
 import logging
+import random
 import numpy as np
 import os
 import pathlib
@@ -1990,6 +1992,26 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             anonymized_ds.ReferringPhysicianName = ''
         if not hasattr(anonymized_ds, 'AccessionNumber'):
             anonymized_ds.AccessionNumber = ''
+        
+        patientId = original_ds.PatientID
+        random.seed(patientId)
+        random_number = random.randint(0, 30)
+        
+        # Get the Series Date and Content Data from the header, and add the random_number as an offset to the day, shifting the month if necessary
+        study_date = original_ds.StudyDate if hasattr(original_ds, 'StudyDate') else '19000101'
+        series_date = original_ds.SeriesDate if hasattr(original_ds, 'SeriesDate') else '19000101'
+        content_date = original_ds.ContentDate if hasattr(original_ds, 'ContentDate') else '19000101'
+        
+        study_date = datetime.datetime.strptime(study_date, "%Y%m%d") + datetime.timedelta(days=random_number)
+        series_date = datetime.datetime.strptime(series_date, "%Y%m%d") + datetime.timedelta(days=random_number)
+        content_date = datetime.datetime.strptime(content_date, "%Y%m%d") + datetime.timedelta(days=random_number)
+        anonymized_ds.StudyDate = study_date.strftime("%Y%m%d")
+        anonymized_ds.SeriesDate = series_date.strftime("%Y%m%d")
+        anonymized_ds.ContentDate = content_date.strftime("%Y%m%d")
+        
+        anonymized_ds.StudyTime = original_ds.StudyTime if hasattr(original_ds, 'StudyTime') else ''
+        anonymized_ds.SeriesTime = original_ds.SeriesTime if hasattr(original_ds, 'SeriesTime') else ''
+        anonymized_ds.ContentTime = original_ds.ContentTime if hasattr(original_ds, 'ContentTime') else ''
         
         # Conditional elements: provide empty defaults if unknown.
         if not hasattr(anonymized_ds, 'Laterality'):
