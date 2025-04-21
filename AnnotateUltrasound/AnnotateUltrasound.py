@@ -815,6 +815,12 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         moduleWidget.ui.labelsFileSelector.currentPath = labelsPath
         self.onLabelsFileSelected(labelsPath)
         
+        # Hide slice view annotations to avoid interference with the corner annotation
+        
+        sliceAnnotations = slicer.modules.DataProbeInstance.infoWidget.sliceAnnotations
+        sliceAnnotations.sliceViewAnnotationsEnabled=False
+        sliceAnnotations.updateSliceViewFromGUI()
+
         self._updateGUIFromParameterNode()
 
     def exit(self) -> None:
@@ -1699,6 +1705,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 # Add sectorArray to maskArray by maximum compounding
                 maskArray[0, :, :, 1] = np.maximum(maskArray[0, :, :, 1], sectorArray)
         
+        # Erase all B-lines pixels where there is no pleura line
+        maskArray[0, :, :, 1] = np.where(maskArray[0, :, :, 2] == 0, 0, maskArray[0, :, :, 1])
+
         # Calculate the amount of blue pixels in maskArray and green pixels in maskArray
         bluePixels = np.count_nonzero(maskArray[0, :, :, 2])
         greenPixels = np.count_nonzero(maskArray[0, :, :, 1])
@@ -1708,7 +1717,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         # Return the ratio of green pixels to blue pixels
         if bluePixels == 0:
-            return -2.0
+            return 0.0
         else:
             return greenPixels / bluePixels
     
