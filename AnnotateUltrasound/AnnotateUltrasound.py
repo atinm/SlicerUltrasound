@@ -743,6 +743,55 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                     annotationLabels.append(f"{groupBoxTitle}/{checkBox.text}")
         self.logic.annotations['labels'] = annotationLabels
 
+    def onSkipToUnlabelledButton(self):
+        """ 
+        Skip to the next unlabelled scan
+        """
+        if not self.confirmUnsavedChanges():
+            return
+
+        if self.logic.dicomDf is None:
+            qt.QMessageBox.warning(
+                slicer.util.mainWindow(),
+                "Missing Data",
+                "Please read input directory first."
+            )
+            return
+
+        # Find the next unlabelled scan
+        nextUnlabelledIndex = self.findNextUnlabelledScan()
+        if nextUnlabelledIndex is None:
+            qt.QMessageBox.information(
+                slicer.util.mainWindow(),
+                "Skip to Unlabelled",
+                "No unlabelled scans found."
+            )
+            return
+
+        self.logic.nextDicomDfIndex = nextUnlabelledIndex
+        self.onNextButton()
+
+    def findNextUnlabelledScan(self):
+        """
+        Find the index of the next unlabelled scan in the DICOM dataframe.
+        :return: Index of the next unlabelled scan or None if no such scan is found.
+        """
+        if self.logic.dicomDf is None:
+            return None
+
+        for idx in range(self.logic.nextDicomDfIndex, len(self.logic.dicomDf)):
+            annotationsFilepath = self.logic.dicomDf.iloc[idx]['AnnotationsFilepath']
+            try:
+                with open(annotationsFilepath, 'r') as f:
+                    annotations = json.load(f)
+                    # Check if frame annotations exist and are empty
+                    if 'frame_annotations' not in annotations or not annotations['frame_annotations']:
+                        return idx
+            except Exception as e:
+                logging.error(f"Error reading annotations file {annotationsFilepath}: {e}")
+        
+        return None
+
     def overlayVisibilityToggled(self, checked):
         logging.info(f"overlayVisibilityToggled -- checked: {checked}")
         if checked:
@@ -1843,50 +1892,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         stopTime = time.time()
         logging.info(f'Processing completed in {stopTime-startTime:.2f} seconds')
 
-    def onSkipToUnlabelledButton(self):
-        """ 
-        Skip to the next unlabelled scan
-        """
-        if not self.confirmUnsavedChanges():
-            return
-        
-        if self.logic.dicomDf is None:
-            self.ui.statusLabel.setText("Please read input directory first")
-            return
-        
-        # Find the next unlabelled scan
-        nextUnlabelledIndex = self.findNextUnlabelledScan()
-        if nextUnlabelledIndex is None:
-            self.ui.statusLabel.setText("No unlabelled scans found")
-            return
-        
-        self.logic.nextDicomDfIndex = nextUnlabelledIndex
-        self.onNextButton()  # Load the scan at `nextDicomDfIndex`
-
-    def findNextUnlabelledScan(self):
-        """
-        Find the index of the next unlabelled scan in the DICOM dataframe.
-        :return: Index of the next unlabelled scan or None if no such scan is found.
-        """
-        if self.logic.dicomDf is None:
-            return None
-
-        for idx in range(self.logic.nextDicomDfIndex, len(self.logic.dicomDf)):
-            annotationsFilepath = self.logic.dicomDf.iloc[idx]['AnnotationsFilepath']
-            try:
-                with open(annotationsFilepath, 'r') as f:
-                    annotations = json.load(f)
-                    # Check if frame annotations exist and are empty
-                    if 'frame_annotations' not in annotations or not annotations['frame_annotations']:
-                        return idx
-            except Exception as e:
-                logging.error(f"Error reading annotations file {annotationsFilepath}: {e}")
-        
-        return None
-
-#
-# AnnotateUltrasoundTest
-#
 
 class AnnotateUltrasoundTest(ScriptedLoadableModuleTest):
     """
