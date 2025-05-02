@@ -1893,6 +1893,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         logging.info(f'Processing completed in {stopTime-startTime:.2f} seconds')
 
 
+#
+# AnnotateUltrasoundTest
+#
+
 class AnnotateUltrasoundTest(ScriptedLoadableModuleTest):
     """
     This is the test case for your scripted module.
