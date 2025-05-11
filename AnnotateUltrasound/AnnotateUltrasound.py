@@ -291,12 +291,13 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         ratio = self.logic.updateOverlayVolume()
         self._parameterNode.pleuraPercentage = ratio * 100
         self._parameterNode.unsavedChanges = True
+        self.updateGuiFromAnnotations()
 
     def onFramesTableSelectionChanged(self):
         logging.info('onFramesTableSelectionChanged')
 
         selectedRow = self.ui.framesTableWidget.currentRow()
-        if selectedRow == -1:
+        if (selectedRow == -1):
             return
         
         selectedFrameIndex = int(self.ui.framesTableWidget.item(selectedRow, 0).text())
@@ -316,7 +317,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
     def onAddCurrentFrame(self):
         logging.info('onAddCurrentFrame')
-        self.logic.addCurrentFrame()
+        self.logic.updateCurrentFrame()
         self.updateGuiFromAnnotations()
 
     def onRemoveCurrentFrame(self):
@@ -494,8 +495,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             for frame_index, frame_annotations in self.logic.annotations["frame_annotations"].items():
                 self.ui.framesTableWidget.insertRow(self.ui.framesTableWidget.rowCount)
                 self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 0, qt.QTableWidgetItem(str(frame_index)))
-                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 1, qt.QTableWidgetItem(str(len(frame_annotations["pleura_lines"]))))
-                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 2, qt.QTableWidgetItem(str(len(frame_annotations["b_lines"]))))
+                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 1, 
+                qt.QTableWidgetItem(str(len([pleura_line for pleura_line in frame_annotations["pleura_lines"] if len(pleura_line) == 2]))))
+                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 2, 
+                qt.QTableWidgetItem(str(len([b_line for b_line in frame_annotations["b_lines"] if len(b_line) == 2]))))
 
     
     def createWaitDialog(self, title, message):
@@ -612,7 +615,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             
             if self.ui.autoSaveCheckBox.checked:
                 logging.info("Auto-saving frame annotations")
-                self.logic.addCurrentFrame()
+                self.logic.updateCurrentFrame()
                 self.updateGuiFromAnnotations()
 
             # If current line has less than 2 control points, remove it
@@ -669,7 +672,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         
         if self.ui.autoSaveCheckBox.checked:
             logging.info("Auto-saving frame annotations")
-            self.logic.addCurrentFrame()
+            self.logic.updateCurrentFrame()
             self.updateGuiFromAnnotations()
     
     def onRemovePleuraLine(self):
@@ -686,8 +689,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             logging.error(f"Unknown line type {lineType}")
             return
         
-        self.logic.addCurrentFrame()
-
+        self.logic.updateCurrentFrame()
+        self.updateGuiFromAnnotations()
         self._parameterNode.unsavedChanges = True
 
     def onLabelsFileSelected(self, labelsFilepath):
@@ -1042,14 +1045,15 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Return the number of rows in the dataframe and the number of annotations files created
         return len(self.dicomDf), annotations_created_count
     
-    def addCurrentFrame(self):
+    def updateCurrentFrame(self):
         logging.info('addCurrentFrame')
+        
         if self.sequenceBrowserNode is None:
             logging.warning("No sequence browser node found")
             return
         
         # Get the current frame index from the sequence browser
-        currentFrameIndexStr = str(self.sequenceBrowserNode.GetSelectedItemNumber())
+        currentFrameIndexStr = str(max(0, self.sequenceBrowserNode.GetSelectedItemNumber()))  # TODO: investigate whey this could be negative!
         
         # Check if annotations already has a list of frame annotations. Create it if it doesn't exist.
 
@@ -1067,8 +1071,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Add pleura lines to annotations. Organize the coordinates in a list of lists.
 
         self.annotations['frame_annotations'][currentFrameIndexStr]['pleura_lines'] = []  # Reset the list of pleura lines
+        
         for markupNode in self.pleuraLines:
             coordinates = []
+            
             for i in range(markupNode.GetNumberOfControlPoints()):
                 coord = [0, 0, 0]
                 markupNode.GetNthControlPointPosition(i, coord)
@@ -1078,8 +1084,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Add B-lines to annotations. Organize the coordinates in a list of lists.
 
         self.annotations['frame_annotations'][currentFrameIndexStr]['b_lines'] = []  # Reset the list of B-lines
+
         for markupNode in self.bLines:
             coordinates = []
+        
             for i in range(markupNode.GetNumberOfControlPoints()):
                 coord = [0, 0, 0]
                 markupNode.GetNthControlPointPosition(i, coord)
@@ -1264,7 +1272,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         Remove all pleura lines and B-lines from the scene and from the list of lines. Adds current frame annotations to dictionary.
         """
         self.clearSceneLines()
-        self.addCurrentFrame()
+        self.updateCurrentFrame()
 
     def removeLastPleuraLine(self):
         """
@@ -1294,7 +1302,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
     
     def onPointModified(self, caller, event):
         ratio = self.updateOverlayVolume()
-        self.addCurrentFrame()
+        currentFrameIndexStr = str(self.sequenceBrowserNode.GetSelectedItemNumber())
         parameterNode = self.getParameterNode()
         parameterNode.pleuraPercentage = ratio * 100
         parameterNode.unsavedChanges = True
