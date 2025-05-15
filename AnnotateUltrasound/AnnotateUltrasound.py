@@ -164,7 +164,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutE.connect('activated()', lambda: self.onRemoveLine("Pleura"))  # "E" removes the last pleura line
         self.shortcutD.connect('activated()', lambda: self.onRemoveLine("Bline"))   # "D" removes the last B-line
 
-        self.shortcutA.connect('activated()', self.onSaveButton)  # "A" to save and load next scan
+        self.shortcutA.connect('activated()', self.onSaveAndLoadNextButton)  # "A" to save and load next scan
 
     def disconnectKeyboardShortcuts(self):
         # Disconnect shortcuts to avoid issues when the user leaves the module
@@ -222,6 +222,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.nextButton.clicked.connect(self.onNextButton)
         self.ui.previousButton.clicked.connect(self.onPreviousButton)
         self.ui.saveButton.clicked.connect(self.onSaveButton)
+        self.ui.saveAndLoadNextButton.clicked.connect(self.onSaveAndLoadNextButton)
         self.ui.intensitySlider.valueChanged.connect(self.onIntensitySliderValueChanged)
         
         self.ui.addPleuraButton.toggled.connect(lambda checked: self.onAddLine("Pleura", checked))
@@ -254,6 +255,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.nextButton.setFixedHeight(buttonHeight)
         self.ui.previousButton.setFixedHeight(buttonHeight)
         self.ui.saveButton.setFixedHeight(buttonHeight)
+        self.ui.saveAndLoadNextButton.setFixedHeight(buttonHeight)
         self.ui.addPleuraButton.setFixedHeight(buttonHeight)
         self.ui.removePleuraButton.setFixedHeight(buttonHeight)
         self.ui.addBlineButton.setFixedHeight(buttonHeight)
@@ -605,9 +607,16 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
     def onSaveButton(self):
         """
+        Saves current annotations to json file only
+        """
+        logging.info('onSaveButton (save')
+        self.saveAnnotations()
+
+    def onSaveAndLoadNextButton(self):
+        """
         Saves current annotations to json file and loads next sequence.
         """
-        logging.info('onSaveButton (save and load next scan)')
+        logging.info('onSaveAndLoadNextButton (save and load next scan)')
 
         if self.saveAnnotations():
             self.onNextButton()
