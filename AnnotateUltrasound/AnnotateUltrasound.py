@@ -375,6 +375,17 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.progressBar.minimum = 0
             self.ui.progressBar.maximum = numFilesFound
             self.ui.progressBar.value = 0
+            waitDialog = self.createWaitDialog("Loading first sequence", "Loading first sequence...")
+            self.currentDicomDfIndex = self.logic.loadNextSequence()
+            # Update self.ui.currentFileLabel using the DICOM file name
+            currentDicomFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['Filepath']
+            currentDicomFilename = os.path.basename(currentDicomFilepath)
+            statusText = f"Current file ({self.logic.nextDicomDfIndex}/{len(self.logic.dicomDf)}): {currentDicomFilename}"
+            self.ui.currentFileLabel.setText(statusText)
+            self.ui.statusLabel.setText(statusText)
+
+            # Close the wait dialog
+            waitDialog.close()
         else:
             self.ui.statusLabel.setText("Could not find any files to load in input directory!")
             
@@ -414,6 +425,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if not self.confirmUnsavedChanges():
             return
 
+        if self.logic.nextDicomDfIndex >= len(self.logic.dicomDf):
+            self.ui.statusLabel.setText("No more DICOM files")
+            return
+
         # Create a dialog to ask the user to wait while the next sequence is loaded.
 
         waitDialog = self.createWaitDialog("Loading next sequence", "Loading next sequence...")
@@ -438,7 +453,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         currentDicomFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['Filepath']
         currentDicomFilename = os.path.basename(currentDicomFilepath)
-        self.ui.currentFileLabel.setText(f"Current file ({self.logic.nextDicomDfIndex}/{len(self.logic.dicomDf)}): {currentDicomFilename}")
+        statusText = f"Current file ({self.logic.nextDicomDfIndex}/{len(self.logic.dicomDf)}): {currentDicomFilename}"
+        self.ui.currentFileLabel.setText(statusText)
+        self.ui.statusLabel.setText(statusText)
         
         self.updateGuiFromAnnotations()
         
@@ -450,10 +467,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         self.ui.intensitySlider.setValue(0)
 
-        if currentDicomDfIndex is None:
-            self.ui.statusLabel.setText("No more DICOM files")
-            return
-        
         self.ui.progressBar.value = currentDicomDfIndex
         
         self.ui.overlayVisibilityButton.setChecked(True)
@@ -529,12 +542,21 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Create a dialog to ask the user to wait while the next sequence is loaded.
         waitDialog = self.createWaitDialog("Loading previous sequence", "Loading previous sequence...")
         
+        savedNextDicomDfIndex = self.logic.nextDicomDfIndex
         currentDicomDfIndex = self.logic.loadPreviousSequence()
-        
+        if currentDicomDfIndex is None:
+            # Close the wait dialog
+            waitDialog.close()
+            self.logic.nextDicomDfIndex = savedNextDicomDfIndex
+            self.ui.statusLabel.setText("First DICOM file reached")
+            return
+
         # Update self.ui.currentFileLabel using the DICOM file name
         currentDicomFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['Filepath']
         currentDicomFilename = os.path.basename(currentDicomFilepath)
-        self.ui.currentFileLabel.setText(f"Current file ({self.logic.nextDicomDfIndex}/{len(self.logic.dicomDf)}): {currentDicomFilename}")
+        statusText = f"Current file ({self.logic.nextDicomDfIndex}/{len(self.logic.dicomDf)}): {currentDicomFilename}"
+        self.ui.currentFileLabel.setText(statusText)
+        self.ui.statusLabel.setText(statusText)
         
         self.updateGuiFromAnnotations()
 
@@ -543,11 +565,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Close the wait dialog
         waitDialog.close()
         
-        if currentDicomDfIndex is None:
-            self.ui.statusLabel.setText("First DICOM file reached")
-            return
-        else:
-            self.ui.progressBar.value = currentDicomDfIndex
+        self.ui.progressBar.value = currentDicomDfIndex
     
     def saveAnnotations(self):
         """
