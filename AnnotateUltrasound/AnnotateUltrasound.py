@@ -254,12 +254,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Settings
         settings = slicer.app.settings()
-        autoSave = settings.value('AnnotateUltrasound/AutoSave', 'true')
-        self.ui.autoSaveCheckBox.setChecked(autoSave.lower() == 'true')
         showPleuraPercentage = settings.value('AnnotateUltrasound/ShowPleuraPercentage', 'false')
         self.ui.showPleuraPercentageCheckBox.setChecked(showPleuraPercentage.lower() == 'true')
         
-        self.ui.autoSaveCheckBox.connect('toggled(bool)', self.saveUserSettings)
         self.ui.showPleuraPercentageCheckBox.connect('toggled(bool)', self.saveUserSettings)
         self.ui.depthGuideCheckBox.toggled.connect(self.onDepthGuideToggled)
 
@@ -287,7 +284,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     
     def saveUserSettings(self):
         settings = qt.QSettings()
-        settings.setValue('AnnotateUltrasound/AutoSave', 'true' if self.ui.autoSaveCheckBox.checked else 'false')
         settings.setValue('AnnotateUltrasound/ShowPleuraPercentage', self.ui.showPleuraPercentageCheckBox.checked)
         settings.setValue('AnnotateUltrasound/DepthGuide', self.ui.depthGuideCheckBox.checked)
         ratio = self.logic.updateOverlayVolume()
@@ -662,10 +658,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 logging.error(f"Unknown line type {lineType}")
                 return
             
-            if self.ui.autoSaveCheckBox.checked:
-                logging.info("Auto-saving frame annotations")
-                self.logic.updateCurrentFrame()
-                self.updateGuiFromAnnotations()
+            logging.info("Auto-saving frame annotations")
+            self.logic.updateCurrentFrame()
+            self.updateGuiFromAnnotations()
 
             # If current line has less than 2 control points, remove it
             if len(linesList) > 0:
@@ -719,10 +714,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             logging.error(f"Unknown line type {lineType}")
             return
         
-        if self.ui.autoSaveCheckBox.checked:
-            logging.info("Auto-saving frame annotations")
-            self.logic.updateCurrentFrame()
-            self.updateGuiFromAnnotations()
+        logging.info("Auto-saving frame annotations")
+        self.logic.updateCurrentFrame()
+        self.updateGuiFromAnnotations()
     
     def onRemovePleuraLine(self):
         logging.info('onRemovePleuraLine')
