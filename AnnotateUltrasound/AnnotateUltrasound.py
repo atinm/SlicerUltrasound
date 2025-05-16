@@ -224,6 +224,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.saveButton.clicked.connect(self.onSaveButton)
         self.ui.saveAndLoadNextButton.clicked.connect(self.onSaveAndLoadNextButton)
         self.ui.intensitySlider.valueChanged.connect(self.onIntensitySliderValueChanged)
+        self.ui.skipToUnlabeledButton.clicked.connect(self.onSkipToUnlabeledButton)
         
         self.ui.addPleuraButton.toggled.connect(lambda checked: self.onAddLine("Pleura", checked))
         self.ui.removePleuraButton.clicked.connect(lambda: self.onRemoveLine("Pleura"))
@@ -778,6 +779,55 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 if isinstance(checkBox, qt.QCheckBox) and checkBox.isChecked():
                     annotationLabels.append(f"{groupBoxTitle}/{checkBox.text}")
         self.logic.annotations['labels'] = annotationLabels
+
+    def onSkipToUnlabeledButton(self):
+        """ 
+        Skip to the next unlabeled scan
+        """
+        if not self.confirmUnsavedChanges():
+            return
+
+        if self.logic.dicomDf is None:
+            qt.QMessageBox.warning(
+                slicer.util.mainWindow(),
+                "Missing Data",
+                "Please read input directory first."
+            )
+            return
+
+        # Find the next unlabeled scan
+        nextUnlabeledIndex = self.findNextUnlabeledScan()
+        if nextUnlabeledIndex is None:
+            qt.QMessageBox.information(
+                slicer.util.mainWindow(),
+                "Skip to Unlabeled",
+                "No unlabeled scans found."
+            )
+            return
+
+        self.logic.nextDicomDfIndex = nextUnlabeledIndex
+        self.onNextButton()
+
+    def findNextUnlabeledScan(self):
+        """
+        Find the index of the next unlabeled scan in the DICOM dataframe.
+        :return: Index of the next unlabeled scan or None if no such scan is found.
+        """
+        if self.logic.dicomDf is None:
+            return None
+
+        for idx in range(self.logic.nextDicomDfIndex, len(self.logic.dicomDf)):
+            annotationsFilepath = self.logic.dicomDf.iloc[idx]['AnnotationsFilepath']
+            try:
+                with open(annotationsFilepath, 'r') as f:
+                    annotations = json.load(f)
+                    # Check if frame annotations exist and are empty
+                    if 'frame_annotations' not in annotations or not annotations['frame_annotations']:
+                        return idx
+            except Exception as e:
+                logging.error(f"Error reading annotations file {annotationsFilepath}: {e}")
+        
+        return None
 
     def overlayVisibilityToggled(self, checked):
         logging.info(f"overlayVisibilityToggled -- checked: {checked}")
