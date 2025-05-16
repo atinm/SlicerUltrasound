@@ -342,7 +342,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         
         inputDirectory = self.ui.inputDirectoryButton.directory
         if not inputDirectory:
-            statusText = "Please select an input directory"
+            statusText = '⚠️ Please select an input directory'
+            slicer.util.mainWindow().statusBar().showMessage(statusText, 5000)
             self.ui.statusLabel.setText(statusText)
             return
         
@@ -359,7 +360,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         
         inputDirectory = self.ui.inputDirectoryButton.directory
         if not inputDirectory:
-            statusText = "Please select an input directory"
+            statusText = '⚠️ Please select an input directory'
+            slicer.util.mainWindow().statusBar().showMessage(statusText, 5000)
             self.ui.statusLabel.setText(statusText)
             self._parameterNode.dfLoaded = False
             return
@@ -384,12 +386,15 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             currentDicomFilename = os.path.basename(currentDicomFilepath)
             statusText = f"Current file ({self.logic.nextDicomDfIndex}/{len(self.logic.dicomDf)}): {currentDicomFilename}"
             self.ui.currentFileLabel.setText(statusText)
-            self.ui.statusLabel.setText(statusText)
+            self.ui.statusLabel.setText('')
+            slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
 
             # Close the wait dialog
             waitDialog.close()
         else:
-            self.ui.statusLabel.setText("Could not find any files to load in input directory!")
+            statusText = 'Could not find any files to load in input directory!'
+            slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
+            self.ui.statusLabel.setText(statusText)
             
         self._updateGUIFromParameterNode()
 
@@ -428,7 +433,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             return
 
         if self.logic.nextDicomDfIndex >= len(self.logic.dicomDf):
-            self.ui.statusLabel.setText("No more DICOM files")
+            # If we are at the last DICOM file, show a message that clears in 5 seconds and return
+            slicer.util.mainWindow().statusBar().showMessage('⚠️ No more DICOM files', 5000)
             return
 
         # Create a dialog to ask the user to wait while the next sequence is loaded.
@@ -457,8 +463,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         currentDicomFilename = os.path.basename(currentDicomFilepath)
         statusText = f"Current file ({self.logic.nextDicomDfIndex}/{len(self.logic.dicomDf)}): {currentDicomFilename}"
         self.ui.currentFileLabel.setText(statusText)
-        self.ui.statusLabel.setText(statusText)
-        
+        slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
+
         self.updateGuiFromAnnotations()
         
         # Restore settings
@@ -550,7 +556,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             # Close the wait dialog
             waitDialog.close()
             self.logic.nextDicomDfIndex = savedNextDicomDfIndex
-            self.ui.statusLabel.setText("First DICOM file reached")
+            # show status message for 5 seconds
+            slicer.util.mainWindow().statusBar().showMessage('⚠️ First DICOM file reached', 5000)
             return
 
         # Update self.ui.currentFileLabel using the DICOM file name
@@ -558,8 +565,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         currentDicomFilename = os.path.basename(currentDicomFilepath)
         statusText = f"Current file ({self.logic.nextDicomDfIndex}/{len(self.logic.dicomDf)}): {currentDicomFilename}"
         self.ui.currentFileLabel.setText(statusText)
-        self.ui.statusLabel.setText(statusText)
-        
+        slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
+
         self.updateGuiFromAnnotations()
 
         self.ui.intensitySlider.setValue(0)
@@ -1028,6 +1035,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         file_count = 0
         annotations_created_count = 0
         for root, dirs, files in os.walk(input_folder):
+            files.sort()
             for file in files:
                 progress_dialog.setValue(file_count)
                 slicer.app.processEvents()
