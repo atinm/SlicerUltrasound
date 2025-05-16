@@ -223,7 +223,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.previousButton.clicked.connect(self.onPreviousButton)
         self.ui.saveButton.clicked.connect(self.onSaveButton)
         self.ui.intensitySlider.valueChanged.connect(self.onIntensitySliderValueChanged)
-        self.ui.skipToUnlabelledButton.clicked.connect(self.onSkipToUnlabelledButton)
+        self.ui.skipToUnlabeledButton.clicked.connect(self.onSkipToUnlabeledButton)
         
         self.ui.addPleuraButton.toggled.connect(lambda checked: self.onAddLine("Pleura", checked))
         self.ui.removePleuraButton.clicked.connect(lambda: self.onRemoveLine("Pleura"))
@@ -743,9 +743,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                     annotationLabels.append(f"{groupBoxTitle}/{checkBox.text}")
         self.logic.annotations['labels'] = annotationLabels
 
-    def onSkipToUnlabelledButton(self):
+    def onSkipToUnlabeledButton(self):
         """ 
-        Skip to the next unlabelled scan
+        Skip to the next unlabeled scan
         """
         if not self.confirmUnsavedChanges():
             return
@@ -758,23 +758,23 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             )
             return
 
-        # Find the next unlabelled scan
-        nextUnlabelledIndex = self.findNextUnlabelledScan()
-        if nextUnlabelledIndex is None:
+        # Find the next unlabeled scan
+        nextUnlabeledIndex = self.findNextUnlabeledScan()
+        if nextUnlabeledIndex is None:
             qt.QMessageBox.information(
                 slicer.util.mainWindow(),
-                "Skip to Unlabelled",
-                "No unlabelled scans found."
+                "Skip to Unlabeled",
+                "No unlabeled scans found."
             )
             return
 
-        self.logic.nextDicomDfIndex = nextUnlabelledIndex
+        self.logic.nextDicomDfIndex = nextUnlabeledIndex
         self.onNextButton()
 
-    def findNextUnlabelledScan(self):
+    def findNextUnlabeledScan(self):
         """
-        Find the index of the next unlabelled scan in the DICOM dataframe.
-        :return: Index of the next unlabelled scan or None if no such scan is found.
+        Find the index of the next unlabeled scan in the DICOM dataframe.
+        :return: Index of the next unlabeled scan or None if no such scan is found.
         """
         if self.logic.dicomDf is None:
             return None
