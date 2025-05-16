@@ -101,12 +101,12 @@
        </layout>
       </item>
       <item>
-       <widget class="QPushButton" name="skipToUnlabelledButton">
+       <widget class="QPushButton" name="skipToUnlabeledButton">
         <property name="toolTip">
-         <string>Skips to next unlabelled scan</string>
+         <string>Skips to next unlabeled scan</string>
         </property>
         <property name="text">
-         <string>Next unlabelled</string>
+         <string>Next unlabeled</string>
         </property>
        </widget>
       </item>
