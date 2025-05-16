@@ -60,16 +60,17 @@ class AnnotateUltrasound(ScriptedLoadableModule):
         self.parent.title = "Annotate ultrasound"
         self.parent.categories = ["Ultrasound"]
         self.parent.dependencies = []
-        self.parent.contributors = ["Tamas Ungi (Queen's University)"] 
+        self.parent.contributors = ["Tamas Ungi (Queen's University)"]
+
         # TODO: update with short description of the module and a link to online module documentation
-        self.parent.helpText = """
-This is an example of scripted loadable module bundled in an extension.
-See more information in <a href="https://github.com/organization/projectname#AnnotateUltrasound">module documentation</a>.
+        self.parent.helpText = f"""
+This module facilitates the process of creating segmentations of B-lines and the pleura in series of B-mode lung ultrasound videos.<br><br>
+
+See more information in <a href="https://github.com/SlicerUltrasound/SlicerUltrasound/blob/main/README.md">README</a> <a href="https://github.com/SlicerUltrasound/SlicerUltrasound/tree/main/AnnotateUltrasound">Source Code</a>.
 """
         # TODO: replace with organization, grant and thanks
         self.parent.acknowledgementText = """
-This file was originally developed by Jean-Christophe Fillion-Robin, Kitware Inc., Andras Lasso, PerkLab,
-and Steve Pieper, Isomics, Inc. and was partially funded by NIH grant 3P41RR013218-12S1.
+This file was originally developed by Tamas Ungi (Queen's University), with support from MLSC Bits to Bytes grant for Point of Care Ultrasound, and NIH grants R21EB034075 and R01EB035679.
 """
 
         # Additional initialization step after application startup is complete
