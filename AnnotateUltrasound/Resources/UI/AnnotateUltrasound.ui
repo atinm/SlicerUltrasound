@@ -359,16 +359,6 @@
        </widget>
       </item>
       <item>
-       <widget class="QCheckBox" name="autoSaveCheckBox">
-        <property name="text">
-         <string>Auto-add annotated frames</string>
-        </property>
-        <property name="checked">
-         <bool>true</bool>
-        </property>
-       </widget>
-      </item>
-      <item>
        <widget class="QCheckBox" name="showPleuraPercentageCheckBox">
         <property name="text">
          <string>Show pleura percentage</string>
