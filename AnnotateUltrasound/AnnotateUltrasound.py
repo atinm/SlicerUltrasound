@@ -115,7 +115,7 @@ class AnnotateUltrasoundParameterNode:
     dfLoaded: bool = False
     pleuraPercentage: float = -1.0
     unsavedChanges: bool = False
-    depthGuideVisible: bool = False
+    depthGuideVisible: bool = True
 
 #
 # AnnotateUltrasoundWidget
