@@ -6,8 +6,13 @@ set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
   )
 
+# Collect all PNG icon files in the Resources/Icons directory
+file(GLOB MODULE_ICON_PNGS
+  Resources/Icons/*.png
+)
+
 set(MODULE_PYTHON_RESOURCES
-  Resources/Icons/${MODULE_NAME}.png
+  ${MODULE_ICON_PNGS}
   Resources/UI/${MODULE_NAME}.ui
   )
 
