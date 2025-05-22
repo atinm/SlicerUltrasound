@@ -399,10 +399,20 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.currentFileLabel.setText(statusText)
             self.ui.statusLabel.setText('')
             slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
+            self.logic.sequenceBrowserNode.SetSelectedItemNumber(0)
+            self.logic.updateCurrentFrame()
+            self.updateGuiFromAnnotations()
+
+            self.ui.intensitySlider.setValue(0)
 
             # Close the wait dialog
             waitDialog.close()
+
+            self.ui.progressBar.value = self.currentDicomDfIndex
+
+            self.ui.overlayVisibilityButton.setChecked(True)
         else:
+
             statusText = 'Could not find any files to load in input directory!'
             slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
             self.ui.statusLabel.setText(statusText)
