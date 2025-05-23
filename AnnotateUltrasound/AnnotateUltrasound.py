@@ -116,6 +116,7 @@ class AnnotateUltrasoundParameterNode:
     pleuraPercentage: float = -1.0
     unsavedChanges: bool = False
     depthGuideVisible: bool = True
+    rater = ''
 
 #
 # AnnotateUltrasoundWidget
@@ -154,6 +155,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # shortcut for saving and loading next scan
         self.shortcutA = qt.QShortcut(slicer.util.mainWindow())  # "A" for save and load next scan
         self.shortcutA.setKey(qt.QKeySequence('A'))
+
+        self.raterNameDebounceTimer = qt.QTimer()
+        self.raterNameDebounceTimer.setSingleShot(True)
+        self.raterNameDebounceTimer.setInterval(300)  # ms of idle time before triggering
+        self.raterNameDebounceTimer.timeout.connect(self.onRaterNameChanged)
 
     def connectKeyboardShortcuts(self):
         # Connect shortcuts to respective actions
@@ -258,7 +264,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         settings = slicer.app.settings()
         showPleuraPercentage = settings.value('AnnotateUltrasound/ShowPleuraPercentage', 'false')
         self.ui.showPleuraPercentageCheckBox.setChecked(showPleuraPercentage.lower() == 'true')
-        
+        self.ui.raterName.setPlainText(slicer.app.settings().value("AnnotateUltrasound/Rater", ""))
+        self.ui.raterName.textChanged.connect(self.raterNameDebounceTimer.start)
         self.ui.showPleuraPercentageCheckBox.connect('toggled(bool)', self.saveUserSettings)
         self.ui.depthGuideCheckBox.toggled.connect(self.onDepthGuideToggled)
 
@@ -288,6 +295,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         settings = qt.QSettings()
         settings.setValue('AnnotateUltrasound/ShowPleuraPercentage', self.ui.showPleuraPercentageCheckBox.checked)
         settings.setValue('AnnotateUltrasound/DepthGuide', self.ui.depthGuideCheckBox.checked)
+        settings.setValue('AnnotateUltrasound/Rater', self.ui.raterName.toPlainText().strip())
         ratio = self.logic.updateOverlayVolume()
         if ratio is not None:
             self._parameterNode.pleuraPercentage = ratio * 100
@@ -365,12 +373,12 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         
     def onReadInputButton(self):
         """
-        Read the input directory and update the dicomDf dataframe.
-        
+        Read the input directory and update the dicomDf dataframe, using rater-specific annotation files.
+
         :return: True if the input directory was read successfully, False otherwise.
         """
         logging.info('onReadInputButton')
-        
+
         inputDirectory = self.ui.inputDirectoryButton.directory
         if not inputDirectory:
             statusText = '⚠️ Please select an input directory'
@@ -378,14 +386,43 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.statusLabel.setText(statusText)
             self._parameterNode.dfLoaded = False
             return
-        
-        numFilesFound, numAnnotationsCreated = self.logic.updateInputDf(inputDirectory)
+
+        rater = self.ui.raterName.toPlainText().strip()
+        if not rater:
+            qt.QMessageBox.warning(
+                slicer.util.mainWindow(),
+                "Missing Rater Name",
+                "Please enter a rater name before loading the input directory."
+            )
+            self.ui.statusLabel.setText("⚠️ Please enter a rater name before loading.")
+            self._parameterNode.dfLoaded = False
+            return
+
+        numFilesFound, numAnnotationsCreated = self.logic.updateInputDf(rater, inputDirectory)
         logging.info(f"Found {numFilesFound} DICOM files")
         statusText = f"Found {numFilesFound} DICOM files"
         if numAnnotationsCreated > 0:
             self.ui.statusLabel.setText(f"Found {numFilesFound} DICOM files. Created {numAnnotationsCreated} annotations files.")
             statusText += f"\nWARNING: Created {numAnnotationsCreated} annotations files"
-        
+
+        # Update the dicomDf to use rater-specific annotation files
+        if self.logic.dicomDf is not None and len(self.logic.dicomDf) > 0:
+            rater = rater.strip()
+            # Ensure the files exist (copy from the original .json if not present)
+            for idx, row in self.logic.dicomDf.iterrows():
+                rater_path = row['AnnotationsFilepath']
+                orig_path = os.path.join(
+                    os.path.dirname(rater_path),
+                    os.path.basename(rater_path).replace(f".{rater}.json", ".json")
+                )
+                if not os.path.exists(rater_path):
+                    # If original exists, copy it. Otherwise, create blank.
+                    if os.path.exists(orig_path):
+                        shutil.copy(orig_path, rater_path)
+                    else:
+                        with open(rater_path, "w") as f:
+                            f.write("{}")
+
         if numFilesFound > 0:
             self._parameterNode.dfLoaded = True
             # Update progress bar
@@ -414,11 +451,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
             self.ui.overlayVisibilityButton.setChecked(True)
         else:
-
             statusText = 'Could not find any files to load in input directory!'
             slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
             self.ui.statusLabel.setText(statusText)
-            
+
         self._updateGUIFromParameterNode()
 
     def confirmUnsavedChanges(self):
@@ -536,7 +572,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Add rows to the table
         if self.logic.annotations is not None and "frame_annotations" in self.logic.annotations:
-            for frame_index, frame_annotations in self.logic.annotations["frame_annotations"].items():
+            for frame_index, frame_annotations in enumerate(self.logic.annotations["frame_annotations"]):
                 self.ui.framesTableWidget.insertRow(self.ui.framesTableWidget.rowCount)
                 self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 0, qt.QTableWidgetItem(str(frame_index)))
                 self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 1, 
@@ -607,13 +643,25 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     
     def saveAnnotations(self):
         """
-        Saves current annotations to json file.
+        Saves current annotations to rater-specific json file.
         """
         # Add annotation line control points to the annotations dictionary and save it to file
         if self.logic.annotations is None:
             logging.error("saveAnnotations: No annotations loaded")
             return
-        
+
+        # Check if rater name is set and not empty; if not, prompt user to enter one
+        rater = self.ui.raterName.toPlainText().strip()
+        if not rater:
+            qt.QMessageBox.warning(
+                slicer.util.mainWindow(),
+                "Missing Rater Name",
+                "Rater name is not set. Please enter your rater name before saving."
+            )
+            self.ui.statusLabel.setText("⚠️ Please enter a rater name before saving.")
+            return
+        self._parameterNode.rater = rater
+
         waitDialog = self.createWaitDialog("Saving annotations", "Saving annotations...")
 
         # Check if any labels are checked
@@ -627,16 +675,16 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 if isinstance(checkBox, qt.QCheckBox) and checkBox.isChecked():
                     annotationLabels.append(f"{groupBoxTitle}/{checkBox.text}")
         self.logic.annotations['labels'] = annotationLabels
-        
-        # Save annotations to file
+
+        # Save annotations to file (use rater-specific filename from dicomDf)
         annotationsFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['AnnotationsFilepath']
         with open(annotationsFilepath, 'w') as f:
             json.dump(self.logic.annotations, f)
-        
+
         waitDialog.close()
 
         self._parameterNode.unsavedChanges = False
-        
+
         logging.info(f"Annotations saved to {annotationsFilepath}")
 
         return True
@@ -885,6 +933,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             settings.setValue('AnnotateUltrasound/DepthGuide', "True")
         else:
             settings.setValue('AnnotateUltrasound/DepthGuide', "False")
+
+    def onRaterNameChanged(self):
+        if self._parameterNode:
+            self._parameterNode.rater = self.ui.raterName.toPlainText().strip()
         
     def cleanup(self) -> None:
         """
@@ -979,6 +1031,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         
         settings = slicer.app.settings()
         showDepthGuide = settings.value('AnnotateUltrasound/DepthGuide', 'false')
+        rater = settings.value('AnnotateUltrasound/Rater', '')
         self.ui.depthGuideCheckBox.setChecked(showDepthGuide.lower() == 'true')
         
 
@@ -1003,7 +1056,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if self._parameterNode is None:
             logging.debug("No parameter node")
             return
-        
+
         # Update line buttons
         if self._parameterNode.lineBeingPlaced is None:
             self.ui.addPleuraButton.setChecked(False)
@@ -1018,7 +1071,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             else:
                 logging.error(f"Unknown line type {self._parameterNode.lineBeingPlaced.GetName()}")
                 return
-        
+
         # If the frame index changed, then we want to make sure no row is selected in the frames table
         if self.logic.sequenceBrowserNode is not None:
             currentFrameIndex = self.logic.sequenceBrowserNode.GetSelectedItemNumber()
@@ -1041,7 +1094,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             view=slicer.app.layoutManager().sliceWidget("Red").sliceView()
             view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft,"")
             view.forceRender()
-        
+
         # Update collapse/expand buttons
         if not self._parameterNode.dfLoaded:
             self.ui.inputsCollapsibleButton.collapsed = False
@@ -1053,7 +1106,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.workflowCollapsibleButton.collapsed = False
             self.ui.sectorAnnotationsCollapsibleButton.collapsed = False
             self.ui.labelAnnotationsCollapsibleButton.collapsed = False
-        
+
+        # Save rater name to settings
+        settings = qt.QSettings()
+        settings.setValue('AnnotateUltrasound/Rater', self.ui.raterName.toPlainText())
+
         self.logic.updateOverlayVolume()
 
 #
@@ -1090,7 +1147,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
     def getParameterNode(self):
         return AnnotateUltrasoundParameterNode(super().getParameterNode())
     
-    def updateInputDf(self, input_folder):
+    def updateInputDf(self, rater, input_folder):
         """
         Update the dicomDf dataframe with the DICOM files in the input folder.
         
@@ -1129,8 +1186,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                     series_uid = dicom_file.SeriesInstanceUID if 'SeriesInstanceUID' in dicom_file else None
                     instance_uid = dicom_file.SOPInstanceUID if 'SOPInstanceUID' in dicom_file else None
                     
-                    # Check if there is an annotations json file in the same folder with the same filename
-                    annotations_file_path = os.path.join(root, file.replace('.dcm', '.json'))
+                    annotations_file_path = os.path.join(root, file.replace('.dcm', f'.{rater}.json'))
                     if not os.path.exists(annotations_file_path):
                         logging.warning(f"Annotations file not found for {file_path}. A blank annotations file will be created.")
                         # Create a blank annotations file
@@ -1164,46 +1220,37 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             return
         
         # Get the current frame index from the sequence browser
-        currentFrameIndexStr = str(max(0, self.sequenceBrowserNode.GetSelectedItemNumber()))  # TODO: investigate whey this could be negative!
-        
+        currentFrameIndex = max(0, self.sequenceBrowserNode.GetSelectedItemNumber())  # TODO: investigate whey this could be negative!
         # Check if annotations already has a list of frame annotations. Create it if it doesn't exist.
-
         if 'frame_annotations' not in self.annotations:
             self.annotations['frame_annotations'] = {}
 
         # Check if the current frame index is already in the list of frame annotations. Create it if it doesn't exist.
-
-        if currentFrameIndexStr not in self.annotations['frame_annotations']:
-            self.annotations['frame_annotations'][currentFrameIndexStr] = {
+        index = next((i for i, item in enumerate(self.annotations['frame_annotations']) if item.get("frame_number") == currentFrameIndex), None)
+        if index == None:
+            self.annotations['frame_annotations'][index] = {
+                "frame_number": currentFrameIndex,
                 "pleura_lines": [],
                 "b_lines": []
             }
-        
-        # Add pleura lines to annotations. Organize the coordinates in a list of lists.
 
-        self.annotations['frame_annotations'][currentFrameIndexStr]['pleura_lines'] = []  # Reset the list of pleura lines
-        
-        for markupNode in self.pleuraLines:
-            coordinates = []
-            
-            for i in range(markupNode.GetNumberOfControlPoints()):
-                coord = [0, 0, 0]
-                markupNode.GetNthControlPointPosition(i, coord)
-                coordinates.append(coord)
-            self.annotations['frame_annotations'][currentFrameIndexStr]['pleura_lines'].append(coordinates)
-            
-        # Add B-lines to annotations. Organize the coordinates in a list of lists.
+        # Add pleura lines to annotations with new format
+        self.annotations['frame_annotations'][index]['pleura_lines'] = [
+            {"rater": self.getParameterNode().rater, "line": {"points": coordinates}}
+            for coordinates in [
+                [markupNode.GetNthControlPointPosition(i) for i in range(markupNode.GetNumberOfControlPoints())]
+                for markupNode in self.pleuraLines
+            ] if coordinates
+        ]
 
-        self.annotations['frame_annotations'][currentFrameIndexStr]['b_lines'] = []  # Reset the list of B-lines
-
-        for markupNode in self.bLines:
-            coordinates = []
-        
-            for i in range(markupNode.GetNumberOfControlPoints()):
-                coord = [0, 0, 0]
-                markupNode.GetNthControlPointPosition(i, coord)
-                coordinates.append(coord)
-            self.annotations['frame_annotations'][currentFrameIndexStr]['b_lines'].append(coordinates)
+        # Add B-lines to annotations with new format
+        self.annotations['frame_annotations'][index]['b_lines'] = [
+            {"rater": self.getParameterNode().rater, "line": {"points": coordinates}}
+            for coordinates in [
+                [markupNode.GetNthControlPointPosition(i) for i in range(markupNode.GetNumberOfControlPoints())]
+                for markupNode in self.bLines
+            ] if coordinates
+        ]
 
     def removeFrame(self, frameIndex):
         logging.info(f"removeFrame -- frameIndex: {frameIndex}")
@@ -1602,27 +1649,30 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if self.annotations is None:
             logging.warning("No annotations loaded")
             return
-        
+
         if self.sequenceBrowserNode is None:
             logging.warning("No sequence browser node found")
             return
-        
-        currentFrameIndex = self.sequenceBrowserNode.GetSelectedItemNumber()
-        
+
+        currentFrameIndex = max(0, self.sequenceBrowserNode.GetSelectedItemNumber())
+
         if 'frame_annotations' not in self.annotations:
             logging.debug("No frame annotations found")
             return
-        
-        if str(currentFrameIndex) not in self.annotations['frame_annotations']:  # No annotations for current frame
+
+        frame = next((item for item in self.annotations['frame_annotations'] if str(item.get("frame_number")) == str(currentFrameIndex)), None)
+        if frame is None:
             return
-        
-        # Add pleura lines
-        for coordinates in self.annotations['frame_annotations'][str(currentFrameIndex)]['pleura_lines']:
-            self.pleuraLines.append(self.createMarkupLine("Pleura", coordinates, [0, 0.2, 1]))
-        
-        # Add B-lines
-        for coordinates in self.annotations['frame_annotations'][str(currentFrameIndex)]['b_lines']:
-            self.bLines.append(self.createMarkupLine("B-line", coordinates, [0, 1, 0.2]))
+
+        for entry in frame.get("pleura_lines", []):
+            coordinates = entry.get("line", {}).get("points", [])
+            if coordinates:
+                self.pleuraLines.append(self.createMarkupLine("Pleura", coordinates, [0, 0.2, 1]))
+
+        for entry in frame.get("b_lines", []):
+            coordinates = entry.get("line", {}).get("points", [])
+            if coordinates:
+                self.bLines.append(self.createMarkupLine("B-line", coordinates, [0, 1, 0.2]))
 
     def drawDepthGuideLine(self, image_size_rows, image_size_cols, depth_ratio=0.5, color=(0, 255, 255), thickness=4, dash_length=20, dash_gap=16):
         """
