@@ -2043,7 +2043,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             model_path: str = "Resources/Models/model.pt",
             config_path: str = "Resources/Models/config.yaml",
             *,
-            mock: bool = True) -> None:
+            mock: bool = False) -> None:
         """
         →  Ensures model+config exist (auto-downloads from Dropbox if needed)
         →  Reads input_shape from YAML (e.g. (128,128))
@@ -2163,7 +2163,18 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             centre = MODEL_NUM_LINES // 2
             mask_rs[:, centre-4:centre+4] = 2
         else:
-            pass
+            if not hasattr(self, "_autoOverlayModel"):
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                self._overlayDevice = torch.device(device)
+                self._autoOverlayModel = torch.jit.load(model_path)
+                self._autoOverlayModel.to(self._overlayDevice).eval()
+
+            with torch.no_grad():
+                inp = (torch.from_numpy(scan_img_rs)
+                        .float()
+                        .unsqueeze(0).unsqueeze(0)   # N,C,H,W
+                        .to(self._overlayDevice))
+                mask_rs = self._autoOverlayModel(inp).argmax(1).cpu().numpy()[0]
 
         # Resize mask back to scan‑line size, then to curvilinear
         mask_scan = cv2.resize(mask_rs, scan_img.shape[::-1],
