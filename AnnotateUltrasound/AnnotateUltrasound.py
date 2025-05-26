@@ -571,6 +571,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Create a dialog to ask the user to wait while the next sequence is loaded.
         waitDialog = self.createWaitDialog("Loading previous sequence", "Loading previous sequence...")
         
+        # Save settings
+        showDepthGuide = self._parameterNode.depthGuideVisible
+        
         savedNextDicomDfIndex = self.logic.nextDicomDfIndex
         currentDicomDfIndex = self.logic.loadPreviousSequence()
         if currentDicomDfIndex is None:
@@ -589,6 +592,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
 
         self.updateGuiFromAnnotations()
+        
+        # Restore settings
+        self._parameterNode.depthGuideVisible = showDepthGuide
 
         self.ui.intensitySlider.setValue(0)
         
