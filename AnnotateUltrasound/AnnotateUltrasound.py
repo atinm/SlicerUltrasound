@@ -571,9 +571,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Create a dialog to ask the user to wait while the next sequence is loaded.
         waitDialog = self.createWaitDialog("Loading previous sequence", "Loading previous sequence...")
         
-        # Save settings
-        showDepthGuide = self._parameterNode.depthGuideVisible
-        
         savedNextDicomDfIndex = self.logic.nextDicomDfIndex
         currentDicomDfIndex = self.logic.loadPreviousSequence()
         if currentDicomDfIndex is None:
@@ -593,9 +590,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         self.updateGuiFromAnnotations()
         
-        # Restore settings
-        self._parameterNode.depthGuideVisible = showDepthGuide
-
         self.ui.intensitySlider.setValue(0)
         
         # Close the wait dialog
@@ -1637,6 +1631,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         """
         # Extract fan parameters from annotations
         if "mask_type" not in self.annotations or self.annotations["mask_type"] != "fan":
+            logging.error("No fan mask information available in annotations.")
             return np.zeros((image_size_rows, image_size_cols, 3), dtype=np.uint8)
 
         radius1 = self.annotations["radius1"]
@@ -1657,6 +1652,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         # Choose visualization based on depthGuideMode
         if self.depthGuideMode == 1:
+            # Mode 1: Default dashed line
             return self._drawDashedLine(image_size_rows, image_size_cols, center_cols_px, center_rows_px, 
                                         depth_radius, angle1, angle2, color, thickness=scaled_thickness, 
                                         dash_length=scaled_dash_length, dash_gap=scaled_dash_gap)
