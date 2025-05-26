@@ -321,7 +321,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
-    
+
+        # Developer gating for Auto‑Overlay button
+        self._updateAutoOverlayButtonVisibility()
+
     def saveUserSettings(self):
         settings = qt.QSettings()
         settings.setValue('AnnotateUltrasound/ShowPleuraPercentage', self.ui.showPleuraPercentageCheckBox.checked)
@@ -1105,6 +1108,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.overlayVisibilityButton.setChecked(self._parameterNode.manualVisible)
         self.ui.autoOverlayButton.setChecked(self._parameterNode.autoVisible)
         self.logic.updateOverlayVolume()
+
+    def _updateAutoOverlayButtonVisibility(self):
+        self.ui.autoOverlayButton.setVisible(self.developerMode)
 
 #
 # AnnotateUltrasoundLogic
