@@ -28,6 +28,7 @@ def transform_annotations(data, rater):
             ]
 
             frame["frame_number"] = int(k) if k.isdigit() else k
+            frame["coordinate_space"] = "RAS"
             new_list.append(frame)
 
         data["frame_annotations"] = new_list

@@ -59,6 +59,11 @@
               "integer"
             ]
           },
+          "coordinate_space": {
+            "type": "string",
+            "enum": ["LPS", "RAS"],
+            "default": "RAS"
+          },
           "pleura_lines": {
             "type": "array",
             "items": {

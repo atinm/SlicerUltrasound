@@ -20,6 +20,8 @@ import qt
 import shutil
 import slicer
 import vtk
+import hashlib
+import colorsys
 
 try:
     import pandas as pd
@@ -746,10 +748,12 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         
         # Create a new markup fiducial node
         if lineType == "Pleura":
-            newLineNode = self.logic.createMarkupLine("Pleura", [], [0, 0.2, 1])
+            color_pleura, _, _, _ = self.getColorsForRater(rater)
+            newLineNode = self.logic.createMarkupLine("Pleura", self.getParameterNode().rater, [], color_pleura)
             self.logic.pleuraLines.append(newLineNode)
         elif lineType == "Bline":
-            newLineNode = self.logic.createMarkupLine("B-line", [], [0, 1, 0.2])
+            _, color_blines, _, _ = self.getColorsForRater(rater)
+            newLineNode = self.logic.createMarkupLine("B-line", self.getParameterNode().rater, [], color_blines)
             self.logic.bLines.append(newLineNode)
         else:
             logging.error(f"Unknown line type {lineType}")
@@ -1144,6 +1148,39 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.sequenceBrowserNode = None
         self.depthGuideMode = 1
 
+    def getColorsForRater(self, rater: str):
+        rater = rater.strip().lower()
+
+        # Generate deterministic hash from rater name
+        digest = hashlib.md5(rater.encode()).digest()
+
+        # Generate HSV values with varied saturation and value
+        hue = int.from_bytes(digest[0:2], 'big') / 65536.0
+        sat = 0.6 + (digest[2] % 40) / 100.0  # 0.6–1.0
+        val = 0.8 + (digest[3] % 20) / 100.0  # 0.8–1.0
+
+        # Pleura color
+        pleura_rgb = colorsys.hsv_to_rgb(hue, sat, val)
+
+        # B-line color — at least 1/3 away on color wheel
+        bline_rgb = colorsys.hsv_to_rgb((hue + 0.333) % 1.0, sat, val)
+
+        # Fan fill colors — lighter, lower saturation
+        pleura_fan_rgb = colorsys.hsv_to_rgb((hue + 0.125) % 1.0, sat * 0.8, val * 0.8)
+        bline_fan_rgb = colorsys.hsv_to_rgb((hue + 0.458) % 1.0, sat * 0.8, val * 0.8)
+
+        # Convert to float list
+        pleura_color = [float(x) for x in pleura_rgb]
+        bline_color = [float(x) for x in bline_rgb]
+        pleura_fan_color = [float(x) for x in pleura_fan_rgb]
+        bline_fan_color = [float(x) for x in bline_fan_rgb]
+
+        # Log for debugging
+        logging.info(f"Rater: {rater}, Hue: {hue:.3f}, Pleura: {pleura_color}, B-line: {bline_color}, "
+                    f"Pleura Fan: {pleura_fan_color}, B-line Fan: {bline_fan_color}")
+
+        return pleura_color, bline_color, pleura_fan_color, bline_fan_color
+
     def getParameterNode(self):
         return AnnotateUltrasoundParameterNode(super().getParameterNode())
     
@@ -1228,29 +1265,41 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Check if the current frame index is already in the list of frame annotations. Create it if it doesn't exist.
         index = next((i for i, item in enumerate(self.annotations['frame_annotations']) if item.get("frame_number") == currentFrameIndex), None)
         if index == None:
-            self.annotations['frame_annotations'][index] = {
+            self.annotations['frame_annotations'][currentFrameIndex] = {
                 "frame_number": currentFrameIndex,
                 "pleura_lines": [],
                 "b_lines": []
             }
 
+        self.annotations['frame_annotations'][currentFrameIndex]['pleura_lines'] = []  # Reset the list of pleura lines
+
         # Add pleura lines to annotations with new format
-        self.annotations['frame_annotations'][index]['pleura_lines'] = [
-            {"rater": self.getParameterNode().rater, "line": {"points": coordinates}}
-            for coordinates in [
-                [markupNode.GetNthControlPointPosition(i) for i in range(markupNode.GetNumberOfControlPoints())]
-                for markupNode in self.pleuraLines
-            ] if coordinates
-        ]
+        for markupNode in self.pleuraLines:
+            coordinates = []
+
+            for i in range(markupNode.GetNumberOfControlPoints()):
+                coord = [0, 0, 0]
+                markupNode.GetNthControlPointPosition(i, coord)
+                coordinates.append(coord)
+
+            if coordinates:
+                self.annotations['frame_annotations'][currentFrameIndex]['pleura_lines'].append(
+                    {"rater": markupNode.GetAttribute("rater"), "line": {"points": coordinates}})
+
+        self.annotations['frame_annotations'][currentFrameIndex]['b_lines'] = []  # Reset the list of B-lines
 
         # Add B-lines to annotations with new format
-        self.annotations['frame_annotations'][index]['b_lines'] = [
-            {"rater": self.getParameterNode().rater, "line": {"points": coordinates}}
-            for coordinates in [
-                [markupNode.GetNthControlPointPosition(i) for i in range(markupNode.GetNumberOfControlPoints())]
-                for markupNode in self.bLines
-            ] if coordinates
-        ]
+        for markupNode in self.bLines:
+            coordinates = []
+
+            for i in range(markupNode.GetNumberOfControlPoints()):
+                coord = [0, 0, 0]
+                markupNode.GetNthControlPointPosition(i, coord)
+                coordinates.append(coord)
+
+            if coordinates:
+                self.annotations['frame_annotations'][currentFrameIndex]['b_lines'].append(
+                    {"rater": markupNode.GetAttribute("rater"),  "line": {"points": coordinates}})
 
     def removeFrame(self, frameIndex):
         logging.info(f"removeFrame -- frameIndex: {frameIndex}")
@@ -1399,10 +1448,11 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         parameterNode = self.getParameterNode()
         parameterNode.pleuraPercentage = ratio * 100
 
-    def createMarkupLine(self, name, coordinates, color=[1, 1, 0]):
+    def createMarkupLine(self, name, rater, coordinates, color=[1, 1, 0]):
         markupNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode")
         markupNode.CreateDefaultDisplayNodes()
         markupNode.SetName(name)
+        markupNode.SetAttribute("rater", rater)
         markupNode.GetDisplayNode().SetPropertiesLabelVisibility(False)
         markupNode.GetDisplayNode().SetSelectedColor(color)
         for coord in coordinates:
@@ -1666,53 +1716,63 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         for entry in frame.get("pleura_lines", []):
             coordinates = entry.get("line", {}).get("points", [])
+            rater = entry.get("rater", "")
+            color_pleura, _, _, _ = self.getColorsForRater(rater)
             if coordinates:
-                self.pleuraLines.append(self.createMarkupLine("Pleura", coordinates, [0, 0.2, 1]))
+                self.pleuraLines.append(self.createMarkupLine("Pleura", entry.get("rater", ""), coordinates, color_pleura))
 
         for entry in frame.get("b_lines", []):
             coordinates = entry.get("line", {}).get("points", [])
+            rater = entry.get("rater", "")
+            _, color_bline, _, _ = self.getColorsForRater(rater)
             if coordinates:
-                self.bLines.append(self.createMarkupLine("B-line", coordinates, [0, 1, 0.2]))
+                self.bLines.append(self.createMarkupLine("B-line", rater, coordinates, color_bline))
 
-    def drawDepthGuideLine(self, image_size_rows, image_size_cols, depth_ratio=0.5, color=(0, 255, 255), thickness=4, dash_length=20, dash_gap=16):
-        """
-        Main function to handle different visualization modes for the depth guide.
-        """
-        # Extract fan parameters from annotations
-        if "mask_type" not in self.annotations or self.annotations["mask_type"] != "fan":
+    def drawDepthGuideLine(self, image_size_rows, image_size_cols, annotations, depthGuideMode,
+                        pleura_color=(0, 255, 255), bline_color=(255, 0, 255), pleura_fan_color=(0, 127, 127), blines_fan_color=(127, 0, 127), depth_ratio=0.5):
+        if "mask_type" not in annotations or annotations["mask_type"] != "fan":
             logging.error("No fan mask information available in annotations.")
             return np.zeros((image_size_rows, image_size_cols, 3), dtype=np.uint8)
 
-        radius1 = self.annotations["radius1"]
-        radius2 = self.annotations["radius2"]
-        center_rows_px = self.annotations["center_rows_px"]
-        center_cols_px = self.annotations["center_cols_px"]
-        angle1 = self.annotations["angle1"]
-        angle2 = self.annotations["angle2"]
+        radius1 = annotations["radius1"]
+        radius2 = annotations["radius2"]
+        center_rows_px = annotations["center_rows_px"]
+        center_cols_px = annotations["center_cols_px"]
+        angle1 = annotations["angle1"]
+        angle2 = annotations["angle2"]
 
-        # Calculate the depth position
         depth_radius = radius1 + depth_ratio * (radius2 - radius1)
 
-        # Choose visualization based on depthGuideMode
-        if self.depthGuideMode == 1:
-            # Mode 1: Default dashed line
-            return self._drawDashedLine(image_size_rows, image_size_cols, center_cols_px, center_rows_px, 
-                                        depth_radius, angle1, angle2, color, thickness=4, dash_length=20, dash_gap=16)
-        elif self.depthGuideMode == 2:
-            # Mode 2: Thinner, more spaced dashed line
-            return self._drawDashedLine(image_size_rows, image_size_cols, center_cols_px, center_rows_px, 
-                                        depth_radius, angle1, angle2, color, thickness=2, dash_length=10, dash_gap=24)
-        elif self.depthGuideMode == 3:
-            # Mode 3: Arrows at 50% depth
-            return self._drawArrows(image_size_rows, image_size_cols, depth_radius, center_cols_px, center_rows_px, angle1, angle2)
-        elif self.depthGuideMode == 4:
-            # Mode 4: Translucent band
-            return self._drawTranslucentBand(image_size_rows, image_size_cols, depth_radius, center_cols_px, center_rows_px, angle1, angle2, color)
+        line_img = np.zeros((image_size_rows, image_size_cols, 3), dtype=np.uint8)
 
-        # Return blank image if no valid mode
-        return np.zeros((image_size_rows, image_size_cols, 3), dtype=np.uint8)
+        if depthGuideMode == 1:
+            line_img = self.drawDashedLine(image_size_rows, image_size_cols, center_cols_px, center_rows_px,
+                                    depth_radius, angle1, angle2, pleura_color, thickness=4, dash_length=20, dash_gap=16)
+        elif depthGuideMode == 2:
+            line_img = self.drawDashedLine(image_size_rows, image_size_cols, center_cols_px, center_rows_px,
+                                    depth_radius, angle1, angle2, pleura_color, thickness=2, dash_length=10, dash_gap=24)
+        elif depthGuideMode == 3:
+            line_img = self.drawArrows(image_size_rows, image_size_cols, depth_radius, center_cols_px, center_rows_px,
+                                angle1, angle2, color=pleura_color)
+        elif depthGuideMode == 4:
+            line_img = self.drawTranslucentBand(image_size_rows, image_size_cols, depth_radius,
+                                            center_cols_px, center_rows_px, angle1, angle2, pleura_color)
 
-    def _drawDashedLine(self, image_size_rows, image_size_cols, center_cols_px, center_rows_px, 
+        # Compute average overlay color
+        overlay_color = [
+            int(0.5 * (pleura_fan_color[i] + blines_fan_color[i]))
+            for i in range(3)
+        ]
+
+        # Translucent overlay fan
+        overlay = self.drawTranslucentBand(image_size_rows, image_size_cols, depth_radius,
+                                    center_cols_px, center_rows_px, angle1, angle2, overlay_color)
+
+        # Blend overlay with guide lines
+        final_img = cv2.addWeighted(line_img, 1.0, overlay, 0.4, 0)
+        return final_img
+
+    def drawDashedLine(self, image_size_rows, image_size_cols, center_cols_px, center_rows_px, 
                         depth_radius, angle1, angle2, color, thickness, dash_length, dash_gap):
         line_img = np.zeros((image_size_rows, image_size_cols, 3), dtype=np.uint8)
         theta_start = angle1
@@ -1741,7 +1801,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         return line_img
     
-    def _drawArrows(self, image_size_rows, image_size_cols, depth_radius, center_cols_px, center_rows_px, angle1, angle2, thickness=4, color=(200, 255, 255)):
+    def drawArrows(self, image_size_rows, image_size_cols, depth_radius, center_cols_px, center_rows_px, angle1, angle2, thickness=4, color=(200, 255, 255)):
         """
         Draws two arrows outside the left and right edges of the ultrasound fan at the specified depth mark,
         aligned with the tangent of the fan's curve at the 50% depth mark.
@@ -1780,7 +1840,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         return line_img
     
-    def _drawTranslucentBand(self, image_size_rows, image_size_cols, depth_radius, center_cols_px, center_rows_px, angle1, angle2, color=(100, 255, 255)):
+    def drawTranslucentBand(self, image_size_rows, image_size_cols, depth_radius, center_cols_px, center_rows_px, angle1, angle2, color=(100, 255, 255)):
         """
         Draws a thin translucent band around the 50% depth line on the ultrasound fan.
         """
@@ -1839,15 +1899,21 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         
         if parameterNode.depthGuideVisible:
             # draw the depth guide lines
-            depth_guide = self.drawDepthGuideLine(ultrasoundArray.shape[1], ultrasoundArray.shape[2])
-            maskArray[0, :, :, :] = np.maximum(maskArray[0, :, :, :], depth_guide)
+            ultrasoundArray = slicer.util.arrayFromVolume(self.getParameterNode().inputVolume)
+            image_size_rows = ultrasoundArray.shape[1]
+            image_size_cols = ultrasoundArray.shape[2]
+            pleura_color, bline_color, pleura_fan_color, blines_fan_color = self.getColorsForRater(parameterNode.rater)
+            mask = self.drawDepthGuideLine(image_size_rows, image_size_cols, self.annotations, self.depthGuideMode, pleura_color, bline_color, pleura_fan_color, blines_fan_color)
+            maskArray[0, :, :, :] = np.maximum(maskArray[0, :, :, :], mask)
         
         ijkToRas = vtk.vtkMatrix4x4()
         parameterNode.inputVolume.GetIJKToRASMatrix(ijkToRas)
         rasToIjk = vtk.vtkMatrix4x4()
         vtk.vtkMatrix4x4.Invert(ijkToRas, rasToIjk)
         
-        # Add pleura lines to mask array
+        # Retrieve rater-specific colors for overlay
+        pleura_color, bline_color, _, _ = self.getColorsForRater(parameterNode.rater)
+        # Add pleura lines to mask array using full RGB overlay
         for markupNode in self.pleuraLines:
             for i in range(markupNode.GetNumberOfControlPoints() - 1):
                 coord1 = [0, 0, 0]
@@ -1860,10 +1926,13 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 coord2 = [int(round(coord2[0])), int(round(coord2[1])), int(round(coord2[2]))]
                 # Draw mask fan between coord1 and coord2
                 sectorArray = self.createSectorMaskBetweenPoints(ultrasoundArray, coord1, coord2, value=255)
-                # Add sectorArray to maskArray by maximum compounding
-                maskArray[0, :, :, 2] = np.maximum(maskArray[0, :, :, 2], sectorArray)
+                # Create RGB overlay for pleura
+                pleura_overlay = np.zeros_like(maskArray[0])
+                for c in range(3):
+                    pleura_overlay[:, :, c] = sectorArray * int(pleura_color[c] * 255)
+                maskArray[0] = np.maximum(maskArray[0], pleura_overlay)
                 
-        # Add B-lines to mask array
+        # Add B-lines to mask array using full RGB overlay
         for markupNode in self.bLines:
             for i in range(markupNode.GetNumberOfControlPoints() - 1):
                 coord1 = [0, 0, 0]
@@ -1876,24 +1945,31 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 coord2 = [int(round(coord2[0])), int(round(coord2[1])), int(round(coord2[2]))]
                 # Draw mask fan between coord1 and coord2
                 sectorArray = self.createSectorMaskBetweenPoints(ultrasoundArray, coord1, coord2)
-                # Add sectorArray to maskArray by maximum compounding
-                maskArray[0, :, :, 1] = np.maximum(maskArray[0, :, :, 1], sectorArray)
+                # Create RGB overlay for B-line
+                bline_overlay = np.zeros_like(maskArray[0])
+                for c in range(3):
+                    bline_overlay[:, :, c] = sectorArray * int(bline_color[c] * 255)
+                maskArray[0] = np.maximum(maskArray[0], bline_overlay)
         
-        # Erase all B-lines pixels where there is no pleura line
-        maskArray[0, :, :, 1] = np.where(maskArray[0, :, :, 2] == 0, 0, maskArray[0, :, :, 1])
+        # Erase all B-line pixels where there is no pleura line (using mask color logic)
+        # Identify pleura and B-line masks by color
+        tolerance = 0.05
+        maskArray_float = maskArray.astype(np.float32) / 255.0
+        pleura_mask = np.all(np.abs(maskArray_float[0] - pleura_color) < tolerance, axis=-1)
+        bline_mask = np.all(np.abs(maskArray_float[0] - bline_color) < tolerance, axis=-1)
+        # Remove B-line pixels where there is no pleura
+        bline_mask = np.logical_and(bline_mask, pleura_mask)
+        pleura_pixels = np.count_nonzero(pleura_mask)
+        bline_pixels = np.count_nonzero(bline_mask)
 
-        # Calculate the amount of blue pixels in maskArray and green pixels in maskArray
-        bluePixels = np.count_nonzero(maskArray[0, :, :, 2])
-        greenPixels = np.count_nonzero(maskArray[0, :, :, 1])
-        
         # Update the overlay volume
         slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, maskArray)
 
-        # Return the ratio of green pixels to blue pixels
-        if bluePixels == 0:
+        # Return the ratio of bline pixels to pleura pixels
+        if pleura_pixels == 0:
             return 0.0
         else:
-            return greenPixels / bluePixels
+            return bline_pixels / pleura_pixels
     
     def dicomHeaderDictForBrowserNode(self, browserNode):
         """Return DICOM header for the given browser node"""
