@@ -140,6 +140,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.notEnteredYet = True
         self._lastFrameIndex = -1
 
+        self.updatingGUI = False
+
         # Shortcuts
         self.shortcutW = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutW.setKey(qt.QKeySequence('W'))
@@ -297,6 +299,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if hasattr(self.ui, "raterColorTable"):
             vh = self.ui.raterColorTable.verticalHeader()
             self.ui.raterColorTable.setMaximumHeight(vh.defaultSectionSize * 4 + 2)
+            self.ui.raterColorTable.itemChanged.connect(self.onRaterColorSelectionChangedFromUser)
     
     def saveUserSettings(self):
         settings = qt.QSettings()
@@ -378,6 +381,24 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Update local settings
         slicer.app.settings().setValue("AnnotateUltrasound/InputDirectory", inputDirectory)
         
+    def extractSeenRaters(self):
+        """
+        Extracts the set of raters that have contributed lines in the current annotations,
+        ensuring the current rater is included even if not present in any frame annotations.
+        Sets self.seenRaters to a sorted list of rater names.
+        """
+        raters_seen = {
+            line.get("rater")
+            for frame in self.logic.annotations.get("frame_annotations", [])
+            for key in ["pleura_lines", "b_lines"]
+            for line in frame.get(key, [])
+            if line.get("rater")
+        }
+        current_rater = self._parameterNode.rater
+        if current_rater and current_rater not in raters_seen:
+            raters_seen.add(current_rater)
+        self.seenRaters = sorted(raters_seen)
+
     def onReadInputButton(self):
         """
         Read the input directory and update the dicomDf dataframe, using rater-specific annotation files.
@@ -459,6 +480,19 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
             self.ui.intensitySlider.setValue(0)
 
+            # After loading the first sequence, extract seen raters and update checkboxes
+            self.extractSeenRaters()
+            self.selectedRaters = set(self.seenRaters)
+
+            if hasattr(self.ui, 'raterColorTable'):
+                table = self.ui.raterColorTable
+                table.blockSignals(True)
+                for row in range(table.rowCount):
+                    item = table.item(row, 0)
+                    if item:
+                        item.setCheckState(qt.Qt.Checked)
+                table.blockSignals(False)
+
             # Close the wait dialog
             waitDialog.close()
 
@@ -519,6 +553,18 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         showDepthGuide = self._parameterNode.depthGuideVisible
 
         currentDicomDfIndex = self.logic.loadNextSequence()
+        # After loading the next sequence, extract seen raters and update checkboxes
+        self.extractSeenRaters()
+        self.selectedRaters = set(self.seenRaters)
+
+        if hasattr(self.ui, 'raterColorTable'):
+            table = self.ui.raterColorTable
+            table.blockSignals(True)
+            for row in range(table.rowCount):
+                item = table.item(row, 0)
+                if item:
+                    item.setCheckState(qt.Qt.Checked)
+            table.blockSignals(False)
 
         # Uncheck all label checkboxes, but prevent them from triggering the onLabelCheckBoxToggled event while we are doing this
         for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())):
@@ -650,6 +696,19 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self._parameterNode.depthGuideVisible = showDepthGuide
 
         self.ui.intensitySlider.setValue(0)
+
+        # After loading the previous sequence, extract seen raters and update checkboxes
+        self.extractSeenRaters()
+        self.selectedRaters = set(self.seenRaters)
+
+        if hasattr(self.ui, 'raterColorTable'):
+            table = self.ui.raterColorTable
+            table.blockSignals(True)
+            for row in range(table.rowCount):
+                item = table.item(row, 0)
+                if item:
+                    item.setCheckState(qt.Qt.Checked)
+            table.blockSignals(False)
         
         # Close the wait dialog
         waitDialog.close()
@@ -1050,6 +1109,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         settings = slicer.app.settings()
         showDepthGuide = settings.value('AnnotateUltrasound/DepthGuide', 'false')
         self._parameterNode.rater = settings.value('AnnotateUltrasound/Rater', '')
+        self.logic.setRater(self._parameterNode.rater)
         self.logic.getColorsForRater(self._parameterNode.rater)
         self.ui.depthGuideCheckBox.setChecked(showDepthGuide.lower() == 'true')
         
@@ -1072,107 +1132,132 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self._updateGUIFromParameterNode()
 
     def _updateGUIFromParameterNode(self, caller=None, event=None) -> None:
-        if self._parameterNode is None:
-            logging.debug("No parameter node")
+        if self.updatingGUI:
             return
-
-        # Update line buttons
-        if self._parameterNode.lineBeingPlaced is None:
-            self.ui.addPleuraButton.setChecked(False)
-            self.ui.addBlineButton.setChecked(False)
-        else:
-            if self._parameterNode.lineBeingPlaced.GetName() == "Pleura":
-                self.ui.addPleuraButton.setChecked(True)
-                self.ui.addBlineButton.setChecked(False)
-            elif self._parameterNode.lineBeingPlaced.GetName() == "B-line":
-                self.ui.addPleuraButton.setChecked(False)
-                self.ui.addBlineButton.setChecked(True)
-            else:
-                logging.error(f"Unknown line type {self._parameterNode.lineBeingPlaced.GetName()}")
+        self.updatingGUI = True
+        try:
+            if self._parameterNode is None:
+                logging.debug("No parameter node")
                 return
 
-        # If the frame index changed, then we want to make sure no row is selected in the frames table
-        if self.logic.sequenceBrowserNode is not None:
-            currentFrameIndex = self.logic.sequenceBrowserNode.GetSelectedItemNumber()
-            if currentFrameIndex != self._lastFrameIndex:
-                self._lastFrameIndex = currentFrameIndex
-                self.ui.framesTableWidget.clearSelection()
+            # Update line buttons
+            if self._parameterNode.lineBeingPlaced is None:
+                self.ui.addPleuraButton.setChecked(False)
+                self.ui.addBlineButton.setChecked(False)
+            else:
+                if self._parameterNode.lineBeingPlaced.GetName() == "Pleura":
+                    self.ui.addPleuraButton.setChecked(True)
+                    self.ui.addBlineButton.setChecked(False)
+                elif self._parameterNode.lineBeingPlaced.GetName() == "B-line":
+                    self.ui.addPleuraButton.setChecked(False)
+                    self.ui.addBlineButton.setChecked(True)
+                else:
+                    logging.error(f"Unknown line type {self._parameterNode.lineBeingPlaced.GetName()}")
+                    return
 
-        # Update corner annotation if _parameterNode.pleuraPercentage is a non-negative number
-        if self.ui.showPleuraPercentageCheckBox.checked and self._parameterNode.pleuraPercentage >= 0:
-            view=slicer.app.layoutManager().sliceWidget("Red").sliceView()
-            view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft,f"B-line/Pleura = {self._parameterNode.pleuraPercentage:.1f} %")
-            view.cornerAnnotation().GetTextProperty().SetColor(1,1,0)
-            view.forceRender()
-        elif self.ui.showPleuraPercentageCheckBox.checked and self._parameterNode.pleuraPercentage == -2.0:
-            view=slicer.app.layoutManager().sliceWidget("Red").sliceView()
-            view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft,f"No pleura detected")
-            view.cornerAnnotation().GetTextProperty().SetColor(1,1,0)
-            view.forceRender()
-        else:
-            view=slicer.app.layoutManager().sliceWidget("Red").sliceView()
-            view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft,"")
-            view.forceRender()
+            # If the frame index changed, then we want to make sure no row is selected in the frames table
+            if self.logic.sequenceBrowserNode is not None:
+                currentFrameIndex = self.logic.sequenceBrowserNode.GetSelectedItemNumber()
+                if currentFrameIndex != self._lastFrameIndex:
+                    self._lastFrameIndex = currentFrameIndex
+                    self.ui.framesTableWidget.clearSelection()
 
-        # Update collapse/expand buttons
-        if not self._parameterNode.dfLoaded:
-            self.ui.inputsCollapsibleButton.collapsed = False
-            self.ui.workflowCollapsibleButton.collapsed = True
-            self.ui.sectorAnnotationsCollapsibleButton.collapsed = True
-            self.ui.labelAnnotationsCollapsibleButton.collapsed = True
-        else:
-            self.ui.inputsCollapsibleButton.collapsed = True
-            self.ui.workflowCollapsibleButton.collapsed = False
-            self.ui.sectorAnnotationsCollapsibleButton.collapsed = False
-            self.ui.labelAnnotationsCollapsibleButton.collapsed = False
+            # Update corner annotation if _parameterNode.pleuraPercentage is a non-negative number
+            if self.ui.showPleuraPercentageCheckBox.checked and self._parameterNode.pleuraPercentage >= 0:
+                view=slicer.app.layoutManager().sliceWidget("Red").sliceView()
+                view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft,f"B-line/Pleura = {self._parameterNode.pleuraPercentage:.1f} %")
+                view.cornerAnnotation().GetTextProperty().SetColor(1,1,0)
+                view.forceRender()
+            elif self.ui.showPleuraPercentageCheckBox.checked and self._parameterNode.pleuraPercentage == -2.0:
+                view=slicer.app.layoutManager().sliceWidget("Red").sliceView()
+                view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft,f"No pleura detected")
+                view.cornerAnnotation().GetTextProperty().SetColor(1,1,0)
+                view.forceRender()
+            else:
+                view=slicer.app.layoutManager().sliceWidget("Red").sliceView()
+                view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft,"")
+                view.forceRender()
 
-        # Save rater name to settings
-        settings = qt.QSettings()
-        settings.setValue('AnnotateUltrasound/Rater', self.ui.raterName.toPlainText())
+            # Update collapse/expand buttons
+            if not self._parameterNode.dfLoaded:
+                self.ui.inputsCollapsibleButton.collapsed = False
+                self.ui.workflowCollapsibleButton.collapsed = True
+                self.ui.sectorAnnotationsCollapsibleButton.collapsed = True
+                self.ui.labelAnnotationsCollapsibleButton.collapsed = True
+            else:
+                self.ui.inputsCollapsibleButton.collapsed = True
+                self.ui.workflowCollapsibleButton.collapsed = False
+                self.ui.sectorAnnotationsCollapsibleButton.collapsed = False
+                self.ui.labelAnnotationsCollapsibleButton.collapsed = False
 
-        self.logic.updateOverlayVolume()
+            # Save rater name to settings
+            settings = qt.QSettings()
+            settings.setValue('AnnotateUltrasound/Rater', self.ui.raterName.toPlainText())
 
-        # --- BEGIN: Rater color table display (checkboxes, names, color swatches) ---
-        if hasattr(self.ui, 'raterColorTable'):
-            self.ui.raterColorTable.blockSignals(True)
-            self.ui.raterColorTable.clearContents()
-            colors = list(self.logic.getAllRaterColors())
-            self.ui.raterColorTable.setRowCount(len(colors))
-            self.ui.raterColorTable.setColumnCount(3)
-            self.ui.raterColorTable.setHorizontalHeaderLabels(["Rater", "Pleura", "B-line"])
-            for row, (r, (pleura_color, bline_color)) in enumerate(colors):
-                rater_item = qt.QTableWidgetItem(r)
-                rater_item.setFlags(qt.Qt.ItemIsUserCheckable | qt.Qt.ItemIsEnabled)
+            # Only update raterColorTable if present;
+            if hasattr(self.ui, 'raterColorTable'):
+                self.populateRaterColorTable()
+        finally:
+            self.updatingGUI = False
+
+    def populateRaterColorTable(self):
+        if not hasattr(self.ui, 'raterColorTable'):
+            return
+        self.ui.raterColorTable.blockSignals(True)
+        self.ui.raterColorTable.clearContents()
+        colors = list(self.logic.getAllRaterColors())
+        self.ui.raterColorTable.setRowCount(len(colors))
+        self.ui.raterColorTable.setColumnCount(3)
+        self.ui.raterColorTable.setHorizontalHeaderLabels(["Rater", "Pleura", "B-line"])
+        header = self.ui.raterColorTable.horizontalHeader()
+        header.setSectionResizeMode(0, qt.QHeaderView.Stretch)
+        # Columns 1 & 2: Color indicators — just enough to show the color
+        header.setSectionResizeMode(1, qt.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, qt.QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, qt.QHeaderView.ResizeToContents)
+
+        self.ui.raterColorTable.setColumnWidth(1, 30)
+        self.ui.raterColorTable.setColumnWidth(2, 30)
+        for row, (r, (pleura_color, bline_color)) in enumerate(colors):
+            rater_item = qt.QTableWidgetItem(r)
+            rater_item.setFlags(qt.Qt.ItemIsUserCheckable | qt.Qt.ItemIsEnabled)
+            if not hasattr(self, "selectedRaters") or r in self.selectedRaters:
                 rater_item.setCheckState(qt.Qt.Checked)
+            else:
+                rater_item.setCheckState(qt.Qt.Unchecked)
 
-                pleura_item = qt.QTableWidgetItem()
-                pleura_item.setFlags(qt.Qt.ItemIsEnabled)
-                pleura_item.setBackground(qt.QColor(*(int(c * 255) for c in pleura_color)))
+            pleura_item = qt.QTableWidgetItem()
+            pleura_item.setFlags(qt.Qt.ItemIsEnabled)
+            pleura_item.setBackground(qt.QColor(*(int(c * 255) for c in pleura_color)))
 
-                bline_item = qt.QTableWidgetItem()
-                bline_item.setFlags(qt.Qt.ItemIsEnabled)
-                bline_item.setBackground(qt.QColor(*(int(c * 255) for c in bline_color)))
+            bline_item = qt.QTableWidgetItem()
+            bline_item.setFlags(qt.Qt.ItemIsEnabled)
+            bline_item.setBackground(qt.QColor(*(int(c * 255) for c in bline_color)))
 
-                self.ui.raterColorTable.setItem(row, 0, rater_item)
-                self.ui.raterColorTable.setItem(row, 1, pleura_item)
-                self.ui.raterColorTable.setItem(row, 2, bline_item)
-            self.ui.raterColorTable.blockSignals(False)
-            self.onRaterColorSelectionChanged()
-        # Connect the signal if not already connected
-        if hasattr(self.ui, 'raterColorTable') and not hasattr(self, '_raterColorTableConnected'):
-            self.ui.raterColorTable.itemChanged.connect(self.onRaterColorSelectionChanged)
-            self._raterColorTableConnected = True
-        # --- END: Rater color table display ---
+            self.ui.raterColorTable.setItem(row, 0, rater_item)
+            self.ui.raterColorTable.setItem(row, 1, pleura_item)
+            self.ui.raterColorTable.setItem(row, 2, bline_item)
+        self.ui.raterColorTable.blockSignals(False)
 
-    def onRaterColorSelectionChanged(self):
-        # Called when the checkbox state changes in raterColorTable
-        self.selectedRaters = set()
-        if hasattr(self.ui, 'raterColorTable'):
-            for row in range(self.ui.raterColorTable.rowCount):
-                item = self.ui.raterColorTable.item(row, 0)
-                if item and item.checkState() == qt.Qt.Checked:
-                    self.selectedRaters.add(item.text())
+    def getSelectedRatersFromTable(self):
+        selected = []
+        table = self.ui.raterColorTable
+        for row in range(table.rowCount):
+            item = table.item(row, 0)
+            if item is not None and item.checkState() == qt.Qt.Checked:
+                selected.append(item.text())
+        return selected
+
+    def onRaterColorSelectionChangedFromUser(self):
+        if self.updatingGUI:
+            return
+        self.updateRatersFromCheckboxes()
+
+    def updateRatersFromCheckboxes(self):
+        self.selectedRaters = self.getSelectedRatersFromTable()
         self.logic.setHighlightedRaters(self.selectedRaters)
+        self.logic.updateLineMarkups()
+        self.logic.updateOverlayVolume()
 
 #
 # AnnotateUltrasoundLogic
@@ -1204,9 +1289,18 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.bLines = []
         self.sequenceBrowserNode = None
         self.depthGuideMode = 1
+        self.parameterNode = self._getOrCreateParameterNode()
 
     # Static variable to track seen raters and their order
     seenRaters = []
+
+    def _getOrCreateParameterNode(self):
+        if not hasattr(self, "parameterNode"):
+            self.parameterNode = AnnotateUltrasoundParameterNode(super().getParameterNode())
+        return self.parameterNode
+
+    def getParameterNode(self):
+        return self.parameterNode
 
     def getColorsForRater(self, rater: str):
         """
@@ -1235,7 +1329,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         bline_rgb = colorsys.hsv_to_rgb(bline_hue, sat, val)
         pleura_color = [float(x) for x in pleura_rgb]
         bline_color = [float(x) for x in bline_rgb]
-        logging.info(f"Rater: {rater}, Index: {rater_index}, Pleura: {pleura_color}, B-line: {bline_color}")
         return pleura_color, bline_color
 
     def getAllRaterColors(self):
@@ -1254,9 +1347,13 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         """
         self.highlightedRaters = set(raters)
         # TODO: Implement filtering of visuals based on self.highlightedRaters
-    def getParameterNode(self):
-        return AnnotateUltrasoundParameterNode(super().getParameterNode())
     
+    def setRater(self, value):
+        node = self.getParameterNode()
+        wasModifying = node.StartModify()
+        node.rater = value
+        node.EndModify(wasModifying)
+
     def updateInputDf(self, rater, input_folder):
         """
         Update the dicomDf dataframe with the DICOM files in the input folder.
@@ -1297,9 +1394,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                     instance_uid = dicom_file.SOPInstanceUID if 'SOPInstanceUID' in dicom_file else None
                     
                     base_filename = os.path.splitext(os.path.join(root, file))[0]
+                    # Candidate order: .combined.json > .{rater}.json > .json
                     candidates = [
-                        f"{base_filename}.{rater}.json",
                         f"{base_filename}.combined.json",
+                        f"{base_filename}.{rater}.json",
                         f"{base_filename}.json"
                     ]
                     annotation_path = None
@@ -1307,16 +1405,21 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                         if os.path.exists(candidate):
                             annotation_path = candidate
                             break
-                    annotations_file_path = f"{base_filename}.{rater}.json"
+                    # Now: select which file to use or create/copy
                     if annotation_path is None:
+                        annotations_file_path = f"{base_filename}.{rater}.json"
                         logging.warning(f"No annotation file found for base {base_filename} and rater {rater}. A blank annotations file will be created.")
-                        # Create a blank annotations file
                         with open(annotations_file_path, 'w') as f:
                             f.write('{}')
                         annotations_created_count += 1
-                    elif not os.path.exists(annotations_file_path):
-                        # Copy the found annotation_path to annotations_file_path if it doesn't exist
-                        shutil.copy(annotation_path, annotations_file_path)
+                    elif annotation_path.endswith(".combined.json"):
+                        annotations_file_path = annotation_path
+                    elif annotation_path.endswith(f".{rater}.json"):
+                        annotations_file_path = annotation_path
+                    else:
+                        annotations_file_path = f"{base_filename}.{rater}.json"
+                        if not os.path.exists(annotations_file_path):
+                            shutil.copy(annotation_path, annotations_file_path)
 
                     # Append the information to the list, if PatientID, StudyInstanceUID, and SeriesInstanceUID are present
                     if patient_uid and study_uid and series_uid and instance_uid:
@@ -1354,6 +1457,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if index == None:
             self.annotations['frame_annotations'][currentFrameIndex] = {
                 "frame_number": currentFrameIndex,
+                "coordinate_space": "RAS",
                 "pleura_lines": [],
                 "b_lines": []
             }
@@ -1430,23 +1534,45 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             return None
         else:
             parameterNode.dfLoaded = True
-        
+
         if self.nextDicomDfIndex >= len(self.dicomDf):
             return None
-        
+
         nextDicomFilepath = self.dicomDf.iloc[self.nextDicomDfIndex]['Filepath']
-        nextAnnotationsFilepath = self.dicomDf.iloc[self.nextDicomDfIndex]['AnnotationsFilepath']
+
+        # --- Begin: Custom annotation file selection logic ---
+        import os
+        base_file_path = self.dicomDf.iloc[self.nextDicomDfIndex]['Filepath']
+        base_prefix = os.path.splitext(base_file_path)[0]
+        rater = self.getParameterNode().rater.strip().lower()
+        candidates = [
+            f"{base_prefix}.{rater}.json",
+            f"{base_prefix}.combined.json",
+            f"{base_prefix}.json"
+        ]
+        nextAnnotationsFilepath = None
+        for candidate in candidates:
+            if os.path.exists(candidate):
+                nextAnnotationsFilepath = candidate
+                break
+        if nextAnnotationsFilepath is None:
+            logging.warning(f"No annotation file found for base {base_prefix} and rater {rater}. Creating blank annotations.")
+            nextAnnotationsFilepath = f"{base_prefix}.{rater}.json"
+            with open(nextAnnotationsFilepath, 'w') as f:
+                f.write('{}')
+        # --- End: Custom annotation file selection logic ---
+
         self.nextDicomDfIndex += 1
-        
+
         # Make sure a temporary folder for the DICOM files exists
         tempDicomDir = slicer.app.temporaryPath + '/AnonymizeUltrasound'
         if not os.path.exists(tempDicomDir):
             os.makedirs(tempDicomDir)
-        
+
         # Delete all files in the temporary folder
         for file in os.listdir(tempDicomDir):
             os.remove(os.path.join(tempDicomDir, file))
-        
+
         # Copy DICOM file to temporary folder
         shutil.copy(nextDicomFilepath, tempDicomDir)
 
@@ -1468,26 +1594,26 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 if self.currentDicomHeader is None:
                     logging.error(f"Could not find DICOM header for sequence browser node {currentSequenceBrowser.GetID()}")
                 break
-        
+
         # Get the current proxy node of the master sequence node of the selected sequence browser node
         masterSequenceNode = currentSequenceBrowser.GetMasterSequenceNode()
         inputUltrasoundNode = currentSequenceBrowser.GetProxyNode(masterSequenceNode)
-        
+
         # Make sure the proxy node is a volume node and save it for later
         if inputUltrasoundNode is not None:
             if not (inputUltrasoundNode.IsA("vtkMRMLScalarVolumeNode") or inputUltrasoundNode.IsA("vtkMRMLVectorVolumeNode")):
                 logging.error(f"Proxy node is not a volume node")
                 return None
-        
+
         previousNodeState = parameterNode.StartModify()
-        
+
         self.sequenceBrowserNode = currentSequenceBrowser
         parameterNode.inputVolume = inputUltrasoundNode
-        
+
         ultrasoundArray = slicer.util.arrayFromVolume(inputUltrasoundNode)
         # Mask array should be the same size as the ultrasound array, but with 3 channels
         maskArray = np.zeros([1, ultrasoundArray.shape[1], ultrasoundArray.shape[2], 3], dtype=np.uint8)
-        
+
         # Initialize the mask volume to be the same size as the ultrasound volume but with all voxels set to 0
         overlayVolume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode", "Overlay")
         overlayVolume.SetSpacing(inputUltrasoundNode.GetSpacing())
@@ -1507,17 +1633,28 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         with open(nextAnnotationsFilepath, 'r') as f:
             self.annotations = json.load(f)
 
-        # clear out seenRaters so we can repopulate
-        if len(self.seenRaters) > 1:
-            self.seenRaters = self.seenRaters[:1]
+        # Extract all raters from the frame annotations, with current rater first if set
+        current_rater = self.getParameterNode().rater.strip().lower()
+        seen = {line.get("rater") for frame in self.annotations.get("frame_annotations", [])
+                for key in ["pleura_lines", "b_lines"]
+                for line in frame.get(key, []) if line.get("rater")}
+        if current_rater:
+            seen.discard(current_rater)
+            self.seenRaters = [current_rater] + sorted(seen)
+        else:
+            self.seenRaters = sorted(seen)
+        self.highlightedRaters = set(self.seenRaters)
+
+        # After loading annotations, update seenRaters and selectedRaters, and check checkboxes
+        # Note: This logic should be handled by the Widget after calling extractSeenRaters.
 
         self.updateLineMarkups()
         ratio = self.updateOverlayVolume()
         parameterNode = self.getParameterNode()
         parameterNode.pleuraPercentage = ratio * 100
-        
+
         parameterNode.EndModify(previousNodeState)
-        
+
         # Set overlay volume as foreground in slice viewers
         redSliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").sliceLogic().GetSliceCompositeNode()
         redSliceCompositeNode.SetForegroundVolumeID(overlayVolume.GetID())
@@ -1526,7 +1663,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         displayNode = overlayVolume.GetDisplayNode()
         displayNode.SetWindow(255)
         displayNode.SetLevel(127)
-        
+
         # Observe the ultrasound image for changes
         self.addObserver(self.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
 
@@ -1806,6 +1943,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             return
 
         for entry in frame.get("pleura_lines", []):
+            if entry.get("rater") not in self.highlightedRaters:
+                continue
             coordinates = entry.get("line", {}).get("points", [])
             rater = entry.get("rater", "")
             color_pleura, _ = self.getColorsForRater(rater)
@@ -1813,6 +1952,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 self.pleuraLines.append(self.createMarkupLine("Pleura", entry.get("rater", ""), coordinates, color_pleura))
 
         for entry in frame.get("b_lines", []):
+            if entry.get("rater") not in self.highlightedRaters:
+                continue
             coordinates = entry.get("line", {}).get("points", [])
             rater = entry.get("rater", "")
             _, color_bline = self.getColorsForRater(rater)
