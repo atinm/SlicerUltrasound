@@ -3,6 +3,9 @@
 import sys
 import json
 import shutil
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 def merge_frame_annotations(file1_data, file2_data):
     frames1 = {str(f["frame_number"]): f for f in file1_data["frame_annotations"]}
@@ -55,9 +58,11 @@ if __name__ == "__main__":
     os.makedirs(output_root, exist_ok=True)
 
     for prefix, file_list in annotation_groups.items():
+        logging.info(f"Merging files for prefix: {prefix}")
         merged_data = None
         sop_uid = None
         for file in file_list:
+            logging.info(f"Processing input file: {file}")
             with open(file, "r") as f:
                 data = json.load(f)
             if merged_data is None:
@@ -71,10 +76,11 @@ if __name__ == "__main__":
         output_path = os.path.join(output_root, prefix + ".combined.json")
         with open(output_path, "w") as out:
             json.dump(merged_data, out, indent=2)
-        print(f"✅ Merged output saved to {output_path}")
+        logging.info(f"✅ Merged output saved to {output_path}")
 
     for dirpath, _, filenames in os.walk(input_root):
         for fname in filenames:
             if fname.endswith(".dcm") and fname not in copied_dcm_files:
                 shutil.copy2(os.path.join(dirpath, fname), os.path.join(output_root, fname))
                 copied_dcm_files.add(fname)
+                logging.info(f"Copied .dcm file: {fname} from {dirpath}")
