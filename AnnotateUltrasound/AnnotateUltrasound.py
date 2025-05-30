@@ -672,9 +672,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Create a dialog to ask the user to wait while the next sequence is loaded.
         waitDialog = self.createWaitDialog("Loading previous sequence", "Loading previous sequence...")
         
-        # Save settings
-        showDepthGuide = self._parameterNode.depthGuideVisible
-        
         savedNextDicomDfIndex = self.logic.nextDicomDfIndex
         currentDicomDfIndex = self.logic.loadPreviousSequence()
         if currentDicomDfIndex is None:
@@ -693,7 +690,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
 
         self.updateGuiFromAnnotations()
-        
+
         # Restore settings
         self._parameterNode.depthGuideVisible = showDepthGuide
 
@@ -1304,6 +1301,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.bLines = []
         self.sequenceBrowserNode = None
         self.depthGuideMode = 1
+        logging.debug(f"Initialized depthGuideMode to {self.depthGuideMode}")
         self.parameterNode = self._getOrCreateParameterNode()
 
     # Static variable to track seen raters and their order
@@ -1545,6 +1543,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         Load the next sequence in the dataframe.
         Returns the index of the loaded sequence in the dataframe or None if no more sequences are available.
         """
+        # Save current depth guide mode
+        currentDepthGuideMode = self.depthGuideMode
+        logging.debug(f"Saving depthGuideMode {currentDepthGuideMode} before loading next sequence")
+        
         # Clear the scene
         self.clearScene()
         parameterNode = self.getParameterNode()
@@ -1630,7 +1632,11 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.sequenceBrowserNode = currentSequenceBrowser
         self.sequenceBrowserNode.SetPlaybackLooped(False)
         parameterNode.inputVolume = inputUltrasoundNode
-
+        
+        # Restore depth guide mode
+        self.depthGuideMode = currentDepthGuideMode
+        logging.debug(f"Restored depthGuideMode to {self.depthGuideMode} after loading sequence")
+        
         ultrasoundArray = slicer.util.arrayFromVolume(inputUltrasoundNode)
         # Mask array should be the same size as the ultrasound array, but with 3 channels
         maskArray = np.zeros([1, ultrasoundArray.shape[1], ultrasoundArray.shape[2], 3], dtype=np.uint8)
@@ -2005,11 +2011,18 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Calculate the depth position
         depth_radius = radius1 + depth_ratio * (radius2 - radius1)
 
+        # Scale dash parameters based on radius
+        scale_factor = depth_radius / 500.0  # Use 500 as reference radius
+        scaled_thickness = max(1, int(thickness * scale_factor))
+        scaled_dash_length = int(dash_length * scale_factor)
+        scaled_dash_gap = int(dash_gap * scale_factor)
+
         # Choose visualization based on depthGuideMode
         if self.depthGuideMode == 1:
             # Mode 1: Default dashed line
             return self._drawDashedLine(image_size_rows, image_size_cols, center_cols_px, center_rows_px, 
-                                        depth_radius, angle1, angle2, color, thickness=4, dash_length=20, dash_gap=16)
+                                        depth_radius, angle1, angle2, color, thickness=scaled_thickness, 
+                                        dash_length=scaled_dash_length, dash_gap=scaled_dash_gap)
         elif self.depthGuideMode == 2:
             # Mode 2: Thinner, more spaced dashed line
             return self._drawDashedLine(image_size_rows, image_size_cols, center_cols_px, center_rows_px, 
@@ -2027,6 +2040,11 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
     def _drawDashedLine(self, image_size_rows, image_size_cols, center_cols_px, center_rows_px, 
                         depth_radius, angle1, angle2, color, thickness, dash_length, dash_gap):
         line_img = np.zeros((image_size_rows, image_size_cols, 3), dtype=np.uint8)
+        
+        # Ensure angle1 is always less than angle2
+        if angle1 > angle2:
+            angle1, angle2 = angle2, angle1
+            
         theta_start = angle1
         theta_end = angle2
         theta_range = theta_end - theta_start
