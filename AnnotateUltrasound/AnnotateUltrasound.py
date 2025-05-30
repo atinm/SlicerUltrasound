@@ -299,6 +299,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if hasattr(self.ui, "raterColorTable"):
             vh = self.ui.raterColorTable.verticalHeader()
             self.ui.raterColorTable.setMaximumHeight(vh.defaultSectionSize * 4 + 2)
+            self.ui.raterColorTable.cellClicked.connect(self.onRaterColorTableClicked)
             self.ui.raterColorTable.itemChanged.connect(self.onRaterColorSelectionChangedFromUser)
     
     def saveUserSettings(self):
@@ -671,7 +672,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         
         # Create a dialog to ask the user to wait while the next sequence is loaded.
         waitDialog = self.createWaitDialog("Loading previous sequence", "Loading previous sequence...")
-        
+
+        # Saving settings
+        showDepthGuide = self._parameterNode.depthGuideVisible
+
         savedNextDicomDfIndex = self.logic.nextDicomDfIndex
         currentDicomDfIndex = self.logic.loadPreviousSequence()
         if currentDicomDfIndex is None:
@@ -1227,7 +1231,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.raterColorTable.setColumnWidth(2, 30)
         for row, (r, (pleura_color, bline_color)) in enumerate(colors):
             rater_item = qt.QTableWidgetItem(r)
-            rater_item.setFlags(qt.Qt.ItemIsUserCheckable | qt.Qt.ItemIsEnabled)
+            rater_item.setFlags(qt.Qt.ItemIsUserCheckable | qt.Qt.ItemIsEnabled | qt.Qt.ItemIsSelectable)
             if not hasattr(self, "selectedRaters") or r in self.selectedRaters:
                 rater_item.setCheckState(qt.Qt.Checked)
             else:
@@ -1270,6 +1274,14 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         else:
             self._parameterNode.pleuraPercentage = 0.0
         self._updateGUIFromParameterNode()
+
+    def onRaterColorTableClicked(self, row, column):
+        item = self.ui.raterColorTable.item(row, 0)  # Assume checkbox is in column 0
+        if item is not None:
+            current_state = item.checkState()
+            item.setCheckState(qt.Qt.Unchecked if current_state == qt.Qt.Checked else qt.Qt.Checked)
+        self.onRaterColorSelectionChangedFromUser()
+
 
 #
 # AnnotateUltrasoundLogic
@@ -2163,10 +2175,15 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         # if we are using multiple raters and have selected more than one, don't show overlay volume
         if hasattr(self, "highlightedRaters") and len(self.highlightedRaters) > 1:
-            if parameterNode.overlayVolume.GetDisplayNode():
-                parameterNode.overlayVolume.GetDisplayNode().SetVisibility(False)
             overlayArray = slicer.util.arrayFromVolume(parameterNode.overlayVolume)
             overlayArray[:] = 0
+            if parameterNode.depthGuideVisible:
+                # draw the depth guide lines anyway
+                ultrasoundArray = slicer.util.arrayFromVolume(self.getParameterNode().inputVolume)
+                image_size_rows = ultrasoundArray.shape[1]
+                image_size_cols = ultrasoundArray.shape[2]
+                depth_guide = self.drawDepthGuideLine(ultrasoundArray.shape[1], ultrasoundArray.shape[2])
+                overlayArray[0, :, :, :] = np.maximum(overlayArray[0, :, :, :], depth_guide)
             slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, overlayArray)
             slicer.util.showStatusMessage("Overlay hidden: multiple raters selected", 3000)
             return None
