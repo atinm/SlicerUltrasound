@@ -1183,6 +1183,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                     view=slicer.app.layoutManager().sliceWidget("Red").sliceView()
                     view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft,"")
                     view.forceRender()
+            else:
+                view=slicer.app.layoutManager().sliceWidget("Red").sliceView()
+                view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft,"")
+                view.forceRender()
 
             # Update collapse/expand buttons
             if not self._parameterNode.dfLoaded:
@@ -1266,6 +1270,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         ratio = self.logic.updateOverlayVolume()
         if ratio is not None:
             self._parameterNode.pleuraPercentage = ratio * 100
+        else:
+            self._parameterNode.pleuraPercentage = 0.0
         self._updateGUIFromParameterNode()
 
 #
@@ -1365,7 +1371,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
     def setRater(self, value):
         node = self.getParameterNode()
         wasModifying = node.StartModify()
-        node.rater = value
+        node.rater = value.strip().lower()
         node.EndModify(wasModifying)
 
     def updateInputDf(self, rater, input_folder):
@@ -2139,6 +2145,11 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         # if we are using multiple raters and have selected more than one, don't show overlay volume
         if hasattr(self, "highlightedRaters") and len(self.highlightedRaters) > 1:
+            if parameterNode.overlayVolume.GetDisplayNode():
+                parameterNode.overlayVolume.GetDisplayNode().SetVisibility(False)
+            overlayArray = slicer.util.arrayFromVolume(parameterNode.overlayVolume)
+            overlayArray[:] = 0
+            slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, overlayArray)
             slicer.util.showStatusMessage("Overlay hidden: multiple raters selected", 3000)
             return None
         
