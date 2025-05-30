@@ -1233,7 +1233,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         """
         # Save current depth guide mode
         currentDepthGuideMode = self.depthGuideMode
-        logging.info(f"Saving depthGuideMode {currentDepthGuideMode} before loading next sequence")
+        logging.debug(f"Saving depthGuideMode {currentDepthGuideMode} before loading next sequence")
         
         # Clear the scene
         self.clearScene()
@@ -1300,7 +1300,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         
         # Restore depth guide mode
         self.depthGuideMode = currentDepthGuideMode
-        logging.info(f"Restored depthGuideMode to {self.depthGuideMode} after loading sequence")
+        logging.debug(f"Restored depthGuideMode to {self.depthGuideMode} after loading sequence")
         
         ultrasoundArray = slicer.util.arrayFromVolume(inputUltrasoundNode)
         # Mask array should be the same size as the ultrasound array, but with 3 channels
