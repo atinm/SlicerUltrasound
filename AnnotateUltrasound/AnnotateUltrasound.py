@@ -1622,6 +1622,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         previousNodeState = parameterNode.StartModify()
 
         self.sequenceBrowserNode = currentSequenceBrowser
+        self.sequenceBrowserNode.SetPlaybackLooped(False)
         parameterNode.inputVolume = inputUltrasoundNode
 
         ultrasoundArray = slicer.util.arrayFromVolume(inputUltrasoundNode)
