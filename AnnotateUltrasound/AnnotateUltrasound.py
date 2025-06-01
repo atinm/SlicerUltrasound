@@ -1113,8 +1113,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         settings = slicer.app.settings()
         showDepthGuide = settings.value('AnnotateUltrasound/DepthGuide', 'false')
         self._parameterNode.rater = settings.value('AnnotateUltrasound/Rater', '')
-        self.logic.setRater(self._parameterNode.rater)
-        self.logic.getColorsForRater(self._parameterNode.rater)
+        if self._parameterNode.rater != '':
+            self.logic.setRater(self._parameterNode.rater)
+            self.logic.getColorsForRater(self._parameterNode.rater)
         self.ui.depthGuideCheckBox.setChecked(showDepthGuide.lower() == 'true')
         
 
