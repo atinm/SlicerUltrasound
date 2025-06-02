@@ -72,7 +72,7 @@ def convert_directory(input_dir, output_dir):
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        print("Usage: python convert_annotations_rater.py <input_dir> <output_dir>")
+        print("Usage: python convert_to_annotated_format_with_rater.py <input_dir> <output_dir>")
         sys.exit(1)
 
     convert_directory(sys.argv[1], sys.argv[2])

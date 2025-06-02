@@ -4,6 +4,8 @@ import sys
 import json
 import shutil
 import logging
+import os
+from collections import defaultdict
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -30,9 +32,6 @@ def merge_frame_annotations(file1_data, file2_data):
     result = json.loads(json.dumps(file1_data))  # deep copy
     result["frame_annotations"] = merged
     return result
-
-import os
-from collections import defaultdict
 
 def find_annotation_groups(root_dir):
     groups = defaultdict(list)
