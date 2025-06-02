@@ -486,14 +486,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.extractSeenRaters()
             self.selectedRaters = set(self.seenRaters)
 
-            if hasattr(self.ui, 'raterColorTable'):
-                table = self.ui.raterColorTable
-                table.blockSignals(True)
-                for row in range(table.rowCount):
-                    item = table.item(row, 0)
-                    if item:
-                        item.setCheckState(qt.Qt.Checked)
-                table.blockSignals(False)
+            self._updateRaterColorTableCheckboxes()
 
             # Close the wait dialog
             waitDialog.close()
@@ -559,14 +552,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.extractSeenRaters()
         self.selectedRaters = set(self.seenRaters)
 
-        if hasattr(self.ui, 'raterColorTable'):
-            table = self.ui.raterColorTable
-            table.blockSignals(True)
-            for row in range(table.rowCount):
-                item = table.item(row, 0)
-                if item:
-                    item.setCheckState(qt.Qt.Checked)
-            table.blockSignals(False)
+        self._updateRaterColorTableCheckboxes()
 
         # Uncheck all label checkboxes, but prevent them from triggering the onLabelCheckBoxToggled event while we are doing this
         for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())):
@@ -703,14 +689,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.extractSeenRaters()
         self.selectedRaters = set(self.seenRaters)
 
-        if hasattr(self.ui, 'raterColorTable'):
-            table = self.ui.raterColorTable
-            table.blockSignals(True)
-            for row in range(table.rowCount):
-                item = table.item(row, 0)
-                if item:
-                    item.setCheckState(qt.Qt.Checked)
-            table.blockSignals(False)
+        self._updateRaterColorTableCheckboxes()
         
         # Close the wait dialog
         waitDialog.close()
@@ -1015,11 +994,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     def onDepthGuideToggled(self, toggled):
         # Save new state in application settings and update overlay volume to show/hide the depth guide
         settings = slicer.app.settings()
+        settings.setValue('AnnotateUltrasound/DepthGuide', toggled)
         if toggled:
-            settings.setValue('AnnotateUltrasound/DepthGuide', "True")
             self.logic.parameterNode.depthGuideVisible = True
         else:
-            settings.setValue('AnnotateUltrasound/DepthGuide', "False")
             self.logic.parameterNode.depthGuideVisible = False
         self.logic.updateOverlayVolume()
 
@@ -1119,12 +1097,15 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 self._parameterNode.inputVolume = firstVolumeNode
         
         settings = slicer.app.settings()
-        showDepthGuide = settings.value('AnnotateUltrasound/DepthGuide', 'false')
+        showDepthGuide = settings.value('AnnotateUltrasound/DepthGuide', False)
+        # be consistent and just read bool, convert if was string
+        if isinstance(showDepthGuide, str):
+            showDepthGuide = showDepthGuide.lower() == 'true'
         self._parameterNode.rater = settings.value('AnnotateUltrasound/Rater', '')
         if self._parameterNode.rater != '':
             self.logic.setRater(self._parameterNode.rater)
             self.logic.getColorsForRater(self._parameterNode.rater)
-        self.ui.depthGuideCheckBox.setChecked(showDepthGuide.lower() == 'true')
+        self.ui.depthGuideCheckBox.setChecked(showDepthGuide)
         
 
     def setParameterNode(self, inputParameterNode: AnnotateUltrasoundParameterNode) -> None:
@@ -1267,6 +1248,27 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             if item is not None and item.checkState() == qt.Qt.Checked:
                 selected.append(item.text())
         return selected
+
+    def _updateRaterColorTableCheckboxes(self, check_state=qt.Qt.Checked):
+        """
+        Helper function to update all checkboxes in the rater color table.
+
+        Args:
+            check_state: The check state to set (qt.Qt.Checked or qt.Qt.Unchecked)
+        """
+
+        if not hasattr(self.ui, 'raterColorTable'):
+            return
+
+        table = self.ui.raterColorTable
+        table.blockSignals(True)
+        try:
+            for row in range(table.rowCount):
+                item = table.item(row, 0)
+                if item:
+                    item.setCheckState(check_state)
+        finally:
+            table.blockSignals(False)
 
     def onRaterColorSelectionChangedFromUser(self):
         if self.updatingGUI:
@@ -1434,8 +1436,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                     base_filename = os.path.splitext(os.path.join(root, file))[0]
                     # Candidate order: .combined.json > .{rater}.json > .json
                     candidates = [
-                        f"{base_filename}.combined.json",
                         f"{base_filename}.{rater}.json",
+                        f"{base_filename}.combined.json",
                         f"{base_filename}.json"
                     ]
                     annotation_path = None
@@ -2179,6 +2181,29 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         return translucent_band
 
+    def _applyDepthGuideToMask(self, maskArray, parameterNode=None):
+        """
+        Helper function to apply depth guide to a mask array if enabled.
+
+        Args:
+            maskArray: The mask or overlay array to apply depth guide to
+            parameterNode: Optional parameter node. If not provided, will use self.getParameterNode()
+
+                    Returns:
+            The updated mask array with depth guide applied (if enabled)
+        """
+        if parameterNode is None:
+            parameterNode = self.getParameterNode()
+
+        if parameterNode.depthGuideVisible:
+            ultrasoundArray = slicer.util.arrayFromVolume(parameterNode.inputVolume)
+            image_size_rows = ultrasoundArray.shape[1]
+            image_size_cols = ultrasoundArray.shape[2]
+            depth_guide = self.drawDepthGuideLine(image_size_rows, image_size_cols)
+            maskArray[0, :, :, :] = np.maximum(maskArray[0, :, :, :], depth_guide)
+
+        return maskArray
+
     def updateOverlayVolume(self):
         """
         Update the overlay volume based on the annotations.
@@ -2210,13 +2235,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if hasattr(self, "highlightedRaters") and len(self.highlightedRaters) > 1:
             overlayArray = slicer.util.arrayFromVolume(parameterNode.overlayVolume)
             overlayArray[:] = 0
-            if parameterNode.depthGuideVisible:
-                # draw the depth guide lines anyway
-                ultrasoundArray = slicer.util.arrayFromVolume(self.getParameterNode().inputVolume)
-                image_size_rows = ultrasoundArray.shape[1]
-                image_size_cols = ultrasoundArray.shape[2]
-                depth_guide = self.drawDepthGuideLine(ultrasoundArray.shape[1], ultrasoundArray.shape[2])
-                overlayArray[0, :, :, :] = np.maximum(overlayArray[0, :, :, :], depth_guide)
+            overlayArray = self._applyDepthGuideToMask(overlayArray, parameterNode)
             slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, overlayArray)
             slicer.util.showStatusMessage("Overlay hidden: multiple raters selected", 3000)
             return None
@@ -2278,13 +2297,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         bluePixels = np.count_nonzero(maskArray[0, :, :, 2])
         greenPixels = np.count_nonzero(maskArray[0, :, :, 1])
 
-        if parameterNode.depthGuideVisible:
-            # draw the depth guide lines
-            ultrasoundArray = slicer.util.arrayFromVolume(self.getParameterNode().inputVolume)
-            image_size_rows = ultrasoundArray.shape[1]
-            image_size_cols = ultrasoundArray.shape[2]
-            depth_guide = self.drawDepthGuideLine(ultrasoundArray.shape[1], ultrasoundArray.shape[2])
-            maskArray[0, :, :, :] = np.maximum(maskArray[0, :, :, :], depth_guide)
+        # apply depthGuide if enabled
+        maskArray = self._applyDepthGuideToMask(maskArray, parameterNode)
 
         # Update the overlay volume
         slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, maskArray)
