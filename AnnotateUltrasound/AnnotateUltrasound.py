@@ -20,7 +20,6 @@ import qt
 import shutil
 import slicer
 import vtk
-import hashlib
 import colorsys
 
 try:
@@ -1343,7 +1342,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         and subsequent raters are spaced around the color wheel.
         The order is lexicographically sorted.
         """
-        import colorsys
         rater = rater.strip().lower()
         # Maintain a static/class attribute for seen raters in lex order
         if rater not in self.seenRaters and rater != '':
@@ -1607,7 +1605,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         nextDicomFilepath = self.dicomDf.iloc[self.nextDicomDfIndex]['Filepath']
 
         # --- Begin: Custom annotation file selection logic ---
-        import os
         base_file_path = self.dicomDf.iloc[self.nextDicomDfIndex]['Filepath']
         base_prefix = os.path.splitext(base_file_path)[0]
         rater = self.getParameterNode().rater.strip().lower()
