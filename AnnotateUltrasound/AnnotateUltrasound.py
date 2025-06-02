@@ -1014,12 +1014,15 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 markupNode.GetNthControlPointPosition(i, coord)
     
     def onDepthGuideToggled(self, toggled):
-        # Save new state in application settings
+        # Save new state in application settings and update overlay volume to show/hide the depth guide
         settings = slicer.app.settings()
         if toggled:
             settings.setValue('AnnotateUltrasound/DepthGuide', "True")
+            self.logic.parameterNode.depthGuideVisible = True
         else:
             settings.setValue('AnnotateUltrasound/DepthGuide', "False")
+            self.logic.parameterNode.depthGuideVisible = False
+        self.logic.updateOverlayVolume()
 
     def onRaterNameChanged(self):
         if self._parameterNode:
