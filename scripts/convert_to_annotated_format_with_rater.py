@@ -8,6 +8,17 @@ def clean_nested_lines(lines):
     # Remove only empty sub-arrays, keep outer list even if empty
     return [line for line in lines if isinstance(line, list) and len(line) > 0]
 
+def convert_ras_to_lps(annotations: list):
+    for frame in annotations:
+        if frame.get("coordinate_space", "RAS") == "RAS":
+            for line_group in ["pleura_lines", "b_lines"]:
+                for entry in frame.get(line_group, []):
+                    points = entry["line"]["points"]
+                    for point in points:
+                        point[0] = -point[0]  # Negate X (Right → Left)
+                        point[1] = -point[1]  # Negate Y (Anterior → Posterior)
+            frame["coordinate_space"] = "LPS"  # Update coordinate_space
+
 def transform_annotations(data, rater):
     annotations = data.get("frame_annotations")
     if isinstance(annotations, dict):
@@ -32,6 +43,9 @@ def transform_annotations(data, rater):
             new_list.append(frame)
 
         data["frame_annotations"] = new_list
+        # write out as LPS
+        convert_ras_to_lps(data.get("frame_annotations", []))
+
     return data
 
 def extract_rater_from_path(path):

@@ -755,8 +755,14 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Save annotations to file (use rater-specific filename from dicomDf)
         annotationsFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['AnnotationsFilepath']
+
+        # Convert RAS to LPS before saving
+        self.logic.convert_ras_to_lps(self.logic.annotations.get("frame_annotations", []))
         with open(annotationsFilepath, 'w') as f:
             json.dump(self.logic.annotations, f)
+
+        # Restore in-memory data to RAS after saving
+        self.logic.convert_lps_to_ras(self.logic.annotations.get("frame_annotations", []))
 
         waitDialog.close()
 
@@ -1550,7 +1556,29 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.pleuraLines = []
         self.bLines = []
         self.sequenceBrowserNode = None
-        
+
+    def convert_lps_to_ras(self, annotations: list):
+        for frame in annotations:
+            if frame.get("coordinate_space", "RAS") == "LPS":
+                for line_group in ["pleura_lines", "b_lines"]:
+                    for entry in frame.get(line_group, []):
+                        points = entry["line"]["points"]
+                        for point in points:
+                            point[0] = -point[0]  # Negate X (Left → Right)
+                            point[1] = -point[1]  # Negate Y (Posterior → Anterior)
+                frame["coordinate_space"] = "RAS"  # Update coordinate_space
+
+    def convert_ras_to_lps(self, annotations: list):
+        for frame in annotations:
+            if frame.get("coordinate_space", "RAS") == "RAS":
+                for line_group in ["pleura_lines", "b_lines"]:
+                    for entry in frame.get(line_group, []):
+                        points = entry["line"]["points"]
+                        for point in points:
+                            point[0] = -point[0]  # Negate X (Right → Left)
+                            point[1] = -point[1]  # Negate Y (Anterior → Posterior)
+                frame["coordinate_space"] = "LPS"  # Update coordinate_space
+
     def loadNextSequence(self):
         """
         Load the next sequence in the dataframe.
@@ -1672,6 +1700,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Load annotations file
         with open(nextAnnotationsFilepath, 'r') as f:
             self.annotations = json.load(f)
+
+        # Read the coordinate space and convert to RAS if it was LPS as Slicer wants RAS
+        # but dicom standard is LPS
+        self.convert_lps_to_ras(self.annotations.get("frame_annotations", []))
 
         # Extract all raters from the frame annotations, with current rater first if set
         current_rater = self.getParameterNode().rater.strip().lower()
