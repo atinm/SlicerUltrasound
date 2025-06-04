@@ -3,3 +3,5 @@
 *~
 */**/data/
 */**/.venv/
+# AI model checkpoints
+AnonymizeUltrasound/Resources/checkpoints/*
