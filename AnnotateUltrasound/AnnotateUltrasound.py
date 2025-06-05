@@ -15,12 +15,14 @@ import logging
 import math
 import numpy as np
 import os
+import glob
 import pydicom
 import qt
 import shutil
 import slicer
 import vtk
 import colorsys
+import copy
 
 try:
     import pandas as pd
@@ -396,10 +398,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             for line in frame.get(key, [])
             if line.get("rater")
         }
-        current_rater = self._parameterNode.rater
-        if current_rater and current_rater not in raters_seen:
-            raters_seen.add(current_rater)
-        self.seenRaters = sorted(raters_seen)
+        if self._parameterNode.rater and self._parameterNode.rater in raters_seen:
+            raters_seen.discard(self._parameterNode.rater)
+        # always put current rater at the top
+        raters_seen = [self._parameterNode.rater] + sorted(raters_seen)
+        self.seenRaters = raters_seen
 
     def onReadInputButton(self):
         """
@@ -444,7 +447,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 base_filename = os.path.splitext(rater_path)[0].rsplit('.', 1)[0]
                 candidates = [
                     f"{base_filename}.{rater}.json",
-                    f"{base_filename}.combined.json",
                     f"{base_filename}.json"
                 ]
                 annotation_path = None
@@ -453,7 +455,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                         annotation_path = candidate
                         break
                 if annotation_path is None:
-                    logging.warning(f"No annotation file found for base {base_filename} and rater {rater}")
                     # Create a blank rater_path
                     with open(rater_path, "w") as f:
                         f.write("{}")
@@ -478,7 +479,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
             self.logic.sequenceBrowserNode.SetSelectedItemNumber(0)
             self.logic.updateCurrentFrame()
-            self.updateGuiFromAnnotations()
 
             self.ui.intensitySlider.setValue(0)
 
@@ -487,6 +487,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.selectedRaters = set(self.seenRaters)
 
             self._updateRaterColorTableCheckboxes()
+            self.updateGuiFromAnnotations()
 
             # Close the wait dialog
             waitDialog.close()
@@ -552,7 +553,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.extractSeenRaters()
         self.selectedRaters = set(self.seenRaters)
 
-        self._updateRaterColorTableCheckboxes()
+        self.populateRaterColorTable()
 
         # Uncheck all label checkboxes, but prevent them from triggering the onLabelCheckBoxToggled event while we are doing this
         for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())):
@@ -678,8 +679,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.currentFileLabel.setText(statusText)
         slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
 
-        self.updateGuiFromAnnotations()
-
         # Restore settings
         self._parameterNode.depthGuideVisible = showDepthGuide
 
@@ -689,8 +688,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.extractSeenRaters()
         self.selectedRaters = set(self.seenRaters)
 
-        self._updateRaterColorTableCheckboxes()
+        self.populateRaterColorTable()
         
+        self.updateGuiFromAnnotations()
+
         # Close the wait dialog
         waitDialog.close()
         
@@ -734,13 +735,28 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Save annotations to file (use rater-specific filename from dicomDf)
         annotationsFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['AnnotationsFilepath']
 
-        # Convert RAS to LPS before saving
-        self.logic.convert_ras_to_lps(self.logic.annotations.get("frame_annotations", []))
-        with open(annotationsFilepath, 'w') as f:
-            json.dump(self.logic.annotations, f)
+        # Filter annotations to include only current rater's lines
+        rater = self._parameterNode.rater.strip().lower()
+        filtered_frames = []
+        for frame in self.logic.annotations.get("frame_annotations", []):
+            pleura = [line for line in frame.get("pleura_lines", []) if line.get("rater", "").strip().lower() == rater]
+            b_lines = [line for line in frame.get("b_lines", []) if line.get("rater", "").strip().lower() == rater]
+            if pleura or b_lines:
+                filtered_frames.append({
+                    "frame_number": frame["frame_number"],
+                    "coordinate_space": "RAS",
+                    "pleura_lines": pleura,
+                    "b_lines": b_lines
+                })
+        # use a copy as we will overwrite the frame_annotations for it
+        save_data = copy.deepcopy(self.logic.annotations)
+        save_data["frame_annotations"] = filtered_frames
+        save_data["labels"] = self.logic.annotations.get("labels", [])
 
-        # Restore in-memory data to RAS after saving
-        self.logic.convert_lps_to_ras(self.logic.annotations.get("frame_annotations", []))
+        # Convert RAS to LPS before saving
+        self.logic.convert_ras_to_lps(save_data.get("frame_annotations", []))
+        with open(annotationsFilepath, 'w') as f:
+            json.dump(save_data, f)
 
         waitDialog.close()
 
@@ -1158,8 +1174,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
             # Update corner annotation if _parameterNode.pleuraPercentage is a non-negative number
             # if we are using multiple raters and have selected more than one, don't show overlay volume
-            highlightedRaters = self.logic.getHighlightedRaters()
-            if highlightedRaters is not None and len(highlightedRaters) == 1:
+            selectedRaters = self.logic.getSelectedRaters()
+            if selectedRaters is not None and len(selectedRaters) == 1:
                 if self.ui.showPleuraPercentageCheckBox.checked and self._parameterNode.pleuraPercentage >= 0:
                     view=slicer.app.layoutManager().sliceWidget("Red").sliceView()
                     view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft,f"B-line/Pleura = {self._parameterNode.pleuraPercentage:.1f} %")
@@ -1249,12 +1265,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 selected.append(item.text())
         return selected
 
-    def _updateRaterColorTableCheckboxes(self, check_state=qt.Qt.Checked):
+    def _updateRaterColorTableCheckboxes(self):
         """
-        Helper function to update all checkboxes in the rater color table.
+        Helper function to update all checkboxes in the rater color table based on the selectedRaters.
 
-        Args:
-            check_state: The check state to set (qt.Qt.Checked or qt.Qt.Unchecked)
         """
 
         if not hasattr(self.ui, 'raterColorTable'):
@@ -1266,9 +1280,14 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             for row in range(table.rowCount):
                 item = table.item(row, 0)
                 if item:
-                    item.setCheckState(check_state)
+                    if item.text().strip().lower() in self.selectedRaters:
+                        item.setCheckState(qt.Qt.Checked)
+                    else:
+                        item.setCheckState(qt.Qt.Unchecked)
         finally:
             table.blockSignals(False)
+        self.ui.raterColorTable.repaint()
+        self.ui.raterColorTable.update()
 
     def onRaterColorSelectionChangedFromUser(self):
         if self.updatingGUI:
@@ -1277,7 +1296,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
     def updateRatersFromCheckboxes(self):
         self.selectedRaters = self.getSelectedRatersFromTable()
-        self.logic.setHighlightedRaters(self.selectedRaters)
+        self.logic.setSelectedRaters(self.selectedRaters)
         self.logic.updateLineMarkups()
         ratio = self.logic.updateOverlayVolume()
         if ratio is not None:
@@ -1285,6 +1304,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         else:
             self._parameterNode.pleuraPercentage = 0.0
         self._updateGUIFromParameterNode()
+        self.ui.raterColorTable.repaint()
+        self.ui.raterColorTable.update()
 
     def onRaterColorTableClicked(self, row, column):
         item = self.ui.raterColorTable.item(row, 0)  # Assume checkbox is in column 0
@@ -1376,16 +1397,15 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             colors.append((r, (pleura_color, bline_color)))
         return colors
 
-    def setHighlightedRaters(self, raters: set):
+    def setSelectedRaters(self, raters: set):
         """
         Store the selected raters and filter visuals accordingly.
         """
-        self.highlightedRaters = set(raters)
-        # TODO: Implement filtering of visuals based on self.highlightedRaters
-    
-    def getHighlightedRaters(self):
-        if hasattr(self, "highlightedRaters"):
-            return self.highlightedRaters
+        self.selectedRaters = set(raters)
+
+    def getSelectedRaters(self):
+        if hasattr(self, "selectedRaters"):
+            return self.selectedRaters
         return None
 
     def setRater(self, value):
@@ -1437,7 +1457,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                     # Candidate order: .combined.json > .{rater}.json > .json
                     candidates = [
                         f"{base_filename}.{rater}.json",
-                        f"{base_filename}.combined.json",
                         f"{base_filename}.json"
                     ]
                     annotation_path = None
@@ -1448,7 +1467,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                     # Now: select which file to use or create/copy
                     if annotation_path is None:
                         annotations_file_path = f"{base_filename}.{rater}.json"
-                        logging.warning(f"No annotation file found for base {base_filename} and rater {rater}. A blank annotations file will be created.")
                         with open(annotations_file_path, 'w') as f:
                             f.write('{}')
                         annotations_created_count += 1
@@ -1609,10 +1627,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # --- Begin: Custom annotation file selection logic ---
         base_file_path = self.dicomDf.iloc[self.nextDicomDfIndex]['Filepath']
         base_prefix = os.path.splitext(base_file_path)[0]
-        rater = self.getParameterNode().rater.strip().lower()
+        current_rater = self.getParameterNode().rater.strip().lower()
         candidates = [
-            f"{base_prefix}.{rater}.json",
-            f"{base_prefix}.combined.json",
+            f"{base_prefix}.{current_rater}.json",
             f"{base_prefix}.json"
         ]
         nextAnnotationsFilepath = None
@@ -1621,12 +1638,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 nextAnnotationsFilepath = candidate
                 break
         if nextAnnotationsFilepath is None:
-            logging.warning(f"No annotation file found for base {base_prefix} and rater {rater}. Creating blank annotations.")
-            nextAnnotationsFilepath = f"{base_prefix}.{rater}.json"
+            logging.warning(f"No annotation file found for base {base_prefix} and rater {current_rater}. Creating blank annotations.")
+            nextAnnotationsFilepath = f"{base_prefix}.{current_rater}.json"
             with open(nextAnnotationsFilepath, 'w') as f:
                 f.write('{}')
-        # --- End: Custom annotation file selection logic ---
-
         self.nextDicomDfIndex += 1
 
         # Make sure a temporary folder for the DICOM files exists
@@ -1699,28 +1714,75 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         slicer.util.updateVolumeFromArray(overlayVolume, maskArray)
         parameterNode.overlayVolume = overlayVolume
 
-        # Load annotations file
-        with open(nextAnnotationsFilepath, 'r') as f:
-            self.annotations = json.load(f)
+        # Load all annotations with the same base prefix and deeply merge frame_annotations by frame_number
+        self.seenRaters = []
+        merged_data = {}
+        merged_data["frame_annotations"] = []
+        base_glob = f"{base_prefix}.*.json"
+        for filepath in glob.glob(base_glob):
+            try:
+                with open(filepath, 'r') as f:
+                    ann = json.load(f)
+                    self.convert_lps_to_ras(ann.get("frame_annotations", []))
+                    # Merge non-frame_annotations keys with conflict check
+                    for k, v in ann.items():
+                        if k == "frame_annotations":
+                            continue
+                        if k not in merged_data:
+                            merged_data[k] = v
+                        elif merged_data[k] in [None, "", [], {}]:
+                            merged_data[k] = v
+                        elif isinstance(merged_data[k], list) and isinstance(v, list):
+                            merged_data[k].extend(v)
+                            merged_data[k] = list(dict.fromkeys(merged_data[k]))
+                        elif merged_data[k] != v:
+                            logging.warning(f"Conflicting values for key '{k}': {merged_data[k]} vs {v}, keeping first value")
+                    # Only merge pleura_lines and b_lines for frames with matching frame_number
+                    for frame in ann.get("frame_annotations", []):
+                        frame_number = frame["frame_number"]
+                        matched = next((f for f in merged_data["frame_annotations"] if f["frame_number"] == frame_number), None)
+                        if matched:
+                            matched["pleura_lines"].extend(frame.get("pleura_lines", []))
+                            matched["b_lines"].extend(frame.get("b_lines", []))
+                            # Add new raters from pleura_lines
+                            for entry in frame.get("pleura_lines", []):
+                                rater = entry.get("rater")
+                                if rater and rater not in self.seenRaters:
+                                    self.seenRaters.append(rater)
+                            # Add new raters from b_lines
+                            for entry in frame.get("b_lines", []):
+                                rater = entry.get("rater")
+                                if rater and rater not in self.seenRaters:
+                                    self.seenRaters.append(rater)
+                        else:
+                            merged_data["frame_annotations"].append({
+                                "frame_number": frame["frame_number"],
+                                "coordinate_space": frame.get("coordinate_space", "RAS"),
+                                "pleura_lines": frame.get("pleura_lines", []),
+                                "b_lines": frame.get("b_lines", [])
+                            })
+                            # Add new raters from pleura_lines
+                            for entry in frame.get("pleura_lines", []):
+                                rater = entry.get("rater")
+                                if rater and rater not in self.seenRaters:
+                                    self.seenRaters.append(rater)
+                            # Add new raters from b_lines
+                            for entry in frame.get("b_lines", []):
+                                rater = entry.get("rater")
+                                if rater and rater not in self.seenRaters:
+                                    self.seenRaters.append(rater)
+            except Exception as e:
+                logging.warning(f"Failed to load annotation file {filepath}: {e}")
 
-        # Read the coordinate space and convert to RAS if it was LPS as Slicer wants RAS
-        # but dicom standard is LPS
-        self.convert_lps_to_ras(self.annotations.get("frame_annotations", []))
+        self.annotations = merged_data
 
-        # Extract all raters from the frame annotations, with current rater first if set
-        current_rater = self.getParameterNode().rater.strip().lower()
-        seen = {line.get("rater") for frame in self.annotations.get("frame_annotations", [])
-                for key in ["pleura_lines", "b_lines"]
-                for line in frame.get(key, []) if line.get("rater")}
-        if current_rater:
-            seen.discard(current_rater)
-            self.seenRaters = [current_rater] + sorted(seen)
-        else:
-            self.seenRaters = sorted(seen)
-        self.highlightedRaters = set(self.seenRaters)
+        if current_rater in self.seenRaters:
+            self.seenRaters.remove(current_rater)
+        # put current rater at the top
+        self.seenRaters = [current_rater] + sorted(self.seenRaters)
+        self.setSelectedRaters(self.seenRaters)
 
-        # After loading annotations, update seenRaters and selectedRaters, and check checkboxes
-        # Note: This logic should be handled by the Widget after calling extractSeenRaters.
+        #self.highlightedRaters = set(self.seenRaters)
 
         self.updateLineMarkups()
         ratio = self.updateOverlayVolume()
@@ -2022,7 +2084,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             return
 
         for entry in frame.get("pleura_lines", []):
-            if entry.get("rater") not in self.highlightedRaters:
+            if entry.get("rater") not in self.selectedRaters:
                 continue
             coordinates = entry.get("line", {}).get("points", [])
             rater = entry.get("rater", "")
@@ -2031,7 +2093,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 self.pleuraLines.append(self.createMarkupLine("Pleura", entry.get("rater", ""), coordinates, color_pleura))
 
         for entry in frame.get("b_lines", []):
-            if entry.get("rater") not in self.highlightedRaters:
+            if entry.get("rater") not in self.selectedRaters:
                 continue
             coordinates = entry.get("line", {}).get("points", [])
             rater = entry.get("rater", "")
@@ -2232,7 +2294,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             return None
 
         # if we are using multiple raters and have selected more than one, don't show overlay volume
-        if hasattr(self, "highlightedRaters") and len(self.highlightedRaters) > 1:
+        if hasattr(self, "selectedRaters") and len(self.selectedRaters) > 1:
             overlayArray = slicer.util.arrayFromVolume(parameterNode.overlayVolume)
             overlayArray[:] = 0
             overlayArray = self._applyDepthGuideToMask(overlayArray, parameterNode)
@@ -2253,7 +2315,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Add pleura lines to mask array using full RGB overlay
         for markupNode in self.pleuraLines:
             nodeRater = markupNode.GetAttribute("rater") if markupNode else None
-            if hasattr(self, "highlightedRaters") and self.highlightedRaters and nodeRater not in self.highlightedRaters:
+            if hasattr(self, "selectedRaters") and self.selectedRaters and nodeRater not in self.selectedRaters:
                 continue
 
             for i in range(markupNode.GetNumberOfControlPoints() - 1):
@@ -2273,7 +2335,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Add B-lines to mask array using full RGB overlay
         for markupNode in self.bLines:
             nodeRater = markupNode.GetAttribute("rater") if markupNode else None
-            if hasattr(self, "highlightedRaters") and self.highlightedRaters and nodeRater not in self.highlightedRaters:
+            if hasattr(self, "selectedRaters") and self.selectedRaters and nodeRater not in self.selectedRaters:
                 continue
 
             for i in range(markupNode.GetNumberOfControlPoints() - 1):
