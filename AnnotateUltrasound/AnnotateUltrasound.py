@@ -269,8 +269,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         settings = slicer.app.settings()
         showPleuraPercentage = settings.value('AnnotateUltrasound/ShowPleuraPercentage', 'false')
         self.ui.showPleuraPercentageCheckBox.setChecked(showPleuraPercentage.lower() == 'true')
-        self.ui.raterName.setPlainText(slicer.app.settings().value("AnnotateUltrasound/Rater", ""))
-        self.ui.raterName.textChanged.connect(self.raterNameDebounceTimer.start)
+        self.ui.raterName.setText(slicer.app.settings().value("AnnotateUltrasound/Rater", ""))
+        self.ui.raterName.returnPressed.connect(self.onRaterNameChanged)
         self.ui.showPleuraPercentageCheckBox.connect('toggled(bool)', self.saveUserSettings)
         self.ui.depthGuideCheckBox.toggled.connect(self.onDepthGuideToggled)
 
@@ -307,7 +307,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         settings = qt.QSettings()
         settings.setValue('AnnotateUltrasound/ShowPleuraPercentage', self.ui.showPleuraPercentageCheckBox.checked)
         settings.setValue('AnnotateUltrasound/DepthGuide', self.ui.depthGuideCheckBox.checked)
-        settings.setValue('AnnotateUltrasound/Rater', self.ui.raterName.toPlainText().strip())
+        settings.setValue('AnnotateUltrasound/Rater', self.ui.raterName.text.strip())
         ratio = self.logic.updateOverlayVolume()
         if ratio is not None:
             self._parameterNode.pleuraPercentage = ratio * 100
@@ -420,7 +420,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self._parameterNode.dfLoaded = False
             return
 
-        rater = self.ui.raterName.toPlainText().strip()
+        rater = self._parameterNode.rater
         if not rater:
             qt.QMessageBox.warning(
                 slicer.util.mainWindow(),
@@ -707,7 +707,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             return
 
         # Check if rater name is set and not empty; if not, prompt user to enter one
-        rater = self.ui.raterName.toPlainText().strip()
+        rater = self._parameterNode.rater
         if not rater:
             qt.QMessageBox.warning(
                 slicer.util.mainWindow(),
@@ -716,7 +716,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             )
             self.ui.statusLabel.setText("⚠️ Please enter a rater name before saving.")
             return
-        self._parameterNode.rater = rater
 
         waitDialog = self.createWaitDialog("Saving annotations", "Saving annotations...")
 
@@ -1019,7 +1018,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
     def onRaterNameChanged(self):
         if self._parameterNode:
-            self._parameterNode.rater = self.ui.raterName.toPlainText().strip()
+            self._parameterNode.rater = self.ui.raterName.text.strip()
         
     def cleanup(self) -> None:
         """
@@ -1118,6 +1117,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if isinstance(showDepthGuide, str):
             showDepthGuide = showDepthGuide.lower() == 'true'
         self._parameterNode.rater = settings.value('AnnotateUltrasound/Rater', '')
+        self.ui.raterName.setText(self._parameterNode.rater)
         if self._parameterNode.rater != '':
             self.logic.setRater(self._parameterNode.rater)
             self.logic.getColorsForRater(self._parameterNode.rater)
@@ -1209,7 +1209,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
             # Save rater name to settings
             settings = qt.QSettings()
-            settings.setValue('AnnotateUltrasound/Rater', self.ui.raterName.toPlainText())
+            settings.setValue('AnnotateUltrasound/Rater', self.ui.raterName.text.strip())
 
             # Only update raterColorTable if present;
             if hasattr(self.ui, 'raterColorTable'):
@@ -1454,7 +1454,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                     instance_uid = dicom_file.SOPInstanceUID if 'SOPInstanceUID' in dicom_file else None
                     
                     base_filename = os.path.splitext(os.path.join(root, file))[0]
-                    # Candidate order: .combined.json > .{rater}.json > .json
                     candidates = [
                         f"{base_filename}.{rater}.json",
                         f"{base_filename}.json"
@@ -1470,8 +1469,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                         with open(annotations_file_path, 'w') as f:
                             f.write('{}')
                         annotations_created_count += 1
-                    elif annotation_path.endswith(".combined.json"):
-                        annotations_file_path = annotation_path
                     elif annotation_path.endswith(f".{rater}.json"):
                         annotations_file_path = annotation_path
                     else:

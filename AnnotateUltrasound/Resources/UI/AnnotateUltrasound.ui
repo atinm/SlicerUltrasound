@@ -35,7 +35,7 @@
                                             </widget>
                                         </item>
                                         <item>
-                                            <widget class="QPlainTextEdit" name="raterName">
+                                            <widget class="QLineEdit" name="raterName">
                                                 <property name="sizePolicy">
                                                     <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
                                                         <horstretch>0</horstretch>
@@ -48,14 +48,8 @@
                                                         <height>24</height>
                                                     </size>
                                                 </property>
-                                                <property name="inputMethodHints">
-                                                    <set>Qt::ImhNone</set>
-                                                </property>
-                                                <property name="verticalScrollBarPolicy">
-                                                    <enum>Qt::ScrollBarAlwaysOff</enum>
-                                                </property>
-                                                <property name="lineWrapMode">
-                                                    <enum>QPlainTextEdit::NoWrap</enum>
+                                                <property name="returnPressed" stdset="0">
+                                                    <bool>true</bool>
                                                 </property>
                                             </widget>
                                         </item>
