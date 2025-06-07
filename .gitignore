@@ -3,5 +3,6 @@
 *~
 */**/data/
 */**/.venv/
+.DS_Store
 # AI model checkpoints
 AnonymizeUltrasound/Resources/checkpoints/*
