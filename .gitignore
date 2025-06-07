@@ -1,6 +1,7 @@
 .vscode/
 */__pycache__/*
 *~
+.DS_Store
 
 # AI model checkpoints
 AnonymizeUltrasound/Resources/checkpoints/*

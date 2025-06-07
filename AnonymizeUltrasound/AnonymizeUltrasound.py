@@ -988,7 +988,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         # Increment nextDicomDfIndex
         nextIndex = self.incrementDicomDfIndex(None, outputDirectory, skip_existing=continueProgress)
         if nextIndex is None:
-            logging.debug("No more DICOM files to process")
+            slicer.util.mainWindow().statusBar().showMessage("No more DICOM files to process", 3000)
             return None
 
         # Delete files from temporary folder
@@ -1175,7 +1175,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             logging.info(f"Next DICOM dataframe index: {self.nextDicomDfIndex}")
         else:
             self.nextDicomDfIndex = None
-            logging.debug("No more DICOM files to process")
+            slicer.util.mainWindow().statusBar().showMessage("No more DICOM files to process", 3000)
 
         return self.nextDicomDfIndex
     
