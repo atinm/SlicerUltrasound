@@ -1484,7 +1484,56 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             self.removeLastPleuraLine()        # uses existing helper :contentReference[oaicite:0]{index=0}
 
     def autoDetectPleuraLines(self):
-        print("autoDetectPleuraLines")
+        """
+        • Clears existing pleura lines  
+        • Guarantees that an AI overlay exists (runs applyAutoOverlay() if needed)  
+        • Extracts the pleura mask (blue channel == 255)  
+        • Finds connected components, fits a bounding box to each, and
+            creates a markup line using the left‑ & right‑most pixels.
+        """
+        pnode = self.getParameterNode()
+
+        # 1. Wipe old pleura
+        self._clearPleuraLines()
+
+        # 2. Make sure the overlay (and therefore _autoMaskRGB) exists
+        if self._autoMaskRGB is None:
+            self.applyAutoOverlay()            # defined earlier :contentReference[oaicite:1]{index=1}
+            if self._autoMaskRGB is None:      # bail‑out safeguard
+                logging.error("Auto-overlay failed → no pleura mask.")
+                return
+
+        # 3. Pull the pleura mask (blue channel)
+        mask = (self._autoMaskRGB[:, :, 2] == 255).astype(np.uint8)
+        if mask.sum() == 0:
+            logging.warning("No pleura pixels in auto-overlay.")
+            return
+
+        # 4. Connected‑component analysis → bounding boxes
+        num_lbl, lbl_img, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        # stats[0] is background → skip
+        for i in range(1, num_lbl):
+            x, y, w, h, area = stats[i]       # bounding box in IJK space
+            if area < 30:                     # ignore speckles
+                continue
+            # choose two endpoints centred vertically in the bbox
+            pt1_ijk = np.array([x          , y+h//2, 0, 1])
+            pt2_ijk = np.array([x+w-1     , y+h//2, 0, 1])
+
+            # convert IJK → RAS so the markup is in world coordinates
+            ijkToRas = vtk.vtkMatrix4x4()
+            pnode.inputVolume.GetIJKToRASMatrix(ijkToRas)
+            pt1_ras = list(ijkToRas.MultiplyPoint(pt1_ijk))[:3]
+            pt2_ras = list(ijkToRas.MultiplyPoint(pt2_ijk))[:3]
+
+            # 5. Create a blue “Pleura” line markup
+            self.pleuraLines.append(
+                self.createMarkupLine("Pleura", [pt1_ras, pt2_ras], [0, 0.2, 1])
+            )                                  # createMarkupLine already exists :contentReference[oaicite:2]{index=2}
+
+        # 6. Sync JSON + overlay
+        self.updateCurrentFrame()              # writes coordinates to annotations
+        self.updateOverlayVolume()             # refreshes manual mask / % read‑out
 
     def removeLastPleuraLine(self):
         """
