@@ -14,7 +14,8 @@ fi
 find "$dest_root" -type f -name "*.json" | while read -r json_file; do
   prefix=$(basename "$json_file" | cut -d. -f1)
   target_dir=$(dirname "$json_file")
-  dcm_file="$src_dir/$prefix.dcm"
+  rel_path="${target_dir#$dest_root/}"
+  dcm_file="$src_dir/$rel_path/$prefix.dcm"
 
   if [[ -f "$dcm_file" ]]; then
     echo "Copying $dcm_file → $target_dir/"

@@ -3,6 +3,7 @@
 import os
 import sys
 import json
+import glob
 
 def clean_nested_lines(lines):
     # Remove only empty sub-arrays, keep outer list even if empty
@@ -49,40 +50,44 @@ def transform_annotations(data, rater):
     return data
 
 def extract_rater_from_path(path):
-    last_segment = os.path.basename(os.path.normpath(path))
-    if "-" in last_segment:
-        return last_segment.split("-")[0].lower()
-    return None
+    rater = os.path.basename(os.path.normpath(path))
+    if rater:
+        return rater.lower()
+    else:
+        return None
 
 def convert_directory(input_dir, output_dir):
     os.makedirs(output_dir, exist_ok=True)
-    for root, _, files in os.walk(input_dir):
-        rater = extract_rater_from_path(root)
+
+    json_paths = glob.glob(os.path.join(input_dir, "*", "*", "*.json"))
+
+    for in_path in json_paths:
+        if os.path.basename(in_path).startswith("._"):
+            continue
+
+        rater = extract_rater_from_path(os.path.dirname(os.path.dirname(in_path)))
         if not rater:
             continue
 
-        for file in files:
-            if file.endswith(".json") and not file.startswith("._"):
-                base_name = os.path.splitext(file)[0]
-                out_file = f"{base_name}.{rater}.json"
-                in_path = os.path.join(root, file)
-                rel_dir = os.path.relpath(root, input_dir)
-                out_path = os.path.join(output_dir, rel_dir, out_file)
+        rel_path = os.path.relpath(in_path, input_dir)
+        base_name = os.path.splitext(os.path.basename(in_path))[0]
+        out_file = f"{base_name}.{rater}.json"
+        out_path = os.path.join(output_dir, os.path.dirname(rel_path), out_file)
 
-                os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
-                try:
-                    with open(in_path, "r") as f:
-                        data = json.load(f)
+        try:
+            with open(in_path, "r") as f:
+                data = json.load(f)
 
-                    transformed = transform_annotations(data, rater)
+            transformed = transform_annotations(data, rater)
 
-                    with open(out_path, "w") as f:
-                        json.dump(transformed, f, indent=2)
+            with open(out_path, "w") as f:
+                json.dump(transformed, f, indent=2)
 
-                    print(f"✅ Transformed and saved {out_file}")
-                except Exception as e:
-                    print(f"❌ Failed to process {file}: {e}")
+            print(f"✅ Transformed and saved {out_file}")
+        except Exception as e:
+            print(f"❌ Failed to process {in_path}: {e}")
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
