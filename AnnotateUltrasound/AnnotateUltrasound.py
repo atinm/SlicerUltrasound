@@ -454,11 +454,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                     if os.path.exists(candidate):
                         annotation_path = candidate
                         break
-                if annotation_path is None:
-                    # Create a blank rater_path
-                    with open(rater_path, "w") as f:
-                        f.write("{}")
-                elif not os.path.exists(rater_path):
+                if annotation_path and not os.path.exists(rater_path):
                     # Copy the found annotation_path to rater_path if rater_path doesn't exist
                     shutil.copy(annotation_path, rater_path)
 
@@ -747,21 +743,27 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                     "pleura_lines": pleura,
                     "b_lines": b_lines
                 })
-        # use a copy as we will overwrite the frame_annotations for it
-        save_data = copy.deepcopy(self.logic.annotations)
-        save_data["frame_annotations"] = filtered_frames
-        save_data["labels"] = self.logic.annotations.get("labels", [])
 
-        # Convert RAS to LPS before saving
-        self.logic.convert_ras_to_lps(save_data.get("frame_annotations", []))
-        with open(annotationsFilepath, 'w') as f:
-            json.dump(save_data, f)
+        # if we have frames from the current rater
+        if filtered_frames:
+            # use a copy as we will overwrite the frame_annotations for it
+            save_data = copy.deepcopy(self.logic.annotations)
+            save_data["frame_annotations"] = filtered_frames
+            save_data["labels"] = self.logic.annotations.get("labels", [])
+
+            # Convert RAS to LPS before saving
+            self.logic.convert_ras_to_lps(save_data.get("frame_annotations", []))
+            with open(annotationsFilepath, 'w') as f:
+                json.dump(save_data, f)
 
         waitDialog.close()
 
         self._parameterNode.unsavedChanges = False
 
-        logging.info(f"Annotations saved to {annotationsFilepath}")
+        if filtered_frames:
+            logging.info(f"Annotations saved to {annotationsFilepath}")
+        else:
+            logging.info(f"No annotations to save for current rater")
 
         return True
 
@@ -1466,9 +1468,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                     # Now: select which file to use or create/copy
                     if annotation_path is None:
                         annotations_file_path = f"{base_filename}.{rater}.json"
-                        with open(annotations_file_path, 'w') as f:
-                            f.write('{}')
-                        annotations_created_count += 1
                     elif annotation_path.endswith(f".{rater}.json"):
                         annotations_file_path = annotation_path
                     else:
@@ -1635,10 +1634,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 nextAnnotationsFilepath = candidate
                 break
         if nextAnnotationsFilepath is None:
-            logging.warning(f"No annotation file found for base {base_prefix} and rater {current_rater}. Creating blank annotations.")
             nextAnnotationsFilepath = f"{base_prefix}.{current_rater}.json"
-            with open(nextAnnotationsFilepath, 'w') as f:
-                f.write('{}')
         self.nextDicomDfIndex += 1
 
         # Make sure a temporary folder for the DICOM files exists
