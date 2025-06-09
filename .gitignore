@@ -1,7 +1,9 @@
+.DS_Store
 .vscode/
 */__pycache__/*
 *~
-.DS_Store
+*/**/data/
+*/**/.venv/
 
 # AI model checkpoints
 AnonymizeUltrasound/Resources/checkpoints/*
