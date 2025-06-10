@@ -1,6 +1,9 @@
+.DS_Store
 .vscode/
 */__pycache__/*
 *~
 *.pyc
 AnnotateUltrasound/Resources/Models/
 AnonymizeUltrasound/Resources/checkpoints/
+*/**/data/
+*/**/.venv/
