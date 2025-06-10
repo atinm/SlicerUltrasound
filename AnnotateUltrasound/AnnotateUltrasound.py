@@ -620,7 +620,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if self.logic.annotations is not None and "frame_annotations" in self.logic.annotations:
             for frame_index, frame_annotations in enumerate(self.logic.annotations["frame_annotations"]):
                 self.ui.framesTableWidget.insertRow(self.ui.framesTableWidget.rowCount)
-                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 0, qt.QTableWidgetItem(str(frame_index)))
+                frame_number = int(frame_annotations.get("frame_number", frame_index))
+                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 0, qt.QTableWidgetItem(str(frame_number)))
                 self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 1, 
                     qt.QTableWidgetItem(str(len([pleura_line for pleura_line in frame_annotations["pleura_lines"] if len(pleura_line) == 2]))))
                 self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 2, 
@@ -744,8 +745,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                     "b_lines": b_lines
                 })
 
-        # if we have frames from the current rater
-        if filtered_frames:
+        # if we have frames from the current rater or we deleted all lines so unsavedChanges is true
+        if filtered_frames or self._parameterNode.unsavedChanges:
             # use a copy as we will overwrite the frame_annotations for it
             save_data = copy.deepcopy(self.logic.annotations)
             save_data["frame_annotations"] = filtered_frames
@@ -1444,10 +1445,15 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
                 # Construct the full file path
                 file_path = os.path.join(root, file)
+                file_count += 1
 
                 try:
                     # Try to read the file as a DICOM file
                     dicom_file = pydicom.dcmread(file_path)
+
+                    # Skip non-ultrasound modalities
+                    if dicom_file.get("Modality", "") != "US":
+                        continue
 
                     # Extract required information
                     patient_uid = dicom_file.PatientID if 'PatientID' in dicom_file else None
@@ -1504,19 +1510,21 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         currentFrameIndex = max(0, self.sequenceBrowserNode.GetSelectedItemNumber())  # TODO: investigate whey this could be negative!
         # Check if annotations already has a list of frame annotations. Create it if it doesn't exist.
         if 'frame_annotations' not in self.annotations:
-            self.annotations['frame_annotations'] = {}
+            self.annotations['frame_annotations'] = []
 
-        # Check if the current frame index is already in the list of frame annotations. Create it if it doesn't exist.
-        index = next((i for i, item in enumerate(self.annotations['frame_annotations']) if item.get("frame_number") == currentFrameIndex), None)
-        if index == None:
-            self.annotations['frame_annotations'][currentFrameIndex] = {
+        # Find existing frame annotation for currentFrameIndex
+        existing = next((f for f in self.annotations['frame_annotations']
+                         if int(f.get("frame_number", -1)) == currentFrameIndex), None)
+        if not existing:
+            self.annotations['frame_annotations'].append({
                 "frame_number": currentFrameIndex,
                 "coordinate_space": "RAS",
                 "pleura_lines": [],
                 "b_lines": []
-            }
+            })
+            existing = self.annotations['frame_annotations'][-1]
 
-        self.annotations['frame_annotations'][currentFrameIndex]['pleura_lines'] = []  # Reset the list of pleura lines
+        existing['pleura_lines'] = []  # Reset the list of pleura lines
 
         # Add pleura lines to annotations with new format
         for markupNode in self.pleuraLines:
@@ -1528,10 +1536,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 coordinates.append(coord)
 
             if coordinates:
-                self.annotations['frame_annotations'][currentFrameIndex]['pleura_lines'].append(
+                existing['pleura_lines'].append(
                     {"rater": markupNode.GetAttribute("rater"), "line": {"points": coordinates}})
 
-        self.annotations['frame_annotations'][currentFrameIndex]['b_lines'] = []  # Reset the list of B-lines
+        existing['b_lines'] = []  # Reset the list of B-lines
 
         # Add B-lines to annotations with new format
         for markupNode in self.bLines:
@@ -1543,7 +1551,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 coordinates.append(coord)
 
             if coordinates:
-                self.annotations['frame_annotations'][currentFrameIndex]['b_lines'].append(
+                existing['b_lines'].append(
                     {"rater": markupNode.GetAttribute("rater"),  "line": {"points": coordinates}})
 
     def removeFrame(self, frameIndex):
@@ -1553,8 +1561,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             return
         
         # Remove the frame index from the list of frame annotations
-        if str(frameIndex) in self.annotations['frame_annotations']:
-            self.annotations['frame_annotations'].pop(str(frameIndex))
+        self.annotations["frame_annotations"] = [
+            fa for fa in self.annotations.get("frame_annotations", [])
+            if int(fa.get("frame_number", -1)) != frameIndex
+        ]
         
 
     def loadPreviousSequence(self):
@@ -1840,8 +1850,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.clearSceneLines()
         # Only update annotation if current frame is already present
         if self.sequenceBrowserNode is not None and self.annotations is not None and 'frame_annotations' in self.annotations:
-            currentFrameIndexStr = str(self.sequenceBrowserNode.GetSelectedItemNumber())
-            if currentFrameIndexStr in self.annotations['frame_annotations']:
+            currentFrameIndex = self.sequenceBrowserNode.GetSelectedItemNumber()
+            if any(int(f.get("frame_number", -1)) == currentFrameIndex for f in self.annotations["frame_annotations"]):
                 self.updateCurrentFrame()
 
     def removeLastPleuraLine(self):
