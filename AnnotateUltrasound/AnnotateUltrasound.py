@@ -1516,13 +1516,14 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         existing = next((f for f in self.annotations['frame_annotations']
                          if int(f.get("frame_number", -1)) == currentFrameIndex), None)
         if not existing:
-            self.annotations['frame_annotations'].append({
+            # create an empty frame and append it to annotations
+            existing = {
                 "frame_number": currentFrameIndex,
                 "coordinate_space": "RAS",
                 "pleura_lines": [],
                 "b_lines": []
-            })
-            existing = self.annotations['frame_annotations'][-1]
+            }
+            self.annotations['frame_annotations'].append(existing)
 
         existing['pleura_lines'] = []  # Reset the list of pleura lines
 
