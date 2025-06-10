@@ -1850,7 +1850,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.clearSceneLines()
         # Only update annotation if current frame is already present
         if self.sequenceBrowserNode is not None and self.annotations is not None and 'frame_annotations' in self.annotations:
-            currentFrameIndex = self.sequenceBrowserNode.GetSelectedItemNumber()
+            currentFrameIndex = max(0, self.sequenceBrowserNode.GetSelectedItemNumber())
             if any(int(f.get("frame_number", -1)) == currentFrameIndex for f in self.annotations["frame_annotations"]):
                 self.updateCurrentFrame()
 
