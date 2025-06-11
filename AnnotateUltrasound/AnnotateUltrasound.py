@@ -438,26 +438,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.statusLabel.setText(f"Found {numFilesFound} DICOM files. Created {numAnnotationsCreated} annotations files.")
             statusText += f"\nWARNING: Created {numAnnotationsCreated} annotations files"
 
-        # Update the dicomDf to use rater-specific annotation files
-        if self.logic.dicomDf is not None and len(self.logic.dicomDf) > 0:
-            rater = rater.strip()
-            # Ensure the annotation file exists for each image, using fallback logic
-            for idx, row in self.logic.dicomDf.iterrows():
-                rater_path = row['AnnotationsFilepath']
-                base_filename = os.path.splitext(rater_path)[0].rsplit('.', 1)[0]
-                candidates = [
-                    f"{base_filename}.{rater}.json",
-                    f"{base_filename}.json"
-                ]
-                annotation_path = None
-                for candidate in candidates:
-                    if os.path.exists(candidate):
-                        annotation_path = candidate
-                        break
-                if annotation_path and not os.path.exists(rater_path):
-                    # Copy the found annotation_path to rater_path if rater_path doesn't exist
-                    shutil.copy(annotation_path, rater_path)
-
         if numFilesFound > 0:
             self._parameterNode.dfLoaded = True
             # Update progress bar
@@ -728,9 +708,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                     annotationLabels.append(f"{groupBoxTitle}/{checkBox.text}")
         self.logic.annotations['labels'] = annotationLabels
 
-        # Save annotations to file (use rater-specific filename from dicomDf)
-        annotationsFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['AnnotationsFilepath']
-
         # Filter annotations to include only current rater's lines
         rater = self._parameterNode.rater.strip().lower()
         filtered_frames = []
@@ -754,6 +731,14 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
             # Convert RAS to LPS before saving
             self.logic.convert_ras_to_lps(save_data.get("frame_annotations", []))
+
+            # Save annotations to file (use rater-specific filename from dicomDf)
+            annotationsFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['AnnotationsFilepath']
+            base_path, ext = os.path.splitext(annotationsFilepath)
+            if not base_path.endswith(f".{rater}"):
+                annotationsFilepath = f"{base_path}.{rater}.json"
+                self.logic.dicomDf.at[self.logic.nextDicomDfIndex - 1, 'AnnotationsFilepath'] = annotationsFilepath
+
             with open(annotationsFilepath, 'w') as f:
                 json.dump(save_data, f)
 
@@ -1477,9 +1462,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                     elif annotation_path.endswith(f".{rater}.json"):
                         annotations_file_path = annotation_path
                     else:
-                        annotations_file_path = f"{base_filename}.{rater}.json"
-                        if not os.path.exists(annotations_file_path):
-                            shutil.copy(annotation_path, annotations_file_path)
+                        # this will just be ${base_filename}.json
+                        annotations_file_path = annotation_path
 
                     # Append the information to the list, if PatientID, StudyInstanceUID, and SeriesInstanceUID are present
                     if patient_uid and study_uid and series_uid and instance_uid:
@@ -1722,8 +1706,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.seenRaters = []
         merged_data = {}
         merged_data["frame_annotations"] = []
-        base_glob = f"{base_prefix}.*.json"
-        for filepath in glob.glob(base_glob):
+        filepaths = glob.glob(f"{base_prefix}.json") + glob.glob(f"{base_prefix}.*.json")
+        for filepath in filepaths:
             try:
                 with open(filepath, 'r') as f:
                     ann = json.load(f)
