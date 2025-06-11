@@ -2763,14 +2763,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # 4.  Build / cache scan‑conversion config
         # ------------------------------------------------------------------ #
         if not hasattr(self, "_scanCfgSrc") or self._scanCfgSrc != json_path:
-            if not os.path.isfile(json_path):
-                logging.error(f"JSON not found: {json_path}")
-                return
-            with open(json_path, "r") as fp:
-                cfg_json = json.load(fp)
-
+            # don't need to read the json as it is already read into self.logic.annotations
             cfg = update_config_dict(
-                cfg_json,
+                self.annotations,
                 num_lines=MODEL_NUM_LINES,
                 num_samples_along_lines=MODEL_NUM_SAMPLES,
                 image_width=Wc,
