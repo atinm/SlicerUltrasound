@@ -135,7 +135,6 @@ class AnonymizeUltrasoundParameterNode:
     patientId: str = ""                                    # Currently loaded patient
     studyInstanceUid: str = ""                             # Currently loaded study
     seriesInstanceUid: str = ""                            # Currently loaded series
-    threePointFanMode: bool = False                        # Allow 3-point fan mask when enabled
 
 #
 # AnonymizeUltrasoundWidget
@@ -156,7 +155,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
     HASH_PATIENT_ID_SETTING = "AnonymizeUltrasound/HashPatientId"
     FILENAME_PREFIX_SETTING = "AnonymizeUltrasound/FilenamePrefix"
     LABELS_PATH_SETTING = "AnonymizeUltrasound/LabelsPath"
-    THREE_POINT_FAN_SETTING = "AnonymizeUltrasound/ThreePointFanMode"
+    THREE_POINT_FAN_SETTING = "AnonymizeUltrasound/ThreePointFan"
 
     def __init__(self, parent=None) -> None:
         """Called when the user opens the module the first time and the widget is initialized."""

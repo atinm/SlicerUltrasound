@@ -333,9 +333,6 @@
         <property name="text">
           <string>Enable 3-Point Fan Mask</string>
         </property>
-        <property name="SlicerParameterName">
-          <string>threePointFanMode</string>
-        </property>
         </widget>
       </item>
       <item>
