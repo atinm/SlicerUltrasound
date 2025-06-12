@@ -281,9 +281,10 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.ui.threePointFanCheckBox.connect('toggled(bool)', lambda newValue: self.onSettingChanged(self.THREE_POINT_FAN_SETTING, str(newValue)))
 
         # Propagate initial three-point fan setting to parameter node
-        paramNode = self.logic.getParameterNode()
-        if paramNode is not None:
-            paramNode.threePointFanMode = self.ui.threePointFanCheckBox.checked
+        # paramNode = self.logic.getParameterNode()
+        # if paramNode is not None:
+        #     paramNode.threePointFanMode = self.ui.threePointFanCheckBox.checked
+        self.logic.threePointFanMode = self.ui.threePointFanCheckBox.checked
 
 
         self.ui.settingsCollapsibleButton.collapsed = True
@@ -414,14 +415,17 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         else:
             settings.remove(settingName)
         # Update parameter node for three-point fan mode
-        if settingName == self.THREE_POINT_FAN_SETTING and self._parameterNode:
+        if settingName == self.THREE_POINT_FAN_SETTING:
+            # propagate to logic prop
+            self.logic.threePointFanMode = newValue.lower() == "true"
+        if self._parameterNode:
             # clear any existing points and reset overlay
             markupsNode = self._parameterNode.maskMarkups
             if markupsNode is not None:
                 markupsNode.RemoveAllControlPoints()
-            # redraw mask (will be empty)
-            self.logic.updateMaskVolume()
-            self.logic.showMaskContour()
+                # redraw mask (will be empty)
+                self.logic.updateMaskVolume()
+                self.logic.showMaskContour()
 
     def _onParameterNodeModified(self, caller=None, event=None) -> None:
         """
@@ -602,7 +606,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             return
         
         # determine if three-point fan mode is active
-        three_point = self._parameterNode.threePointFanMode
+        three_point = self.logic.threePointFanMode
 
         # Automatic mask via AI only when NOT in three-point fan mode
         # TODO: Support for three-point fan mode auto mask
@@ -675,7 +679,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             logging.error("Markups node not found")
             return
 
-        three_point = self._parameterNode.threePointFanMode
+        three_point = self.logic.threePointFanMode
         required = 3 if three_point else 4
         count = markupsNode.GetNumberOfControlPoints()
         if count == required:
@@ -695,7 +699,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         markupsNode = self._parameterNode.maskMarkups
         # determine required points based on 3-point fan mode
-        three_point = self._parameterNode.threePointFanMode
+        three_point = self.logic.threePointFanMode
         count = markupsNode.GetNumberOfControlPoints()
         required = 3 if three_point else 4
         if count == required:
@@ -712,7 +716,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         if not markupsNode:
             logging.error("Markups node not found")
             return
-        three_point = self._parameterNode.threePointFanMode
+        three_point = self.logic.threePointFanMode
         count = markupsNode.GetNumberOfControlPoints()
         required = 3 if three_point else 4
         if count == required:
@@ -761,7 +765,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                     annotationLabels.append(checkBox.text)
         
         # If there are not mask markups, confirm with the user that they really want to proceed.
-        required = 4 if not self._parameterNode.threePointFanMode else 3
+        required = 4 if not self.logic.threePointFanMode else 3
         count = self._parameterNode.maskMarkups.GetNumberOfControlPoints()
         if count < required:
             if not slicer.util.confirmOkCancelDisplay("No mask defined. Do you want to proceed without masking?"):
@@ -879,9 +883,17 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         self.showAutoOverlay = False
         self._autoMaskRGB = None     # 1×H×W×3  uint8, red
         self._manualMaskRGB = None   # 1×H×W×3  uint8, green
+        self._parameterNode = self._getOrCreateParameterNode()
+
+        self.threePointFanMode = False # This is a setting, not a parameter node value, so it is not stored in the parameter node.
+
+    def _getOrCreateParameterNode(self):
+        if not hasattr(self, "_parameterNode"):
+            self._parameterNode = AnonymizeUltrasoundParameterNode(super().getParameterNode())
+        return self._parameterNode
 
     def getParameterNode(self):
-        return AnonymizeUltrasoundParameterNode(super().getParameterNode())
+        return self._parameterNode
     
     def updateDicomDf(self, inputDirectory: str, skipSingleFrame: bool) -> int:
         """
@@ -1527,7 +1539,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         fanMaskMarkupsNode = parameterNode.maskMarkups
         # require 3 or 4 points depending on three-point setting
         count = fanMaskMarkupsNode.GetNumberOfControlPoints()
-        three_point = parameterNode.threePointFanMode
+        three_point = self.threePointFanMode
         required = 3 if three_point else 4
         if count < required:
             # Clear the overlay volume
