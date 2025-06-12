@@ -279,13 +279,6 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             self.ui.threePointFanCheckBox.checked = False
         self.ui.threePointFanCheckBox.connect('toggled(bool)', lambda newValue: self.onSettingChanged(self.THREE_POINT_FAN_SETTING, str(newValue)))
 
-        # Propagate initial three-point fan setting to parameter node
-        # paramNode = self.logic.getParameterNode()
-        # if paramNode is not None:
-        #     paramNode.threePointFanMode = self.ui.threePointFanCheckBox.checked
-        self.logic.threePointFanMode = self.ui.threePointFanCheckBox.checked
-
-
         self.ui.settingsCollapsibleButton.collapsed = True
         
         # Annotation labels
@@ -413,17 +406,13 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             settings.setValue(settingName, newValue)
         else:
             settings.remove(settingName)
-        # Update parameter node for three-point fan mode
-        if settingName == self.THREE_POINT_FAN_SETTING:
-            # propagate to logic prop
-            self.logic.threePointFanMode = newValue.lower() == "true"
-        if self._parameterNode:
+        if settingName == self.THREE_POINT_FAN_SETTING and self._parameterNode:
             # clear any existing points and reset overlay
             markupsNode = self._parameterNode.maskMarkups
             if markupsNode is not None:
                 markupsNode.RemoveAllControlPoints()
                 # redraw mask (will be empty)
-                self.logic.updateMaskVolume()
+                self.logic.updateMaskVolume(three_point=self.ui.threePointFanCheckBox.checked)
                 self.logic.showMaskContour()
 
     def _onParameterNodeModified(self, caller=None, event=None) -> None:
@@ -578,7 +567,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             statusText += filepath
             self.ui.statusLabel.text = statusText
         
-        self.logic.updateMaskVolume()
+        self.logic.updateMaskVolume(three_point=self.ui.threePointFanCheckBox.checked)
         self.logic.showMaskContour()
 
         # Set red slice compositing mode to 2
@@ -605,7 +594,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             return
         
         # determine if three-point fan mode is active
-        three_point = self.logic.threePointFanMode
+        three_point = self.ui.threePointFanCheckBox.checked
 
         # Automatic mask via AI only when NOT in three-point fan mode
         # TODO: Support for three-point fan mode auto mask
@@ -651,7 +640,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         if toggled and autoMaskSuccessful == False:
             maskMarkupsNode = self._parameterNode.maskMarkups
             maskMarkupsNode.RemoveAllControlPoints()
-            self.logic.updateMaskVolume()
+            self.logic.updateMaskVolume(three_point=self.ui.threePointFanCheckBox.checked)
             
             self._parameterNode.status = AnonymizerStatus.LANDMARK_PLACEMENT
             self.addObserver(maskMarkupsNode, slicer.vtkMRMLMarkupsNode.PointAddedEvent, self.onPointAdded)
@@ -678,11 +667,11 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             logging.error("Markups node not found")
             return
 
-        three_point = self.logic.threePointFanMode
+        three_point = self.ui.threePointFanCheckBox.checked
         required = 3 if three_point else 4
         count = markupsNode.GetNumberOfControlPoints()
         if count == required:
-            self.logic.updateMaskVolume()
+            self.logic.updateMaskVolume(three_point=three_point)
             maskContourVolumeNode = self._parameterNode.overlayVolume
             if maskContourVolumeNode:
                 sliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").mrmlSliceCompositeNode()
@@ -698,28 +687,27 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         markupsNode = self._parameterNode.maskMarkups
         # determine required points based on 3-point fan mode
-        three_point = self.logic.threePointFanMode
+        three_point = self.ui.threePointFanCheckBox.checked
         count = markupsNode.GetNumberOfControlPoints()
         required = 3 if three_point else 4
         if count == required:
             # finalize mask placement
-            self.logic.updateMaskVolume()
+            self.logic.updateMaskVolume(three_point=three_point)
             self.logic.showMaskContour()
         else:
             slicer.util.setSliceViewerLayers(foreground=None)
 
     def onPointDefined(self, caller=None, event=None):
         logging.info('Point defined')
-
         markupsNode = self._parameterNode.maskMarkups
         if not markupsNode:
             logging.error("Markups node not found")
             return
-        three_point = self.logic.threePointFanMode
+        three_point = self.ui.threePointFanCheckBox.checked
         count = markupsNode.GetNumberOfControlPoints()
         required = 3 if three_point else 4
         if count == required:
-            self.logic.updateMaskVolume()
+            self.logic.updateMaskVolume(three_point=three_point)
             self.logic.showMaskContour()
             self.ui.defineMaskButton.checked = False
             self._parameterNode.status = AnonymizerStatus.LANDMARKS_PLACED
@@ -764,15 +752,15 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                     annotationLabels.append(checkBox.text)
         
         # If there are not mask markups, confirm with the user that they really want to proceed.
-        required = 4 if not self.logic.threePointFanMode else 3
+        required = 4 if not self.ui.threePointFanCheckBox.checked else 3
         count = self._parameterNode.maskMarkups.GetNumberOfControlPoints()
         if count < required:
             if not slicer.util.confirmOkCancelDisplay("No mask defined. Do you want to proceed without masking?"):
                 return
         
         # Mask images to erase the unwanted parts
-        
-        self.logic.maskSequence()
+        three_point_bool = self.ui.threePointFanCheckBox.checked
+        self.logic.maskSequence(three_point=three_point_bool)
         
         # Set up output directory and filename
         
@@ -883,8 +871,6 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         self._autoMaskRGB = None     # 1×H×W×3  uint8, red
         self._manualMaskRGB = None   # 1×H×W×3  uint8, green
         self._parameterNode = self._getOrCreateParameterNode()
-
-        self.threePointFanMode = False # This is a setting, not a parameter node value, so it is not stored in the parameter node.
 
     def _getOrCreateParameterNode(self):
         if not hasattr(self, "_parameterNode"):
@@ -1529,7 +1515,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             parameterNode = self.getParameterNode()
             parameterNode.ultrasoundSequenceBrowser = node
 
-    def updateMaskVolume(self):
+    def updateMaskVolume(self, three_point=False):
         """
         Update the mask volume based on the current mask landmarks. Returns a string that can displayed as status message.
         """
@@ -1538,7 +1524,6 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         fanMaskMarkupsNode = parameterNode.maskMarkups
         # require 3 or 4 points depending on three-point setting
         count = fanMaskMarkupsNode.GetNumberOfControlPoints()
-        three_point = self.threePointFanMode
         required = 3 if three_point else 4
         if count < required:
             # Clear the overlay volume
@@ -1871,8 +1856,8 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         # Combine the mask with the original image
         return cv2.bitwise_or(image, mask)
     
-    def maskSequence(self):
-        self.updateMaskVolume()
+    def maskSequence(self, three_point=False):
+        self.updateMaskVolume(three_point=three_point)
 
         parameterNode = self.getParameterNode()
         currentSequenceBrowser = parameterNode.ultrasoundSequenceBrowser
