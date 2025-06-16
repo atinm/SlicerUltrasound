@@ -365,9 +365,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         if self._parameterNode:
             self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
             self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._onParameterNodeModified)
-
         self._parameterNode = inputParameterNode
-
         if self._parameterNode:
             # Note: in the .ui file, a Qt dynamic property called "SlicerParameterName" is set on each
             # ui element that needs connection.
@@ -417,14 +415,14 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             settings.setValue(settingName, newValue)
         else:
             settings.remove(settingName)
-
         if settingName == self.THREE_POINT_FAN_SETTING and self._parameterNode:
             # clear any existing points and reset overlay
             markupsNode = self._parameterNode.maskMarkups
+            threePointFanModeEnabled = self.ui.threePointFanCheckBox.checked
             if markupsNode is not None:
                 markupsNode.RemoveAllControlPoints()
                 # redraw mask (will be empty)
-                self.logic.updateMaskVolume(three_point=self.ui.threePointFanCheckBox.checked)
+                self.logic.updateMaskVolume(three_point=threePointFanModeEnabled)
                 self.logic.showMaskContour()
 
         if settingName == self.ENABLE_MASK_CACHE_SETTING and newValue.lower() == "false":
@@ -514,9 +512,11 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
     def onNextButton(self) -> None:
         logging.info("Next button clicked")
+        threePointFanModeEnabled = self.ui.threePointFanCheckBox.checked
+        continueProgress = self.ui.continueProgressCheckBox.checked
 
         # If continue progress is checked and nextDicomDfIndex is None, there is nothing more to load
-        if self.logic.nextDicomDfIndex is None and self.ui.continueProgressCheckBox.checked:
+        if self.logic.nextDicomDfIndex is None and continueProgress:
             self.ui.statusLabel.text = "All files from input folder have been processed to output folder. No more files to load."
             return
 
@@ -532,7 +532,6 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         currentDicomDfIndex = None
         try:
             outputDirectory = self.ui.outputDirectoryButton.directory
-            continueProgress = self.ui.continueProgressCheckBox.checked
             currentDicomDfIndex = self.logic.loadNextSequence(outputDirectory, continueProgress)
             if currentDicomDfIndex is None:
                 statusText = "No more series to load"
@@ -587,7 +586,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             filepath = self.logic.dicomDf.iloc[currentDicomDfIndex].Filepath
             statusText += filepath
             self.ui.statusLabel.text = statusText
-        self.logic.updateMaskVolume(three_point=self.ui.threePointFanCheckBox.checked)
+        self.logic.updateMaskVolume(three_point=threePointFanModeEnabled)
         self.logic.showMaskContour()
 
         # Set red slice compositing mode to 2
@@ -660,7 +659,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         if toggled and autoMaskSuccessful == False:
             maskMarkupsNode = self._parameterNode.maskMarkups
             maskMarkupsNode.RemoveAllControlPoints()
-            self.logic.updateMaskVolume(three_point=self.ui.threePointFanCheckBox.checked)
+            self.logic.updateMaskVolume(three_point=threePointFanModeEnabled)
             
             self._parameterNode.status = AnonymizerStatus.LANDMARK_PLACEMENT
             self.addObserver(maskMarkupsNode, slicer.vtkMRMLMarkupsNode.PointAddedEvent, self.onPointAdded)
@@ -749,6 +748,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         """
         logging.info('Export scan button pressed')
 
+        threePointFanModeEnabled = self.ui.threePointFanCheckBox.checked
         currentSequenceBrowser = self._parameterNode.ultrasoundSequenceBrowser
         if currentSequenceBrowser is None:
             self.ui.statusLabel.text = "Load a DICOM sequence before trying to export"
@@ -771,14 +771,13 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                     annotationLabels.append(checkBox.text)
 
         # If there are not mask markups, confirm with the user that they really want to proceed.
-        required = 4 if not self.ui.threePointFanCheckBox.checked else 3
+        required = 4 if not threePointFanModeEnabled else 3
         count = self._parameterNode.maskMarkups.GetNumberOfControlPoints()
         if count < required:
             if not slicer.util.confirmOkCancelDisplay("No mask defined. Do you want to proceed without masking?"):
                 return
 
         # Mask images to erase the unwanted parts
-        threePointFanModeEnabled = self.ui.threePointFanCheckBox.checked
         self.logic.maskSequence(three_point=threePointFanModeEnabled)
         
         # Set up output directory and filename
@@ -1035,8 +1034,6 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         Load next sequence in the list of DICOM files.
         Returns the index of the loaded sequence in the dataframe of DICOM files, or None if no more sequences are available.
         """
-        # TODO: Check with team if we need to cache the mask configuration for the current transducer model when `resetScene` essentially caches the current mask configuration and applies to the next scene.
-        # Even in the 4 vs 3 point case, the user will need to initially define the mask, and `resetScene` will cache on the next sequence load.
         self.resetScene()
 
         parameterNode = self.getParameterNode()
@@ -1204,50 +1201,25 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
                 parent[elem.name] = elem.value
         return parent
 
-    def resetScene(self, leaveMaskFiducials=True):
+    def resetScene(self):
         """
         Reset the scene by clearing it and setting it up again.
-
-        leaveMaskFiducials: If True, then leave the mask fiducials in the scene. If False, then remove them.
         """
         parameterNode = self.getParameterNode()
-
-        # Save mask fiducials
-        maskFiducialsList = []
-        if leaveMaskFiducials:
-            # Save mask fiducials
-            maskFiducials = parameterNode.maskMarkups
-            if maskFiducials is not None:
-                # Store all control point coordinates in a list
-                for i in range(maskFiducials.GetNumberOfControlPoints()):
-                    coord = [0, 0, 0]
-                    maskFiducials.GetNthControlPointPosition(i, coord)
-                    maskFiducialsList.append(coord)
-
-        logging.info(f"Saved {len(maskFiducialsList)} mask fiducials")
 
         # Clear the scene
         slicer.mrmlScene.Clear(0)
         self.currentDicomDataset = None
         self.currentDicomHeader = None
-        self.setupScene(maskControlPointsList=maskFiducialsList)
+        self.setupScene()
 
-        logging.info(f"Restored {len(maskFiducialsList)} mask fiducials")
-
-    def setupScene(self, maskControlPointsList=None):
-        # Make sure fan mask markups fudicual node exists and referenced by the parameter node
-
+    def setupScene(self):
         parameterNode = self.getParameterNode()
         markupsNode = parameterNode.maskMarkups
         if not markupsNode:
             markupsNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode", "MaskFiducials")
             markupsNode.GetDisplayNode().SetTextScale(0.0)
             parameterNode.maskMarkups = markupsNode
-
-        if maskControlPointsList:
-            markupsNode.RemoveAllControlPoints()
-            for controlPoint in maskControlPointsList:
-                markupsNode.AddControlPoint(controlPoint)
 
         # Add observer for node added to mrmlScene
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.NodeAddedEvent, self.onNodeAdded)
@@ -2480,9 +2452,9 @@ class CachedMaskInfo:
     def to_dict(self):
         """Convert the cached mask information to a dictionary."""
         return {
+            'transducer_model': self.transducer_model,
             'control_points': self.control_points,
             'mask_parameters': self.mask_parameters,
-            'transducer_model': self.transducer_model
         }
 
 #
