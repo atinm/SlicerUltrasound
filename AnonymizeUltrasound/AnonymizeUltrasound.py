@@ -594,13 +594,13 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             return
         
         # determine if three-point fan mode is active
-        three_point = self.ui.threePointFanCheckBox.checked
+        threePointFanModeEnabled = self.ui.threePointFanCheckBox.checked
 
         # Automatic mask via AI only when NOT in three-point fan mode
         # TODO: Support for three-point fan mode auto mask
         autoMaskSuccessful = False
         if self.ui.autoMaskCheckBox.checked:
-            if three_point:
+            if threePointFanModeEnabled:
                 logging.info("Auto mask not applied because in three-point fan mode")
             else:
                 # Get the mask control points
@@ -667,11 +667,11 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             logging.error("Markups node not found")
             return
 
-        three_point = self.ui.threePointFanCheckBox.checked
-        required = 3 if three_point else 4
+        threePointFanModeEnabled = self.ui.threePointFanCheckBox.checked
+        required = 3 if threePointFanModeEnabled else 4
         count = markupsNode.GetNumberOfControlPoints()
         if count == required:
-            self.logic.updateMaskVolume(three_point=three_point)
+            self.logic.updateMaskVolume(three_point=threePointFanModeEnabled)
             maskContourVolumeNode = self._parameterNode.overlayVolume
             if maskContourVolumeNode:
                 sliceCompositeNode = slicer.app.layoutManager().sliceWidget("Red").mrmlSliceCompositeNode()
@@ -687,12 +687,12 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         markupsNode = self._parameterNode.maskMarkups
         # determine required points based on 3-point fan mode
-        three_point = self.ui.threePointFanCheckBox.checked
+        threePointFanModeEnabled = self.ui.threePointFanCheckBox.checked
         count = markupsNode.GetNumberOfControlPoints()
-        required = 3 if three_point else 4
+        required = 3 if threePointFanModeEnabled else 4
         if count == required:
             # finalize mask placement
-            self.logic.updateMaskVolume(three_point=three_point)
+            self.logic.updateMaskVolume(three_point=threePointFanModeEnabled)
             self.logic.showMaskContour()
         else:
             slicer.util.setSliceViewerLayers(foreground=None)
@@ -703,11 +703,11 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         if not markupsNode:
             logging.error("Markups node not found")
             return
-        three_point = self.ui.threePointFanCheckBox.checked
+        threePointFanModeEnabled = self.ui.threePointFanCheckBox.checked
         count = markupsNode.GetNumberOfControlPoints()
-        required = 3 if three_point else 4
+        required = 3 if threePointFanModeEnabled else 4
         if count == required:
-            self.logic.updateMaskVolume(three_point=three_point)
+            self.logic.updateMaskVolume(three_point=threePointFanModeEnabled)
             self.logic.showMaskContour()
             self.ui.defineMaskButton.checked = False
             self._parameterNode.status = AnonymizerStatus.LANDMARKS_PLACED
@@ -759,8 +759,8 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                 return
         
         # Mask images to erase the unwanted parts
-        three_point_bool = self.ui.threePointFanCheckBox.checked
-        self.logic.maskSequence(three_point=three_point_bool)
+        threePointFanModeEnabled = self.ui.threePointFanCheckBox.checked
+        self.logic.maskSequence(three_point=threePointFanModeEnabled)
         
         # Set up output directory and filename
         
