@@ -897,7 +897,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         self.currentTransducerModel = 'unknown'
 
     def _getOrCreateParameterNode(self):
-        if not hasattr(self, "parameterNode"):
+        if not hasattr(self, "_parameterNode"):
             self._parameterNode = AnonymizeUltrasoundParameterNode(super().getParameterNode())
         return self._parameterNode
 
