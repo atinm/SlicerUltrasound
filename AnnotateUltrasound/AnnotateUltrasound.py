@@ -598,15 +598,20 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Add rows to the table
         if self.logic.annotations is not None and "frame_annotations" in self.logic.annotations:
-            for frame_index, frame_annotations in enumerate(self.logic.annotations["frame_annotations"]):
+            for frame_annotations in self.logic.annotations["frame_annotations"]:
                 self.ui.framesTableWidget.insertRow(self.ui.framesTableWidget.rowCount)
-                frame_number = int(frame_annotations.get("frame_number", frame_index))
-                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 0, qt.QTableWidgetItem(str(frame_number)))
-                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 1, 
-                    qt.QTableWidgetItem(str(len([pleura_line for pleura_line in frame_annotations["pleura_lines"] if len(pleura_line) == 2]))))
-                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 2, 
-                    qt.QTableWidgetItem(str(len([b_line for b_line in frame_annotations["b_lines"] if frame_annotations != None and len(b_line) == 2]))))
-
+                frame_number = int(frame_annotations.get("frame_number", self.ui.framesTableWidget.rowCount - 1))
+                frame_number_item = qt.QTableWidgetItem()
+                frame_number_item.setData(qt.Qt.DisplayRole, int(frame_number))
+                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 0, frame_number_item)
+                pleura_count = len([pleura_line for pleura_line in frame_annotations["pleura_lines"] if frame_annotations is not None and len(pleura_line) == 2])
+                bline_count = len([b_line for b_line in frame_annotations["b_lines"] if frame_annotations is not None and len(b_line) == 2])
+                pleura_line_item = qt.QTableWidgetItem()
+                pleura_line_item.setData(qt.Qt.DisplayRole, int(pleura_count))
+                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 1, pleura_line_item)
+                b_line_item = qt.QTableWidgetItem()
+                b_line_item.setData(qt.Qt.DisplayRole, int(bline_count))
+                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 2, b_line_item)
     
     def createWaitDialog(self, title, message):
         """
