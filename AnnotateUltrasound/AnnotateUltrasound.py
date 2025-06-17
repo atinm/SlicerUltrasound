@@ -724,13 +724,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # if we have frames from the current rater or we deleted all lines so unsavedChanges is true
         if filtered_frames or self._parameterNode.unsavedChanges:
-            # use a copy as we will overwrite the frame_annotations for it
-            save_data = copy.deepcopy(self.logic.annotations)
-            save_data["frame_annotations"] = filtered_frames
-            save_data["labels"] = self.logic.annotations.get("labels", [])
-
             # Convert RAS to LPS before saving
-            self.logic.convert_ras_to_lps(save_data.get("frame_annotations", []))
+            save_data = self.logic.convert_ras_to_lps(filtered_frames)
 
             # Save annotations to file (use rater-specific filename from dicomDf)
             annotationsFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['AnnotationsFilepath']
@@ -1580,8 +1575,13 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                             point[1] = -point[1]  # Negate Y (Posterior → Anterior)
                 frame["coordinate_space"] = "RAS"  # Update coordinate_space
 
-    def convert_ras_to_lps(self, annotations: list):
-        for frame in annotations:
+    # Use deepcopy because in-memory data should not be changed to LPS
+    def convert_ras_to_lps(self, annotated_frames: list):
+        # deepcopy so that modifications do not affect self.annotations
+        save_data = copy.deepcopy(self.annotations)
+        # deepcopy so that changes to the annotated frames don't actually affect the frames passed in
+        copied_frames = copy.deepcopy(annotated_frames)
+        for frame in copied_frames:
             if frame.get("coordinate_space", "RAS") == "RAS":
                 for line_group in ["pleura_lines", "b_lines"]:
                     for entry in frame.get(line_group, []):
@@ -1590,6 +1590,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                             point[0] = -point[0]  # Negate X (Right → Left)
                             point[1] = -point[1]  # Negate Y (Anterior → Posterior)
                 frame["coordinate_space"] = "LPS"  # Update coordinate_space
+        save_data['frame_annotations'] = copied_frames
+        return save_data # a copy of the data, so caller has to save
 
     def loadNextSequence(self):
         """
