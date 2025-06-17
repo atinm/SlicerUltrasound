@@ -508,7 +508,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                 statusText += '\nNo files already processed. Starting from first in alphabetical order.'
             else:
                 statusText += '\n' + str(numDone) + ' files already processed in output folder. Continue at next.'
-            self.ui.statusLabel.text = statusText
+        self.ui.statusLabel.text = statusText
 
     def onNextButton(self) -> None:
         logging.info("Next button clicked")
@@ -738,9 +738,10 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
             # Pop the markup button
             self.ui.defineMaskButton.checked = False
-            #
-            # Export scan
-            #
+
+    #
+    # Export scan
+    #
 
     def onExportScanButton(self):
         """
