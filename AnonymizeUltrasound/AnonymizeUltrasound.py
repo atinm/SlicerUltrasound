@@ -972,7 +972,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
                     transducer_model = self.getTransducerModel(dicom_ds.TransducerType) if 'TransducerType' in dicom_ds else 'unknown'
 
                     if transducer_model == 'unknown':
-                        logging.warning(f"Unknown transducer type in file {file_path}: {dicom_ds.TransducerType}")
+                        logging.warning(f"Unknown transducer type in file {file_path}")
 
                     if patient_id is None:
                         logging.warning(f"Patient ID missing in file {file_path}")
