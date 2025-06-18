@@ -337,6 +337,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         displayNode.SetLevel(127+value)
 
     def onClearAllLines(self):
+        logging.info('onClearAllLines')
         self.logic.clearAllLines()
         ratio = self.logic.updateOverlayVolume()
         if ratio is not None:
@@ -381,10 +382,20 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         else:
             currentFrameIndex = self.logic.sequenceBrowserNode.GetSelectedItemNumber()
             self.logic.removeFrame(currentFrameIndex)
-            self.logic.updateLineMarkups()
-            ratio = self.logic.updateOverlayVolume()
-            if ratio is not None:
-                self._parameterNode.pleuraPercentage = ratio * 100
+
+            # Set programmatic update flag to prevent unsavedChanges from being set by updateLineMarkups
+            self.logic._isProgrammaticUpdate = True
+            try:
+                self.logic.updateLineMarkups()
+                ratio = self.logic.updateOverlayVolume()
+                if ratio is not None:
+                    self._parameterNode.pleuraPercentage = ratio * 100
+            finally:
+                # Reset programmatic update flag
+                self.logic._isProgrammaticUpdate = False
+
+            # Set unsavedChanges for the user action of removing a frame
+            self._parameterNode.unsavedChanges = True
             self.updateGuiFromAnnotations()
 
     def onInputDirectorySelected(self):
@@ -886,6 +897,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             logging.error(f"Unknown line type {lineType}")
             return
 
+        logging.info("Auto-saving frame annotations")
+        self.logic.updateCurrentFrame()
+        self.updateGuiFromAnnotations()
+
     def delayedOnEndPlaceMode(self, lineType):
         logging.info(f"delayedOnEndPlaceMode -- lineType: {lineType}")
         if lineType == "Pleura":
@@ -1336,12 +1351,20 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     def updateRatersFromCheckboxes(self):
         self.selectedRaters = self.getSelectedRatersFromTable()
         self.logic.setSelectedRaters(self.selectedRaters)
-        self.logic.updateLineMarkups()
-        ratio = self.logic.updateOverlayVolume()
-        if ratio is not None:
-            self._parameterNode.pleuraPercentage = ratio * 100
-        else:
-            self._parameterNode.pleuraPercentage = 0.0
+
+        # Set programmatic update flag to prevent unsavedChanges from being set
+        self._isProgrammaticUpdate = True
+        try:
+            self.logic.updateLineMarkups()
+            ratio = self.logic.updateOverlayVolume()
+            if ratio is not None:
+                self._parameterNode.pleuraPercentage = ratio * 100
+            else:
+                self._parameterNode.pleuraPercentage = 0.0
+        finally:
+            # Reset programmatic update flag
+            self._isProgrammaticUpdate = False
+
         self._updateGUIFromParameterNode()
         self.ui.raterColorTable.repaint()
         self.ui.raterColorTable.update()
@@ -1386,6 +1409,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.depthGuideMode = 1
         logging.debug(f"Initialized depthGuideMode to {self.depthGuideMode}")
         self.parameterNode = self._getOrCreateParameterNode()
+
+        # Flag to track when we're doing programmatic updates (to avoid setting unsavedChanges)
+        self._isProgrammaticUpdate = False
 
     # Static variable to track seen raters and their order
     seenRaters = []
@@ -1834,10 +1860,16 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         #self.highlightedRaters = set(self.seenRaters)
 
-        self.updateLineMarkups()
-        ratio = self.updateOverlayVolume()
-        if ratio is not None:
-            parameterNode.pleuraPercentage = ratio * 100
+        # Set programmatic update flag to prevent unsavedChanges from being set
+        self._isProgrammaticUpdate = True
+        try:
+            self.updateLineMarkups()
+            ratio = self.updateOverlayVolume()
+            if ratio is not None:
+                parameterNode.pleuraPercentage = ratio * 100
+        finally:
+            # Reset programmatic update flag
+            self._isProgrammaticUpdate = False
         parameterNode.EndModify(previousNodeState)
 
         # Set overlay volume as foreground in slice viewers
@@ -1857,11 +1889,17 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         return self.nextDicomDfIndex
 
     def onSequenceBrowserModified(self, caller, event):
-        self.updateLineMarkups()
-        ratio = self.updateOverlayVolume()
-        if ratio is not None:
-            parameterNode = self.getParameterNode()
-            parameterNode.pleuraPercentage = ratio * 100
+        # Set programmatic update flag to prevent unsavedChanges from being set
+        self._isProgrammaticUpdate = True
+        try:
+            self.updateLineMarkups()
+            ratio = self.updateOverlayVolume()
+            if ratio is not None:
+                parameterNode = self.getParameterNode()
+                parameterNode.pleuraPercentage = ratio * 100
+        finally:
+            # Reset programmatic update flag
+            self._isProgrammaticUpdate = False
 
     def createMarkupLine(self, name, rater, coordinates, color=[1, 1, 0]):
         markupNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode")
@@ -1933,10 +1971,14 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 parameterNode.pleuraPercentage = ratio * 100
 
     def onPointModified(self, caller, event):
+        parameterNode = self.getParameterNode()
         ratio = self.updateOverlayVolume()
         if ratio is not None:
-            parameterNode = self.getParameterNode()
             parameterNode.pleuraPercentage = ratio * 100
+
+        # Only set unsavedChanges if this is a user-initiated modification
+        if not self._isProgrammaticUpdate:
+            parameterNode.unsavedChanges = True
 
     def onPointPositionDefined(self, caller, event):
         parameterNode = self.getParameterNode()
@@ -1947,8 +1989,11 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         ratio = self.updateOverlayVolume()
         if ratio is not None:
-            parameterNode = self.getParameterNode()
             parameterNode.pleuraPercentage = ratio * 100
+
+        # Set unsavedChanges when user finishes placing a line (only if not programmatic)
+        if not self._isProgrammaticUpdate:
+            parameterNode.unsavedChanges = True
 
     def fanCornersFromSectorLine(self, p1, p2, center, r1, r2):
         op1 = np.array(p1) - np.array(center)
@@ -2171,21 +2216,29 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             return
 
         frame = next((item for item in self.annotations['frame_annotations'] if str(item.get("frame_number")) == str(currentFrameIndex)), None)
-        # Compute a hash of the frame annotation data for caching
+        # Compute a hash of the frame annotation data and selected raters for caching
         frame_hash = None
         if frame is not None:
             try:
-                frame_hash = hash(json.dumps(frame, sort_keys=True))
+                # Include selected raters in the hash so rater selection changes trigger updates
+                cache_data = {
+                    'frame': frame,
+                    'selectedRaters': sorted(list(self.selectedRaters)) if hasattr(self, 'selectedRaters') else []
+                }
+                frame_hash = hash(json.dumps(cache_data, sort_keys=True))
             except Exception:
                 frame_hash = None
 
-        # Early return if frame index and annotation data are unchanged
+        # Early return if frame index, annotation data, and selected raters are unchanged
         if self._lastMarkupFrameIndex == currentFrameIndex and self._lastMarkupFrameHash == frame_hash:
             return
 
         # Update cache after check
         self._lastMarkupFrameIndex = currentFrameIndex
         self._lastMarkupFrameHash = frame_hash
+
+        # Set programmatic update flag to prevent unsavedChanges from being set
+        self._isProgrammaticUpdate = True
 
         # Batch scene updates using StartState/EndState
         slicer.mrmlScene.StartState(slicer.mrmlScene.BatchProcessState)
@@ -2241,6 +2294,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 self.bLines[i].GetDisplayNode().SetVisibility(False)
         finally:
             slicer.mrmlScene.EndState(slicer.mrmlScene.BatchProcessState)
+            # Reset programmatic update flag
+            self._isProgrammaticUpdate = False
 
     def drawDepthGuideLine(self, image_size_rows, image_size_cols, depth_ratio=0.5, color=(0, 255, 255), thickness=4, dash_length=20, dash_gap=16):
         """
@@ -2619,12 +2674,19 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                     max_pleura = pleura_count
                 if bline_count > max_blines:
                     max_blines = bline_count
-        # Preallocate pleura markup nodes
-        while len(self.pleuraLines) < max_pleura:
-            self.pleuraLines.append(self.createMarkupLine("Pleura", "", [], [1,1,0]))
-        # Preallocate b-line markup nodes
-        while len(self.bLines) < max_blines:
-            self.bLines.append(self.createMarkupLine("B-line", "", [], [0,1,1]))
+
+        # Set programmatic update flag to prevent unsavedChanges from being set
+        self._isProgrammaticUpdate = True
+        try:
+            # Preallocate pleura markup nodes
+            while len(self.pleuraLines) < max_pleura:
+                self.pleuraLines.append(self.createMarkupLine("Pleura", "", [], [1,1,0]))
+            # Preallocate b-line markup nodes
+            while len(self.bLines) < max_blines:
+                self.bLines.append(self.createMarkupLine("B-line", "", [], [0,1,1]))
+        finally:
+            # Reset programmatic update flag
+            self._isProgrammaticUpdate = False
 
     def process(self,
                 inputVolume: vtkMRMLScalarVolumeNode,
