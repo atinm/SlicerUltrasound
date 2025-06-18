@@ -23,6 +23,7 @@ import slicer
 import vtk
 import colorsys
 import copy
+import re
 
 try:
     import pandas as pd
@@ -155,7 +156,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutE = qt.QShortcut(slicer.util.mainWindow())  # "E" for removing last pleura line
         self.shortcutE.setKey(qt.QKeySequence('E'))
         self.shortcutD = qt.QShortcut(slicer.util.mainWindow())  # "D" for removing last B-line
-        self.shortcutD.setKey(qt.QKeySequence('D'))       
+        self.shortcutD.setKey(qt.QKeySequence('D'))
 
         # shortcut for saving and loading next scan
         self.shortcutA = qt.QShortcut(slicer.util.mainWindow())  # "A" for save and load next scan
@@ -182,7 +183,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Disconnect shortcuts to avoid issues when the user leaves the module
         self.shortcutW.activated.disconnect()
         self.shortcutS.activated.disconnect()
-        self.shortcutSpace.activated.disconnect()      
+        self.shortcutSpace.activated.disconnect()
         self.shortcutE.activated.disconnect()
         self.shortcutD.activated.disconnect()
         self.shortcutA.activated.disconnect()
@@ -200,22 +201,37 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui = slicer.util.childWidgetVariables(uiWidget)
         self.ui.currentFileLabel.setTextInteractionFlags(qt.Qt.TextSelectableByMouse)
 
-
         # Set scene in MRML widgets. Make sure that in Qt designer the top-level qMRMLWidget's
         # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
         # "setMRMLScene(vtkMRMLScene*)" slot.
         uiWidget.setMRMLScene(slicer.mrmlScene)
 
-        self.connectKeyboardShortcuts() 
+        self.connectKeyboardShortcuts()
 
+        # Set frames table to show 5-6 rows
+        rowHeight = 25  # Approximate height of a row
+        headerHeight = 25  # Height of the header
+        self.ui.framesTableWidget.setFixedHeight(headerHeight + (rowHeight * 6))  # 6 rows + header
+
+        # Set size policy and minimum height for labels scroll area
+        self.ui.labelsScrollArea.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Preferred)
+        self.ui.labelsScrollAreaWidgetContents.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Preferred)
+        self.ui.labelsScrollArea.setMinimumHeight(200)  # Set a reasonable minimum height
+
+        # Set layout spacing to 0 for compact appearance
+        self.ui.labelsScrollAreaWidgetContents.layout().setSpacing(0)
+        self.ui.labelsScrollAreaWidgetContents.layout().setContentsMargins(0, 0, 0, 0)
+
+        # Ensure labels section starts expanded
+        self.ui.labelAnnotationsCollapsibleButton.collapsed = False
 
         # Create logic class. Logic implements all computations that should be possible to run
         # in batch mode, without a graphical user interface.
         self.logic = AnnotateUltrasoundLogic()
-        
+
         # Update directory button directory from settings
         self.ui.inputDirectoryButton.directory = slicer.app.settings().value("AnnotateUltrasound/InputDirectory", "")
-        
+
         # Set up frames table
         self.ui.framesTableWidget.setColumnCount(3)
         self.ui.framesTableWidget.setHorizontalHeaderLabels(["Frame index", "Pleura lines (N)", "B-lines (N)"])
@@ -223,7 +239,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         header.setSectionResizeMode(qt.QHeaderView.Stretch)
         self.ui.framesTableWidget.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
         self.ui.framesTableWidget.setSelectionMode(qt.QAbstractItemView.SingleSelection)
-        
+
         # Connections
 
         # These connections ensure that we update parameter node when scene is closed
@@ -239,7 +255,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.saveAndLoadNextButton.clicked.connect(self.onSaveAndLoadNextButton)
         self.ui.intensitySlider.valueChanged.connect(self.onIntensitySliderValueChanged)
         self.ui.skipToUnlabeledButton.clicked.connect(self.onSkipToUnlabeledButton)
-        
+
         self.ui.addPleuraButton.toggled.connect(lambda checked: self.onAddLine("Pleura", checked))
         self.ui.removePleuraButton.clicked.connect(lambda: self.onRemoveLine("Pleura"))
         self.ui.addBlineButton.toggled.connect(lambda checked: self.onAddLine("Bline", checked))
@@ -263,7 +279,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.skipToUnlabeledButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueFastForward.png')))
 
         # Frame table
-        self.ui.framesTableWidget.itemSelectionChanged.connect(self.onFramesTableSelectionChanged) 
+        self.ui.framesTableWidget.itemSelectionChanged.connect(self.onFramesTableSelectionChanged)
 
         # Settings
         settings = slicer.app.settings()
@@ -290,9 +306,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.clearAllLinesButton.setFixedHeight(buttonHeight)
         self.ui.addCurrentFrameButton.setFixedHeight(buttonHeight)
         self.ui.removeCurrentFrameButton.setFixedHeight(buttonHeight)
-        
-        self.ui.labelsFileSelector.connect('currentPathChanged(QString)', self.onLabelsFileSelected)
-        
+
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
 
@@ -302,7 +316,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.raterColorTable.setMaximumHeight(vh.defaultSectionSize * 4 + 2)
             self.ui.raterColorTable.cellClicked.connect(self.onRaterColorTableClicked)
             self.ui.raterColorTable.itemChanged.connect(self.onRaterColorSelectionChangedFromUser)
-    
+
     def saveUserSettings(self):
         settings = qt.QSettings()
         settings.setValue('AnnotateUltrasound/ShowPleuraPercentage', self.ui.showPleuraPercentageCheckBox.checked)
@@ -335,15 +349,15 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         selectedRow = self.ui.framesTableWidget.currentRow()
         if (selectedRow == -1):
             return
-        
+
         selectedFrameIndex = int(self.ui.framesTableWidget.item(selectedRow, 0).text())
 
         # Get the current frame index from the sequence browser
-        
+
         if self.logic.sequenceBrowserNode is None:
             logging.warning("No sequence browser node found")
             return
-        
+
         currentFrameIndex = self.logic.sequenceBrowserNode.GetSelectedItemNumber()
 
         if selectedFrameIndex == currentFrameIndex:
@@ -374,17 +388,17 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
     def onInputDirectorySelected(self):
         logging.info('onInputDirectorySelected')
-        
+
         inputDirectory = self.ui.inputDirectoryButton.directory
         if not inputDirectory:
             statusText = '⚠️ Please select an input directory'
             slicer.util.mainWindow().statusBar().showMessage(statusText, 5000)
             self.ui.statusLabel.setText(statusText)
             return
-        
+
         # Update local settings
         slicer.app.settings().setValue("AnnotateUltrasound/InputDirectory", inputDirectory)
-        
+
     def extractSeenRaters(self):
         """
         Extracts the set of raters that have contributed lines in the current annotations,
@@ -504,11 +518,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
     def onNextButton(self):
         logging.info('onNextButton')
-        
+
         if self.logic.dicomDf is None:
             self.ui.statusLabel.setText("Please read input directory first")
             return
-        
+
         if not self.confirmUnsavedChanges():
             return
 
@@ -520,7 +534,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Create a dialog to ask the user to wait while the next sequence is loaded.
 
         waitDialog = self.createWaitDialog("Loading next sequence", "Loading next sequence...")
-        
+
         # Saving settings
         showDepthGuide = self._parameterNode.depthGuideVisible
 
@@ -533,15 +547,18 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Uncheck all label checkboxes, but prevent them from triggering the onLabelCheckBoxToggled event while we are doing this
         for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())):
-            groupBox = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
+            widget = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
+            if not isinstance(widget, qt.QGroupBox):
+                continue
+            groupBoxTitle = widget.title
             # Find all checkboxes in groupBox
-            for j in reversed(range(groupBox.layout().count())):
-                checkBox = groupBox.layout().itemAt(j).widget()
+            for j in reversed(range(widget.layout().count())):
+                checkBox = widget.layout().itemAt(j).widget()
                 if isinstance(checkBox, qt.QCheckBox):
                     checkBox.blockSignals(True)
                     checkBox.setChecked(False)
                     checkBox.blockSignals(False)
-        
+
         # Update self.ui.currentFileLabel using the DICOM file name
 
         currentDicomFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['Filepath']
@@ -551,30 +568,34 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
 
         self.updateGuiFromAnnotations()
-        
+
         # Restore settings
         self._parameterNode.depthGuideVisible = showDepthGuide
-        
+
         # Close the wait dialog
         waitDialog.close()
 
         self.ui.intensitySlider.setValue(0)
 
         self.ui.progressBar.value = currentDicomDfIndex
-        
+
         self.ui.overlayVisibilityButton.setChecked(True)
 
     def updateGuiFromAnnotations(self):
         # Check checkboxes in the labels scroll area if the labels are present in the logic.annotations
         if self.logic.annotations is not None and "labels" in self.logic.annotations:
-            for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())): 
-                groupBox = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
-                groupBoxTitle = groupBox.title
+            for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())):
+                widget = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
+                if not isinstance(widget, qt.QGroupBox):
+                    continue
+                groupBoxTitle = widget.title
                 # Find all checkboxes in groupBox
-                for j in reversed(range(groupBox.layout().count())): 
-                    checkBox = groupBox.layout().itemAt(j).widget()
+                for j in reversed(range(widget.layout().count())):
+                    checkBox = widget.layout().itemAt(j).widget()
                     if isinstance(checkBox, qt.QCheckBox):
-                        annotationName = f"{groupBoxTitle}/{checkBox.text}"
+                        origCategory = checkBox.property('originalCategory')
+                        origLabel = checkBox.property('originalLabel')
+                        annotationName = f"{origCategory}/{origLabel}"
                         checkBox.blockSignals(True)
                         if annotationName in self.logic.annotations['labels']:
                             checkBox.setChecked(True)
@@ -583,14 +604,16 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                         checkBox.blockSignals(False)
         else:
             # Uncheck all label checkboxes
-            for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())): 
-                groupBox = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
+            for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())):
+                widget = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
+                if not isinstance(widget, qt.QGroupBox):
+                    continue
                 # Find all checkboxes in groupBox
-                for j in reversed(range(groupBox.layout().count())): 
-                    checkBox = groupBox.layout().itemAt(j).widget()
+                for j in reversed(range(widget.layout().count())):
+                    checkBox = widget.layout().itemAt(j).widget()
                     if isinstance(checkBox, qt.QCheckBox):
                         checkBox.setChecked(False)
-        
+
         # Update frames table, save the current sort column and order to restore after populating
         sort_column = self.ui.framesTableWidget.horizontalHeader().sortIndicatorSection()
         sort_order = self.ui.framesTableWidget.horizontalHeader().sortIndicatorOrder()
@@ -632,7 +655,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Restore previous sort state
         self.ui.framesTableWidget.sortItems(sort_column, sort_order)
-    
+
     def createWaitDialog(self, title, message):
         """
         Create a dialog to ask the user to wait while the sequence is loaded.
@@ -653,11 +676,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         if not self.confirmUnsavedChanges():
             return
-        
+
         if self.logic.dicomDf is None:
             self.ui.statusLabel.setText("Please read input directory first")
             return
-        
+
         # Create a dialog to ask the user to wait while the next sequence is loaded.
         waitDialog = self.createWaitDialog("Loading previous sequence", "Loading previous sequence...")
 
@@ -691,14 +714,14 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.selectedRaters = set(self.seenRaters)
 
         self.populateRaterColorTable()
-        
+
         self.updateGuiFromAnnotations()
 
         # Close the wait dialog
         waitDialog.close()
-        
+
         self.ui.progressBar.value = currentDicomDfIndex
-    
+
     def saveAnnotations(self):
         """
         Saves current annotations to rater-specific json file.
@@ -723,14 +746,18 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Check if any labels are checked
         annotationLabels = []
-        for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())): 
-            groupBox = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
-            groupBoxTitle = groupBox.title
+        for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())):
+            widget = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
+            if not isinstance(widget, qt.QGroupBox):
+                continue
             # Find all checkboxes in groupBox
-            for j in reversed(range(groupBox.layout().count())):
-                checkBox = groupBox.layout().itemAt(j).widget()
+            for j in reversed(range(widget.layout().count())):
+                checkBox = widget.layout().itemAt(j).widget()
                 if isinstance(checkBox, qt.QCheckBox) and checkBox.isChecked():
-                    annotationLabels.append(f"{groupBoxTitle}/{checkBox.text}")
+                    # Use original category/label for saving
+                    origCategory = checkBox.property('originalCategory')
+                    origLabel = checkBox.property('originalLabel')
+                    annotationLabels.append(f"{origCategory}/{origLabel}")
         self.logic.annotations['labels'] = annotationLabels
 
         # Filter annotations to include only current rater's lines
@@ -788,18 +815,18 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         if self.saveAnnotations():
             self.onNextButton()
-        
+
     def onAddLine(self, lineType, checked):
         logging.info(f"onAddLine -- lineType: {lineType}, checked: {checked}")
-        
+
         interactionNode = slicer.mrmlScene.GetNodeByID("vtkMRMLInteractionNodeSingleton")
         self.removeObservers(self.onEndPlaceMode)
-        
+
         if not checked:
             # Return mouse interaction to default
             interactionNode = slicer.mrmlScene.GetNodeByID("vtkMRMLInteractionNodeSingleton")
             interactionNode.SetCurrentInteractionMode(interactionNode.ViewTransform)
-            
+
             if lineType == "Pleura":
                 linesList = self.logic.pleuraLines
             elif lineType == "Bline":
@@ -807,7 +834,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             else:
                 logging.error(f"Unknown line type {lineType}")
                 return
-            
+
             logging.info("Auto-saving frame annotations")
             self.logic.updateCurrentFrame()
             self.updateGuiFromAnnotations()
@@ -822,13 +849,13 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             if ratio is not None:
                 self._parameterNode.pleuraPercentage = ratio * 100
             return
-        
+
         # Put interaction model to place line markup
         interactionNode.SetCurrentInteractionMode(interactionNode.Place)
         interactionNode.SetPlaceModePersistence(0)
-        
+
         self.addObserver(interactionNode, interactionNode.EndPlacementEvent, self.onEndPlaceMode)
-        
+
         # Create a new markup fiducial node
         rater = self._parameterNode.rater
         if lineType == "Pleura":
@@ -842,7 +869,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         else:
             logging.error(f"Unknown line type {lineType}")
             return
-        
+
         self._parameterNode.lineBeingPlaced = newLineNode
         self._parameterNode.unsavedChanges = True
 
@@ -857,7 +884,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         else:
             logging.error(f"Unknown line type {lineType}")
             return
-    
+
     def delayedOnEndPlaceMode(self, lineType):
         logging.info(f"delayedOnEndPlaceMode -- lineType: {lineType}")
         if lineType == "Pleura":
@@ -867,15 +894,15 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         else:
             logging.error(f"Unknown line type {lineType}")
             return
-        
+
         logging.info("Auto-saving frame annotations")
         self.logic.updateCurrentFrame()
         self.updateGuiFromAnnotations()
-    
+
     def onRemovePleuraLine(self):
         logging.info('onRemovePleuraLine')
         self.logic.removeLastPleuraLine()
-    
+
     def onRemoveLine(self, lineType):
         logging.info(f"onRemoveLine -- lineType: {lineType}")
         if lineType == "Pleura":
@@ -885,65 +912,77 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         else:
             logging.error(f"Unknown line type {lineType}")
             return
-        
+
         self.logic.updateCurrentFrame()
         self.updateGuiFromAnnotations()
         self._parameterNode.unsavedChanges = True
 
-    def onLabelsFileSelected(self, labelsFilepath):
-        logging.info(f"onLabelsFileSelected -- labelsFilepath: {labelsFilepath}")
-        settings = qt.QSettings()
-        settings.setValue('AnnotateUltrasound/LabelsPath', labelsFilepath)
-        
+    def onLabelsFileSelected(self, labelsFilepath=None):
+        logging.info("Loading fixed labels file from Resources directory")
+        labelsFilepath = os.path.join(os.path.dirname(os.path.dirname(__file__)), "AnnotateUltrasound", "Resources", "annotation_labels.csv")
         categories = defaultdict(list)
-
         try:
             with open(labelsFilepath, 'r') as file:
                 reader = csv.reader(file)
                 for row in reader:
                     category, label = map(str.strip, row)
+                    # Store original values in categories dict but display humanized versions
                     categories[category].append(label)
         except (FileNotFoundError, PermissionError) as e:
             logging.error(f"Cannot read labels file: {labelsFilepath}, error: {e}")
+            return
 
-        # Remove all existing labels from the scroll area
-        for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())): 
-            # self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget().setParent(None)
+        # Clear existing widgets
+        for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())):
             self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget().deleteLater()
 
-        # Populate labels scroll area
+        # humanize category and label, splitting them on CamelCase
+        def humanize(text):
+            # Split on CamelCase, handling consecutive capitals
+            # This will split "LiverSpleenDiaphragm" into ["Liver", "Spleen", "Diaphragm"]
+            words = re.findall('[A-Z][a-z]+|[A-Z]+(?=[A-Z][a-z]|[^a-zA-Z]|$)|[a-z]+', text)
+            return ' '.join(words)
+        # Create widgets with humanized display text
         for category, labels in categories.items():
-            categoryGroupBox = qt.QGroupBox(category, self.ui.labelsScrollAreaWidgetContents)
+            categoryGroupBox = qt.QGroupBox(humanize(category), self.ui.labelsScrollAreaWidgetContents)
+            categoryGroupBox.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Preferred)
             categoryLayout = qt.QVBoxLayout(categoryGroupBox)
+            categoryLayout.setSpacing(0)  # Remove spacing between items
+            categoryLayout.setContentsMargins(2, 2, 2, 2)  # Reduce margins to minimum
             for label in labels:
-                checkBox = qt.QCheckBox(label, categoryGroupBox)
-                checkBox.toggled.connect(self.onLabelCheckBoxToggled)
+                checkBox = qt.QCheckBox(humanize(label), categoryGroupBox)
+                checkBox.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Preferred)
+                checkBox.toggled.connect(lambda checked, cb=checkBox: self.onLabelCheckBoxToggled(cb, checked))
+                # Store original category and label for saving
+                checkBox.setProperty('originalCategory', category)
+                checkBox.setProperty('originalLabel', label)
                 categoryLayout.addWidget(checkBox)
             categoryGroupBox.setLayout(categoryLayout)
             self.ui.labelsScrollAreaWidgetContents.layout().addWidget(categoryGroupBox)
-    
-    def onLabelCheckBoxToggled(self, checked):
+
+    def onLabelCheckBoxToggled(self, checkBox, checked):
         logging.info(f"onLabelCheckBoxToggled -- checked: {checked}")
         if self.logic.annotations is None:
             logging.error("No annotations loaded")
             return
         if "labels" not in self.logic.annotations:
             self.logic.annotations["labels"] = []
-        
-        # Update all labels in the annotations dictionary
-        annotationLabels = []
-        for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())): 
-            groupBox = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
-            groupBoxTitle = groupBox.title
-            # Find all checkboxes in groupBox
-            for j in reversed(range(groupBox.layout().count())):
-                checkBox = groupBox.layout().itemAt(j).widget()
-                if isinstance(checkBox, qt.QCheckBox) and checkBox.isChecked():
-                    annotationLabels.append(f"{groupBoxTitle}/{checkBox.text}")
-        self.logic.annotations['labels'] = annotationLabels
+
+        # Get the sender checkbox and its original category/label
+        origCategory = checkBox.property('originalCategory')
+        origLabel = checkBox.property('originalLabel')
+        annotationName = f"{origCategory}/{origLabel}"
+
+        if checked:
+            if annotationName not in self.logic.annotations['labels']:
+                self.logic.annotations['labels'].append(annotationName)
+        else:
+            if annotationName in self.logic.annotations['labels']:
+                self.logic.annotations['labels'].remove(annotationName)
+        self._parameterNode.unsavedChanges = True
 
     def onSkipToUnlabeledButton(self):
-        """ 
+        """
         Skip to the next unlabeled scan
         """
         if not self.confirmUnsavedChanges():
@@ -988,7 +1027,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                         return idx
             except Exception as e:
                 logging.error(f"Error reading annotations file {annotationsFilepath}: {e}")
-        
+
         return None
 
     def overlayVisibilityToggled(self, checked):
@@ -1013,7 +1052,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             for i in range(markupNode.GetNumberOfControlPoints()):
                 coord = [0, 0, 0]
                 markupNode.GetNthControlPointPosition(i, coord)
-    
+
     def onDepthGuideToggled(self, toggled):
         # Save new state in application settings and update overlay volume to show/hide the depth guide
         settings = slicer.app.settings()
@@ -1027,7 +1066,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     def onRaterNameChanged(self):
         if self._parameterNode:
             self._parameterNode.rater = self.ui.raterName.text.strip()
-        
+
     def cleanup(self) -> None:
         """
         Called when the application closes and the module widget is destroyed.
@@ -1059,19 +1098,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.compositingModeExit = sliceCompositeNode.GetCompositing()
         sliceCompositeNode.SetCompositing(2)
 
-        # Load labels for annotations
-        
-        moduleWidget = slicer.modules.annotateultrasound.widgetRepresentation().self()
-        settings = qt.QSettings()
+        # Load fixed labels file
+        self.onLabelsFileSelected()
 
-        labelsPath = settings.value('AnnotateUltrasound/LabelsPath', '')
-        if labelsPath == '':
-            labelsPath = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'Resources/default_labels.csv')
-        moduleWidget.ui.labelsFileSelector.currentPath = labelsPath
-        self.onLabelsFileSelected(labelsPath)
-        
         # Hide slice view annotations to avoid interference with the corner annotation
-        
         sliceAnnotations = slicer.modules.DataProbeInstance.infoWidget.sliceAnnotations
         sliceAnnotations.sliceViewAnnotationsEnabled=False
         sliceAnnotations.updateSliceViewFromGUI()
@@ -1083,7 +1113,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         Called each time the user opens a different module.
         """
         self.disconnectKeyboardShortcuts()  # Disconnect shortcuts when leaving the module
-       
+
         # Do not react to parameter node changes (GUI will be updated when the user enters into the module)
         if self._parameterNode:
             self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
@@ -1118,7 +1148,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             firstVolumeNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLScalarVolumeNode")
             if firstVolumeNode:
                 self._parameterNode.inputVolume = firstVolumeNode
-        
+
         settings = slicer.app.settings()
         showDepthGuide = settings.value('AnnotateUltrasound/DepthGuide', False)
         # be consistent and just read bool, convert if was string
@@ -1130,7 +1160,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.logic.setRater(self._parameterNode.rater)
             self.logic.getColorsForRater(self._parameterNode.rater)
         self.ui.depthGuideCheckBox.setChecked(showDepthGuide)
-        
+
 
     def setParameterNode(self, inputParameterNode: AnnotateUltrasoundParameterNode) -> None:
         """
@@ -1342,11 +1372,11 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         Called when the logic class is instantiated. Can be used for initializing member variables.
         """
         ScriptedLoadableModuleLogic.__init__(self)
-        
+
         # These variables keep their values when the scene is cleared
         self.dicomDf = None
         self.nextDicomDfIndex = 0
-        
+
         # These variables need to be reset when the scene is cleared
         self.annotations = None
         self.pleuraLines = []
@@ -1425,12 +1455,12 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
     def updateInputDf(self, rater, input_folder):
         """
         Update the dicomDf dataframe with the DICOM files in the input folder.
-        
+
         :param input_folder: The input folder to search for DICOM files.
         :return: The number of rows in the dataframe and the number of annotations files created.
         """
         dicom_data = []
-        
+
         # Get the total number of files
         total_files = sum([len(files) for root, dirs, files in os.walk(input_folder)])
 
@@ -1465,7 +1495,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                     study_uid = dicom_file.StudyInstanceUID if 'StudyInstanceUID' in dicom_file else None
                     series_uid = dicom_file.SeriesInstanceUID if 'SeriesInstanceUID' in dicom_file else None
                     instance_uid = dicom_file.SOPInstanceUID if 'SOPInstanceUID' in dicom_file else None
-                    
+
                     base_filename = os.path.splitext(os.path.join(root, file))[0]
                     candidates = [
                         f"{base_filename}.{rater}.json",
@@ -1491,7 +1521,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 except Exception as e:
                     # If the file is not a valid DICOM file, continue to the next file
                     continue
-                
+
         # Update dicomDf
         self.dicomDf = pd.DataFrame(dicom_data, columns=['Filepath', 'AnnotationsFilepath', 'PatientUID', 'StudyUID', 'SeriesUID', 'InstanceUID'])
         self.nextDicomDfIndex = 0
@@ -1502,14 +1532,14 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         # Return the number of rows in the dataframe and the number of annotations files created
         return len(self.dicomDf), annotations_created_count
-    
+
     def updateCurrentFrame(self):
         logging.info('addCurrentFrame')
-        
+
         if self.sequenceBrowserNode is None:
             logging.warning("No sequence browser node found")
             return
-        
+
         # Get the current frame index from the sequence browser
         currentFrameIndex = max(0, self.sequenceBrowserNode.GetSelectedItemNumber())  # TODO: investigate whey this could be negative!
         # Check if annotations already has a list of frame annotations. Create it if it doesn't exist.
@@ -1564,24 +1594,24 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if self.annotations is None:
             logging.warning("No annotations loaded")
             return
-        
+
         # Remove the frame index from the list of frame annotations
         self.annotations["frame_annotations"] = [
             fa for fa in self.annotations.get("frame_annotations", [])
             if int(fa.get("frame_number", -1)) != frameIndex
         ]
-        
+
 
     def loadPreviousSequence(self):
         if self.dicomDf is None:
             return None
-        
+
         if self.nextDicomDfIndex <= 1:
             return None
         else:
             self.nextDicomDfIndex -= 2
             return self.loadNextSequence()
-    
+
     def clearScene(self):
         slicer.mrmlScene.Clear(0)
         self.annotations = None
@@ -1626,7 +1656,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Save current depth guide mode
         currentDepthGuideMode = self.depthGuideMode
         logging.debug(f"Saving depthGuideMode {currentDepthGuideMode} before loading next sequence")
-        
+
         # Clear the scene
         self.clearScene()
         parameterNode = self.getParameterNode()
@@ -1705,11 +1735,12 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.sequenceBrowserNode = currentSequenceBrowser
         self.sequenceBrowserNode.SetPlaybackLooped(False)
         parameterNode.inputVolume = inputUltrasoundNode
-        
+        parameterNode.unsavedChanges = False  # Reset unsaved changes when loading new sequence
+
         # Restore depth guide mode
         self.depthGuideMode = currentDepthGuideMode
         logging.debug(f"Restored depthGuideMode to {self.depthGuideMode} after loading sequence")
-        
+
         ultrasoundArray = slicer.util.arrayFromVolume(inputUltrasoundNode)
         # Mask array should be the same size as the ultrasound array, but with 3 channels
         maskArray = np.zeros([1, ultrasoundArray.shape[1], ultrasoundArray.shape[2], 3], dtype=np.uint8)
@@ -1810,6 +1841,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         redSliceCompositeNode.SetForegroundVolumeID(overlayVolume.GetID())
         redSliceCompositeNode.SetForegroundOpacity(0.12)
         redSliceCompositeNode.SetCompositing(2)
+
         displayNode = overlayVolume.GetDisplayNode()
         displayNode.SetWindow(255)
         displayNode.SetLevel(127)
@@ -1819,7 +1851,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         # Return the index of the loaded sequence in the dataframe
         return self.nextDicomDfIndex
-        
+
     def onSequenceBrowserModified(self, caller, event):
         self.updateLineMarkups()
         ratio = self.updateOverlayVolume()
@@ -1836,12 +1868,12 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         markupNode.GetDisplayNode().SetSelectedColor(color)
         for coord in coordinates:
             markupNode.AddControlPointWorld(coord[0], coord[1], coord[2])
-            
+
         self.addObserver(markupNode, markupNode.PointModifiedEvent, self.onPointModified)
         self.addObserver(markupNode, markupNode.PointPositionDefinedEvent, self.onPointPositionDefined)
-        
+
         return markupNode
-    
+
     def clearSceneLines(self):
         """
         Remove all pleura lines and B-lines from the scene and from the list of lines.
@@ -1868,7 +1900,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
     def removeLastPleuraLine(self):
         """
-        Remove the last pleura line from the scene and from the list of pleura lines.        
+        Remove the last pleura line from the scene and from the list of pleura lines.
         """
         if len(self.pleuraLines) > 0:
             currentLine = self.pleuraLines.pop()
@@ -1880,10 +1912,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             if ratio is not None:
                 parameterNode = self.getParameterNode()
                 parameterNode.pleuraPercentage = ratio * 100
-    
+
     def removeLastBline(self):
         """
-        Remove the last B-line from the scene and from the list of B-lines.        
+        Remove the last B-line from the scene and from the list of B-lines.
         """
         if len(self.bLines) > 0:
             currentLine = self.bLines.pop()
@@ -1895,40 +1927,40 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             if ratio is not None:
                 parameterNode = self.getParameterNode()
                 parameterNode.pleuraPercentage = ratio * 100
-    
+
     def onPointModified(self, caller, event):
         ratio = self.updateOverlayVolume()
         if ratio is not None:
             parameterNode = self.getParameterNode()
             parameterNode.pleuraPercentage = ratio * 100
             parameterNode.unsavedChanges = True
-    
+
     def onPointPositionDefined(self, caller, event):
         parameterNode = self.getParameterNode()
         numControlPoints = caller.GetNumberOfControlPoints()
         if numControlPoints >= 2:
             parameterNode.lineBeingPlaced = None
             self.removeObserver(caller, caller.PointPositionDefinedEvent, self.onPointPositionDefined)
-        
+
         ratio = self.updateOverlayVolume()
         if ratio is not None:
             parameterNode = self.getParameterNode()
             parameterNode.pleuraPercentage = ratio * 100
-    
+
     def fanCornersFromSectorLine(self, p1, p2, center, r1, r2):
         op1 = np.array(p1) - np.array(center)
         op2 = np.array(p2) - np.array(center)
-        
+
         unit_op1 = op1 / np.linalg.norm(op1)
         unit_op2 = op2 / np.linalg.norm(op2)
-        
+
         A = center + unit_op1 * r1
         C = center + unit_op1 * r2
         B = center + unit_op2 * r1
         D = center + unit_op2 * r2
-        
+
         return A, B, C, D
-    
+
     def line_coefficients(self, p1, p2):
         """
         Returns the coefficients of the line equation Ax + By + C = 0
@@ -1959,7 +1991,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             angle1 -= 180.0
         if angle1 < 0.0:
             angle1 += 180.0
-        
+
         if abs(topRight[0] - bottomRight[0]) < 0.001:
             angle2 = 90.0
         else:
@@ -1968,7 +2000,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             angle2 -= 180.0
         if angle2 < 0.0:
             angle2 += 180.0
-        
+
         # Fit lines to the top and bottom points
         leftLineA, leftLineB, leftLineC = self.line_coefficients(topLeft, bottomLeft)
         rightLineA, rightLineB, rightLineC = self.line_coefficients(topRight, bottomRight)
@@ -1977,7 +2009,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if leftLineB != 0 and rightLineB != 0 and leftLineA / leftLineB == rightLineA / rightLineB:
             logging.warning("Left and right lines are parallel")
             return mask_array
-        
+
         # Compute intersection point of the two lines
         det = leftLineA * rightLineB - leftLineB * rightLineA
         if det == 0:
@@ -2011,7 +2043,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # mask_array = cv2.ellipse(mask_array, (center_cols_px, center_rows_px), (radius2, radius2), 0.0, angle2, angle1, value, -1)
         mask_array = self.draw_circle_segment(mask_array, (center_cols_px, center_rows_px), radius2, angle2, angle1, value)
         mask_array = cv2.circle(mask_array, (center_cols_px, center_rows_px), radius1, 0, -1)
-        
+
         return mask_array
 
     def draw_circle_segment(self, image, center, radius, start_angle, end_angle, color):
@@ -2050,7 +2082,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         # Combine the mask with the original image
         return cv2.bitwise_or(image, mask)
-    
+
     def createSectorMaskBetweenPoints(self, imageArray, point1, point2, value=255):
         # Check if ultrasound is fan shape or rectangular
         # If self.annotations["mask_type"] doesn't exist, then assume it's rectangular
@@ -2071,9 +2103,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                                                        (center_cols_px, center_rows_px),
                                                        radius1, radius2)
             maskArray = self.createFanMask(imageArray, a, b, c, d, value)
-        
+
         return maskArray
-    
+
     def updateLineMarkups(self):
         """
         Update the line markups to match the annotations at the current frame index. Clear markups if current frame index not in annotations.
@@ -2144,12 +2176,12 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Choose visualization based on depthGuideMode
         if self.depthGuideMode == 1:
             # Mode 1: Default dashed line
-            return self._drawDashedLine(image_size_rows, image_size_cols, center_cols_px, center_rows_px, 
-                                        depth_radius, angle1, angle2, color, thickness=scaled_thickness, 
+            return self._drawDashedLine(image_size_rows, image_size_cols, center_cols_px, center_rows_px,
+                                        depth_radius, angle1, angle2, color, thickness=scaled_thickness,
                                         dash_length=scaled_dash_length, dash_gap=scaled_dash_gap)
         elif self.depthGuideMode == 2:
             # Mode 2: Thinner, more spaced dashed line
-            return self._drawDashedLine(image_size_rows, image_size_cols, center_cols_px, center_rows_px, 
+            return self._drawDashedLine(image_size_rows, image_size_cols, center_cols_px, center_rows_px,
                                         depth_radius, angle1, angle2, color, thickness=2, dash_length=10, dash_gap=24)
         elif self.depthGuideMode == 3:
             # Mode 3: Arrows at 50% depth
@@ -2161,20 +2193,20 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Return blank image if no valid mode
         return np.zeros((image_size_rows, image_size_cols, 3), dtype=np.uint8)
 
-    def _drawDashedLine(self, image_size_rows, image_size_cols, center_cols_px, center_rows_px, 
+    def _drawDashedLine(self, image_size_rows, image_size_cols, center_cols_px, center_rows_px,
                         depth_radius, angle1, angle2, color, thickness, dash_length, dash_gap):
         line_img = np.zeros((image_size_rows, image_size_cols, 3), dtype=np.uint8)
-        
+
         # Ensure angle1 is always less than angle2
         if angle1 > angle2:
             angle1, angle2 = angle2, angle1
-            
+
         theta_start = angle1
         theta_end = angle2
         theta_range = theta_end - theta_start
         arc_length = (theta_range * depth_radius * math.pi / 180)
         num_dashes = int(arc_length / (dash_length + dash_gap))
-        
+
         if num_dashes <= 0:
             num_dashes = max(15, int(theta_range / 5))
 
@@ -2194,7 +2226,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             line_img = cv2.line(line_img, start_point, end_point, color, thickness)
 
         return line_img
-    
+
     def _drawArrows(self, image_size_rows, image_size_cols, depth_radius, center_cols_px, center_rows_px, angle1, angle2, thickness=4, color=(200, 255, 255)):
         """
         Draws two arrows outside the left and right edges of the ultrasound fan at the specified depth mark,
@@ -2233,7 +2265,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         line_img = cv2.arrowedLine(line_img, right_start_point, right_tip_point, color, thickness, tipLength=0.5)
 
         return line_img
-    
+
     def _drawTranslucentBand(self, image_size_rows, image_size_cols, depth_radius, center_cols_px, center_rows_px, angle1, angle2, color=(100, 255, 255)):
         """
         Draws a thin translucent band around the 50% depth line on the ultrasound fan.
@@ -2247,9 +2279,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         outer_radius = int(depth_radius + band_thickness / 2)
 
         # Draw the translucent band as an ellipse segment between angle1 and angle2
-        cv2.ellipse(band_img, (center_cols_px, center_rows_px), (outer_radius, outer_radius), 
+        cv2.ellipse(band_img, (center_cols_px, center_rows_px), (outer_radius, outer_radius),
                     0, angle1, angle2, color, -1)
-        cv2.ellipse(band_img, (center_cols_px, center_rows_px), (inner_radius, inner_radius), 
+        cv2.ellipse(band_img, (center_cols_px, center_rows_px), (inner_radius, inner_radius),
                     0, angle1, angle2, (0, 0, 0), -1)
 
         # Make the band semi-transparent by blending it with a background
@@ -2288,22 +2320,22 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         :return: The ratio of green pixels to blue pixels in the overlay volume. None if inputs not defined yet.
         """
         # # TODO remove (debugging)
-        # import inspect 
+        # import inspect
         # caller = inspect.stack()[1].function
-        # print(f"updateOverlayVolume called by {caller}") 
-        # print(f"Overlay volume updated with depth guide: {self.depthGuideEnabled}") 
+        # print(f"updateOverlayVolume called by {caller}")
+        # print(f"Overlay volume updated with depth guide: {self.depthGuideEnabled}")
         parameterNode = self.getParameterNode()
-        
+
         if parameterNode.overlayVolume is None:
             logging.debug("updateOverlayVolume: No overlay volume found! Cannot update overlay volume.")
             return None
-        
+
         if self.annotations is None:
             logging.warning("updateOverlayVolume: No annotations loaded")
             # Make sure all voxels are set to 0
             parameterNode.overlayVolume.GetImageData().GetPointData().GetScalars().Fill(0)
             return None
-        
+
         if parameterNode.inputVolume is None:
             logging.debug("No input volume found, not updating overlay volume.")
             return None
@@ -2316,9 +2348,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, overlayArray)
             slicer.util.showStatusMessage("Overlay hidden: multiple raters selected", 3000)
             return None
-        
+
         ultrasoundArray = slicer.util.arrayFromVolume(parameterNode.inputVolume)
-        
+
         # Mask array should be the same size as the ultrasound array
         # Make the mask array RGB color regardless of the number of channels in the ultrasound array
         maskArray = np.zeros([1, ultrasoundArray.shape[1], ultrasoundArray.shape[2], 3], dtype=np.uint8)
@@ -2326,7 +2358,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         parameterNode.inputVolume.GetIJKToRASMatrix(ijkToRas)
         rasToIjk = vtk.vtkMatrix4x4()
         vtk.vtkMatrix4x4.Invert(ijkToRas, rasToIjk)
-        
+
         # Add pleura lines to mask array using full RGB overlay
         for markupNode in self.pleuraLines:
             nodeRater = markupNode.GetAttribute("rater") if markupNode else None
@@ -2346,7 +2378,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 sectorArray = self.createSectorMaskBetweenPoints(ultrasoundArray, coord1, coord2, value=255)
                 # Add sectorArray to maskArray by maximum compounding
                 maskArray[0, :, :, 2] = np.maximum(maskArray[0, :, :, 2], sectorArray)
-                
+
         # Add B-lines to mask array using full RGB overlay
         for markupNode in self.bLines:
             nodeRater = markupNode.GetAttribute("rater") if markupNode else None
@@ -2469,7 +2501,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 parent[elem.name] = elem.value
         return parent
 
-    
+
     def process(self,
                 inputVolume: vtkMRMLScalarVolumeNode,
                 outputVolume: vtkMRMLScalarVolumeNode,
