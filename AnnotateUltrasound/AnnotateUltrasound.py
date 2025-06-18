@@ -591,22 +591,47 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                     if isinstance(checkBox, qt.QCheckBox):
                         checkBox.setChecked(False)
         
-        # Update frames table
+        # Update frames table, save the current sort column and order to restore after populating
+        sort_column = self.ui.framesTableWidget.horizontalHeader().sortIndicatorSection()
+        sort_order = self.ui.framesTableWidget.horizontalHeader().sortIndicatorOrder()
+        # disable sorting while we populate the table
+        self.ui.framesTableWidget.setSortingEnabled(False)
 
         # Remove all rows from the table
         self.ui.framesTableWidget.setRowCount(0)
 
         # Add rows to the table
         if self.logic.annotations is not None and "frame_annotations" in self.logic.annotations:
-            for frame_index, frame_annotations in enumerate(self.logic.annotations["frame_annotations"]):
-                self.ui.framesTableWidget.insertRow(self.ui.framesTableWidget.rowCount)
-                frame_number = int(frame_annotations.get("frame_number", frame_index))
-                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 0, qt.QTableWidgetItem(str(frame_number)))
-                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 1, 
-                    qt.QTableWidgetItem(str(len([pleura_line for pleura_line in frame_annotations["pleura_lines"] if len(pleura_line) == 2]))))
-                self.ui.framesTableWidget.setItem(self.ui.framesTableWidget.rowCount - 1, 2, 
-                    qt.QTableWidgetItem(str(len([b_line for b_line in frame_annotations["b_lines"] if frame_annotations != None and len(b_line) == 2]))))
+            for frame_annotations in self.logic.annotations["frame_annotations"]:
+                row = self.ui.framesTableWidget.rowCount
+                self.ui.framesTableWidget.insertRow(row)
 
+                frame_number = int(frame_annotations.get("frame_number", row))
+                frame_number_item = qt.QTableWidgetItem()
+                frame_number_item.setData(qt.Qt.DisplayRole, frame_number)
+                self.ui.framesTableWidget.setItem(row, 0, frame_number_item)
+
+                pleura_count = len([
+                    pleura_line for pleura_line in frame_annotations.get("pleura_lines", [])
+                    if pleura_line is not None and isinstance(pleura_line.get("line"), dict)
+                ])
+                pleura_item = qt.QTableWidgetItem()
+                pleura_item.setData(qt.Qt.DisplayRole, pleura_count)
+                self.ui.framesTableWidget.setItem(row, 1, pleura_item)
+
+                bline_count = len([
+                    b_line for b_line in frame_annotations.get("b_lines", [])
+                    if b_line is not None and isinstance(b_line.get("line"), dict)
+                ])
+                bline_item = qt.QTableWidgetItem()
+                bline_item.setData(qt.Qt.DisplayRole, bline_count)
+                self.ui.framesTableWidget.setItem(row, 2, bline_item)
+
+        # reenable sorting afer populating the table
+        self.ui.framesTableWidget.setSortingEnabled(True)
+
+        # Restore previous sort state
+        self.ui.framesTableWidget.sortItems(sort_column, sort_order)
     
     def createWaitDialog(self, title, message):
         """
