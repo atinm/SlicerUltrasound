@@ -1822,6 +1822,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         self.annotations = merged_data
 
+        # Preallocate markup nodes based on loaded annotations
+        self.preallocateMarkupNodesFromAnnotations()
+
         if current_rater in self.seenRaters:
             self.seenRaters.remove(current_rater)
         # put current rater at the top
@@ -2108,9 +2111,14 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
     def updateLineMarkups(self):
         """
-        Update the line markups to match the annotations at the current frame index. Clear markups if current frame index not in annotations.
+        Update the line markups to match the annotations at the current frame index. Reuse markups instead of deleting/creating them every frame. Only update if frame or annotation data has changed.
         """
-        self.clearSceneLines()
+        import json
+        # Initialize cache attributes if not present
+        if not hasattr(self, '_lastMarkupFrameIndex'):
+            self._lastMarkupFrameIndex = None
+        if not hasattr(self, '_lastMarkupFrameHash'):
+            self._lastMarkupFrameHash = None
 
         if self.annotations is None:
             logging.warning("No annotations loaded")
@@ -2127,26 +2135,76 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             return
 
         frame = next((item for item in self.annotations['frame_annotations'] if str(item.get("frame_number")) == str(currentFrameIndex)), None)
-        if frame is None:
+        # Compute a hash of the frame annotation data for caching
+        frame_hash = None
+        if frame is not None:
+            try:
+                frame_hash = hash(json.dumps(frame, sort_keys=True))
+            except Exception:
+                frame_hash = None
+
+        # Early return if frame index and annotation data are unchanged
+        if self._lastMarkupFrameIndex == currentFrameIndex and self._lastMarkupFrameHash == frame_hash:
             return
 
-        for entry in frame.get("pleura_lines", []):
-            if entry.get("rater") not in self.selectedRaters:
-                continue
-            coordinates = entry.get("line", {}).get("points", [])
-            rater = entry.get("rater", "")
-            color_pleura, _ = self.getColorsForRater(rater)
-            if coordinates:
-                self.pleuraLines.append(self.createMarkupLine("Pleura", entry.get("rater", ""), coordinates, color_pleura))
+        # Update cache after check
+        self._lastMarkupFrameIndex = currentFrameIndex
+        self._lastMarkupFrameHash = frame_hash
 
-        for entry in frame.get("b_lines", []):
-            if entry.get("rater") not in self.selectedRaters:
-                continue
-            coordinates = entry.get("line", {}).get("points", [])
-            rater = entry.get("rater", "")
-            _, color_bline = self.getColorsForRater(rater)
-            if coordinates:
-                self.bLines.append(self.createMarkupLine("B-line", rater, coordinates, color_bline))
+        # Batch scene updates using StartState/EndState
+        slicer.mrmlScene.StartState(slicer.mrmlScene.BatchProcessState)
+        try:
+            if frame is None:
+                # Hide all markups if no frame data
+                for node in self.pleuraLines:
+                    node.GetDisplayNode().SetVisibility(False)
+                for node in self.bLines:
+                    node.GetDisplayNode().SetVisibility(False)
+                return
+
+            pleura_entries = [entry for entry in frame.get("pleura_lines", []) if entry.get("rater") in self.selectedRaters]
+            bline_entries = [entry for entry in frame.get("b_lines", []) if entry.get("rater") in self.selectedRaters]
+
+            # Ensure enough markup nodes exist
+            while len(self.pleuraLines) < len(pleura_entries):
+                self.pleuraLines.append(self.createMarkupLine("Pleura", "", [], [1,1,0]))
+            while len(self.bLines) < len(bline_entries):
+                self.bLines.append(self.createMarkupLine("B-line", "", [], [0,1,1]))
+
+            # Update pleura markups
+            for i, entry in enumerate(pleura_entries):
+                node = self.pleuraLines[i]
+                coordinates = entry.get("line", {}).get("points", [])
+                rater = entry.get("rater", "")
+                color_pleura, _ = self.getColorsForRater(rater)
+                node.SetAttribute("rater", rater)
+                node.GetDisplayNode().SetSelectedColor(color_pleura)
+                node.GetDisplayNode().SetVisibility(True)
+                # Update control points
+                node.RemoveAllControlPoints()
+                for pt in coordinates:
+                    node.AddControlPointWorld(*pt)
+            # Hide unused pleura markups
+            for i in range(len(pleura_entries), len(self.pleuraLines)):
+                self.pleuraLines[i].GetDisplayNode().SetVisibility(False)
+
+            # Update b-line markups
+            for i, entry in enumerate(bline_entries):
+                node = self.bLines[i]
+                coordinates = entry.get("line", {}).get("points", [])
+                rater = entry.get("rater", "")
+                _, color_bline = self.getColorsForRater(rater)
+                node.SetAttribute("rater", rater)
+                node.GetDisplayNode().SetSelectedColor(color_bline)
+                node.GetDisplayNode().SetVisibility(True)
+                node.RemoveAllControlPoints()
+                for pt in coordinates:
+                    node.AddControlPointWorld(*pt)
+            # Hide unused b-line markups
+            for i in range(len(bline_entries), len(self.bLines)):
+                self.bLines[i].GetDisplayNode().SetVisibility(False)
+        finally:
+            slicer.mrmlScene.EndState(slicer.mrmlScene.BatchProcessState)
 
     def drawDepthGuideLine(self, image_size_rows, image_size_cols, depth_ratio=0.5, color=(0, 255, 255), thickness=4, dash_length=20, dash_gap=16):
         """
@@ -2501,6 +2559,30 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 parent[elem.name] = elem.value
         return parent
 
+    def preallocateMarkupNodesFromAnnotations(self):
+        """
+        Preallocate markup nodes for pleura and B-lines based on the maximum needed in the loaded annotations.
+        """
+        if not hasattr(self, 'pleuraLines'):
+            self.pleuraLines = []
+        if not hasattr(self, 'bLines'):
+            self.bLines = []
+        max_pleura = 0
+        max_blines = 0
+        if self.annotations and 'frame_annotations' in self.annotations:
+            for frame in self.annotations['frame_annotations']:
+                pleura_count = len(frame.get('pleura_lines', []))
+                bline_count = len(frame.get('b_lines', []))
+                if pleura_count > max_pleura:
+                    max_pleura = pleura_count
+                if bline_count > max_blines:
+                    max_blines = bline_count
+        # Preallocate pleura markup nodes
+        while len(self.pleuraLines) < max_pleura:
+            self.pleuraLines.append(self.createMarkupLine("Pleura", "", [], [1,1,0]))
+        # Preallocate b-line markup nodes
+        while len(self.bLines) < max_blines:
+            self.bLines.append(self.createMarkupLine("B-line", "", [], [0,1,1]))
 
     def process(self,
                 inputVolume: vtkMRMLScalarVolumeNode,
