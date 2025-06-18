@@ -24,6 +24,7 @@ import vtk
 import colorsys
 import copy
 import re
+import zlib
 
 try:
     import pandas as pd
@@ -1936,7 +1937,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if ratio is not None:
             parameterNode = self.getParameterNode()
             parameterNode.pleuraPercentage = ratio * 100
-            parameterNode.unsavedChanges = True
 
     def onPointPositionDefined(self, caller, event):
         parameterNode = self.getParameterNode()
@@ -1980,6 +1980,18 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         return A, B, C
 
     def createFanMask(self, imageArray, topLeft, topRight, bottomLeft, bottomRight, value=255):
+        # Caching: store last-used parameters and mask
+        if not hasattr(self, '_lastFanMaskParams'):
+            self._lastFanMaskParams = None
+            self._lastFanMaskArray = None
+        # Create a tuple of all relevant parameters
+        params = (
+            imageArray.shape,
+            tuple(topLeft), tuple(topRight), tuple(bottomLeft), tuple(bottomRight),
+            value
+        )
+        if self._lastFanMaskParams == params:
+            return self._lastFanMaskArray.copy()
         image_size_rows = imageArray.shape[1]
         image_size_cols = imageArray.shape[2]
         mask_array = np.zeros((image_size_rows, image_size_cols), dtype=np.uint8)
@@ -2047,6 +2059,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         mask_array = self.draw_circle_segment(mask_array, (center_cols_px, center_rows_px), radius2, angle2, angle1, value)
         mask_array = cv2.circle(mask_array, (center_cols_px, center_rows_px), radius1, 0, -1)
 
+        # Cache the result before returning
+        self._lastFanMaskParams = params
+        self._lastFanMaskArray = mask_array.copy()
         return mask_array
 
     def draw_circle_segment(self, image, center, radius, start_angle, end_angle, color):
@@ -2087,16 +2102,34 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         return cv2.bitwise_or(image, mask)
 
     def createSectorMaskBetweenPoints(self, imageArray, point1, point2, value=255):
-        # Check if ultrasound is fan shape or rectangular
-        # If self.annotations["mask_type"] doesn't exist, then assume it's rectangular
         if "mask_type" not in self.annotations:
             logging.error("No mask type found in annotations. Assuming rectangular mask.")
+        # Caching: store last-used parameters and mask
+        if not hasattr(self, '_lastSectorMaskParams'):
+            self._lastSectorMaskParams = None
+            self._lastSectorMaskArray = None
+        params = (
+            imageArray.shape,
+            tuple(point1), tuple(point2),
+            value,
+            self.annotations.get('mask_type', None),
+            self.annotations.get('radius1', None),
+            self.annotations.get('radius2', None),
+            self.annotations.get('center_rows_px', None),
+            self.annotations.get('center_cols_px', None),
+            self.annotations.get('angle1', None),
+            self.annotations.get('angle2', None)
+        )
+        if self._lastSectorMaskParams == params:
+            return self._lastSectorMaskArray.copy()
 
         if "mask_type" not in self.annotations or self.annotations["mask_type"] != "fan":
             # Create a rectangular mask
             maskArray = np.zeros(imageArray.shape, dtype=np.uint8)
             maskArray[:, point1[1]:point2[1], point1[0]:point2[0]] = value
-            return maskArray
+            # Cache and return
+            self._lastSectorMaskParams = params
+            self._lastSectorMaskArray = maskArray.copy()
         else:
             radius1 = self.annotations["radius1"]
             radius2 = self.annotations["radius2"]
@@ -2106,6 +2139,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                                                        (center_cols_px, center_rows_px),
                                                        radius1, radius2)
             maskArray = self.createFanMask(imageArray, a, b, c, d, value)
+            # Cache and return
+            self._lastSectorMaskParams = params
+            self._lastSectorMaskArray = maskArray.copy()
 
         return maskArray
 
@@ -2467,8 +2503,14 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # apply depthGuide if enabled
         maskArray = self._applyDepthGuideToMask(maskArray, parameterNode)
 
+        # Compute a hash of the mask array for fast comparison
+        mask_hash = zlib.crc32(maskArray.tobytes())
+        if hasattr(self, '_lastOverlayMaskHash') and self._lastOverlayMaskHash == mask_hash:
+            # No change, skip update
+            return greenPixels / bluePixels if bluePixels != 0 else 0.0
         # Update the overlay volume
         slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, maskArray)
+        self._lastOverlayMaskHash = mask_hash
 
         # Return the ratio of green pixels to blue pixels
         if bluePixels == 0:
