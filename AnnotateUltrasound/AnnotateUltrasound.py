@@ -24,6 +24,7 @@ import vtk
 import colorsys
 import copy
 import re
+import zlib
 
 try:
     import pandas as pd
@@ -336,6 +337,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         displayNode.SetLevel(127+value)
 
     def onClearAllLines(self):
+        logging.info('onClearAllLines')
         self.logic.clearAllLines()
         ratio = self.logic.updateOverlayVolume()
         if ratio is not None:
@@ -370,6 +372,23 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.logic.updateCurrentFrame()
         self.updateGuiFromAnnotations()
 
+    def _updateMarkupsAndOverlayProgrammatically(self, setUnsavedChanges=False):
+        """
+        Helper to update line markups and overlay volume programmatically, suppressing unsavedChanges unless specified.
+        """
+        self.logic._isProgrammaticUpdate = True
+        try:
+            self.logic.updateLineMarkups()
+            ratio = self.logic.updateOverlayVolume()
+            if ratio is not None:
+                self._parameterNode.pleuraPercentage = ratio * 100
+            else:
+                self._parameterNode.pleuraPercentage = 0.0
+        finally:
+            self.logic._isProgrammaticUpdate = False
+        if setUnsavedChanges:
+            self._parameterNode.unsavedChanges = True
+
     def onRemoveCurrentFrame(self):
         logging.info('removeCurrentFrame')
 
@@ -380,10 +399,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         else:
             currentFrameIndex = self.logic.sequenceBrowserNode.GetSelectedItemNumber()
             self.logic.removeFrame(currentFrameIndex)
-            self.logic.updateLineMarkups()
-            ratio = self.logic.updateOverlayVolume()
-            if ratio is not None:
-                self._parameterNode.pleuraPercentage = ratio * 100
+            self._updateMarkupsAndOverlayProgrammatically(setUnsavedChanges=True)
             self.updateGuiFromAnnotations()
 
     def onInputDirectorySelected(self):
@@ -885,6 +901,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             logging.error(f"Unknown line type {lineType}")
             return
 
+        logging.info("Auto-saving frame annotations")
+        self.logic.updateCurrentFrame()
+        self.updateGuiFromAnnotations()
+
     def delayedOnEndPlaceMode(self, lineType):
         logging.info(f"delayedOnEndPlaceMode -- lineType: {lineType}")
         if lineType == "Pleura":
@@ -1335,12 +1355,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     def updateRatersFromCheckboxes(self):
         self.selectedRaters = self.getSelectedRatersFromTable()
         self.logic.setSelectedRaters(self.selectedRaters)
-        self.logic.updateLineMarkups()
-        ratio = self.logic.updateOverlayVolume()
-        if ratio is not None:
-            self._parameterNode.pleuraPercentage = ratio * 100
-        else:
-            self._parameterNode.pleuraPercentage = 0.0
+        self._updateMarkupsAndOverlayProgrammatically()
         self._updateGUIFromParameterNode()
         self.ui.raterColorTable.repaint()
         self.ui.raterColorTable.update()
@@ -1385,6 +1400,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.depthGuideMode = 1
         logging.debug(f"Initialized depthGuideMode to {self.depthGuideMode}")
         self.parameterNode = self._getOrCreateParameterNode()
+
+        # Flag to track when we're doing programmatic updates (to avoid setting unsavedChanges)
+        self._isProgrammaticUpdate = False
 
     # Static variable to track seen raters and their order
     seenRaters = []
@@ -1648,6 +1666,20 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         save_data['frame_annotations'] = copied_frames
         return save_data # a copy of the data, so caller has to save
 
+    def _updateMarkupsAndOverlayProgrammatically(self, parameterNode=None):
+        if parameterNode is None:
+            parameterNode = self.getParameterNode()
+        self._isProgrammaticUpdate = True
+        try:
+            self.updateLineMarkups()
+            ratio = self.updateOverlayVolume()
+            if ratio is not None:
+                parameterNode.pleuraPercentage = ratio * 100
+            else:
+                parameterNode.pleuraPercentage = 0.0
+        finally:
+            self._isProgrammaticUpdate = False
+
     def loadNextSequence(self):
         """
         Load the next sequence in the dataframe.
@@ -1822,6 +1854,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         self.annotations = merged_data
 
+        # Preallocate markup nodes based on loaded annotations
+        self.preallocateMarkupNodesFromAnnotations()
+
         if current_rater in self.seenRaters:
             self.seenRaters.remove(current_rater)
         # put current rater at the top
@@ -1830,10 +1865,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         #self.highlightedRaters = set(self.seenRaters)
 
-        self.updateLineMarkups()
-        ratio = self.updateOverlayVolume()
-        if ratio is not None:
-            parameterNode.pleuraPercentage = ratio * 100
+        # Set programmatic update flag to prevent unsavedChanges from being set
+        self._updateMarkupsAndOverlayProgrammatically(parameterNode)
         parameterNode.EndModify(previousNodeState)
 
         # Set overlay volume as foreground in slice viewers
@@ -1853,11 +1886,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         return self.nextDicomDfIndex
 
     def onSequenceBrowserModified(self, caller, event):
-        self.updateLineMarkups()
-        ratio = self.updateOverlayVolume()
-        if ratio is not None:
-            parameterNode = self.getParameterNode()
-            parameterNode.pleuraPercentage = ratio * 100
+        self._updateMarkupsAndOverlayProgrammatically(None)
 
     def createMarkupLine(self, name, rater, coordinates, color=[1, 1, 0]):
         markupNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode")
@@ -1929,10 +1958,13 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 parameterNode.pleuraPercentage = ratio * 100
 
     def onPointModified(self, caller, event):
+        parameterNode = self.getParameterNode()
         ratio = self.updateOverlayVolume()
         if ratio is not None:
-            parameterNode = self.getParameterNode()
             parameterNode.pleuraPercentage = ratio * 100
+
+        # Only set unsavedChanges if this is a user-initiated modification
+        if not self._isProgrammaticUpdate:
             parameterNode.unsavedChanges = True
 
     def onPointPositionDefined(self, caller, event):
@@ -1944,8 +1976,11 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         ratio = self.updateOverlayVolume()
         if ratio is not None:
-            parameterNode = self.getParameterNode()
             parameterNode.pleuraPercentage = ratio * 100
+
+        # Set unsavedChanges when user finishes placing a line (only if not programmatic)
+        if not self._isProgrammaticUpdate:
+            parameterNode.unsavedChanges = True
 
     def fanCornersFromSectorLine(self, p1, p2, center, r1, r2):
         op1 = np.array(p1) - np.array(center)
@@ -1977,6 +2012,18 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         return A, B, C
 
     def createFanMask(self, imageArray, topLeft, topRight, bottomLeft, bottomRight, value=255):
+        # Caching: store last-used parameters and mask
+        if not hasattr(self, '_lastFanMaskParams'):
+            self._lastFanMaskParams = None
+            self._lastFanMaskArray = None
+        # Create a tuple of all relevant parameters
+        params = (
+            imageArray.shape,
+            tuple(topLeft), tuple(topRight), tuple(bottomLeft), tuple(bottomRight),
+            value
+        )
+        if self._lastFanMaskParams == params:
+            return self._lastFanMaskArray.copy()
         image_size_rows = imageArray.shape[1]
         image_size_cols = imageArray.shape[2]
         mask_array = np.zeros((image_size_rows, image_size_cols), dtype=np.uint8)
@@ -2044,6 +2091,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         mask_array = self.draw_circle_segment(mask_array, (center_cols_px, center_rows_px), radius2, angle2, angle1, value)
         mask_array = cv2.circle(mask_array, (center_cols_px, center_rows_px), radius1, 0, -1)
 
+        # Cache the result before returning
+        self._lastFanMaskParams = params
+        self._lastFanMaskArray = mask_array.copy()
         return mask_array
 
     def draw_circle_segment(self, image, center, radius, start_angle, end_angle, color):
@@ -2084,16 +2134,34 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         return cv2.bitwise_or(image, mask)
 
     def createSectorMaskBetweenPoints(self, imageArray, point1, point2, value=255):
-        # Check if ultrasound is fan shape or rectangular
-        # If self.annotations["mask_type"] doesn't exist, then assume it's rectangular
         if "mask_type" not in self.annotations:
             logging.error("No mask type found in annotations. Assuming rectangular mask.")
+        # Caching: store last-used parameters and mask
+        if not hasattr(self, '_lastSectorMaskParams'):
+            self._lastSectorMaskParams = None
+            self._lastSectorMaskArray = None
+        params = (
+            imageArray.shape,
+            tuple(point1), tuple(point2),
+            value,
+            self.annotations.get('mask_type', None),
+            self.annotations.get('radius1', None),
+            self.annotations.get('radius2', None),
+            self.annotations.get('center_rows_px', None),
+            self.annotations.get('center_cols_px', None),
+            self.annotations.get('angle1', None),
+            self.annotations.get('angle2', None)
+        )
+        if self._lastSectorMaskParams == params:
+            return self._lastSectorMaskArray.copy()
 
         if "mask_type" not in self.annotations or self.annotations["mask_type"] != "fan":
             # Create a rectangular mask
             maskArray = np.zeros(imageArray.shape, dtype=np.uint8)
             maskArray[:, point1[1]:point2[1], point1[0]:point2[0]] = value
-            return maskArray
+            # Cache and return
+            self._lastSectorMaskParams = params
+            self._lastSectorMaskArray = maskArray.copy()
         else:
             radius1 = self.annotations["radius1"]
             radius2 = self.annotations["radius2"]
@@ -2103,14 +2171,80 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                                                        (center_cols_px, center_rows_px),
                                                        radius1, radius2)
             maskArray = self.createFanMask(imageArray, a, b, c, d, value)
+            # Cache and return
+            self._lastSectorMaskParams = params
+            self._lastSectorMaskArray = maskArray.copy()
 
         return maskArray
 
+    def _updateMarkupNodesForFrame(self, frame):
+        """
+        Update markup nodes for pleura and b-lines for the given frame.
+        """
+        pleura_entries = [entry for entry in frame.get("pleura_lines", []) if entry.get("rater") in self.selectedRaters]
+        bline_entries = [entry for entry in frame.get("b_lines", []) if entry.get("rater") in self.selectedRaters]
+
+        # Ensure enough markup nodes exist
+        while len(self.pleuraLines) < len(pleura_entries):
+            self.pleuraLines.append(self.createMarkupLine("Pleura", "", [], [1,1,0]))
+        while len(self.bLines) < len(bline_entries):
+            self.bLines.append(self.createMarkupLine("B-line", "", [], [0,1,1]))
+
+        # Update pleura markups
+        for i, entry in enumerate(pleura_entries):
+            node = self.pleuraLines[i]
+            coordinates = entry.get("line", {}).get("points", [])
+            rater = entry.get("rater", "")
+            color_pleura, _ = self.getColorsForRater(rater)
+            node.SetAttribute("rater", rater)
+            node.GetDisplayNode().SetSelectedColor(color_pleura)
+            node.GetDisplayNode().SetVisibility(True)
+            # Update control points
+            node.RemoveAllControlPoints()
+            for pt in coordinates:
+                node.AddControlPointWorld(*pt)
+        # Hide unused pleura markups
+        for i in range(len(pleura_entries), len(self.pleuraLines)):
+            self.pleuraLines[i].GetDisplayNode().SetVisibility(False)
+
+        # Hide pleura markups for non-selected raters
+        for node in self.pleuraLines:
+            nodeRater = node.GetAttribute("rater")
+            if nodeRater not in self.selectedRaters:
+                node.GetDisplayNode().SetVisibility(False)
+
+        # Update b-line markups
+        for i, entry in enumerate(bline_entries):
+            node = self.bLines[i]
+            coordinates = entry.get("line", {}).get("points", [])
+            rater = entry.get("rater", "")
+            _, color_bline = self.getColorsForRater(rater)
+            node.SetAttribute("rater", rater)
+            node.GetDisplayNode().SetSelectedColor(color_bline)
+            node.GetDisplayNode().SetVisibility(True)
+            node.RemoveAllControlPoints()
+            for pt in coordinates:
+                node.AddControlPointWorld(*pt)
+        # Hide unused b-line markups
+        for i in range(len(bline_entries), len(self.bLines)):
+            self.bLines[i].GetDisplayNode().SetVisibility(False)
+
+        # Hide b-line markups for non-selected raters
+        for node in self.bLines:
+            nodeRater = node.GetAttribute("rater")
+            if nodeRater not in self.selectedRaters:
+                node.GetDisplayNode().SetVisibility(False)
+
     def updateLineMarkups(self):
         """
-        Update the line markups to match the annotations at the current frame index. Clear markups if current frame index not in annotations.
+        Update the line markups to match the annotations at the current frame index. Reuse markups instead of deleting/creating them every frame. Only update if frame or annotation data has changed.
         """
-        self.clearSceneLines()
+        import json
+        # Initialize cache attributes if not present
+        if not hasattr(self, '_lastMarkupFrameIndex'):
+            self._lastMarkupFrameIndex = None
+        if not hasattr(self, '_lastMarkupFrameHash'):
+            self._lastMarkupFrameHash = None
 
         if self.annotations is None:
             logging.warning("No annotations loaded")
@@ -2127,26 +2261,46 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             return
 
         frame = next((item for item in self.annotations['frame_annotations'] if str(item.get("frame_number")) == str(currentFrameIndex)), None)
-        if frame is None:
+        # Compute a hash of the frame annotation data and selected raters for caching
+        frame_hash = None
+        if frame is not None:
+            try:
+                # Include selected raters in the hash so rater selection changes trigger updates
+                cache_data = {
+                    'frame': frame,
+                    'selectedRaters': sorted(list(self.selectedRaters)) if hasattr(self, 'selectedRaters') else []
+                }
+                frame_hash = hash(json.dumps(cache_data, sort_keys=True))
+            except Exception:
+                frame_hash = None
+
+        # Early return if frame index, annotation data, and selected raters are unchanged
+        if self._lastMarkupFrameIndex == currentFrameIndex and self._lastMarkupFrameHash == frame_hash:
             return
 
-        for entry in frame.get("pleura_lines", []):
-            if entry.get("rater") not in self.selectedRaters:
-                continue
-            coordinates = entry.get("line", {}).get("points", [])
-            rater = entry.get("rater", "")
-            color_pleura, _ = self.getColorsForRater(rater)
-            if coordinates:
-                self.pleuraLines.append(self.createMarkupLine("Pleura", entry.get("rater", ""), coordinates, color_pleura))
+        # Update cache after check
+        self._lastMarkupFrameIndex = currentFrameIndex
+        self._lastMarkupFrameHash = frame_hash
 
-        for entry in frame.get("b_lines", []):
-            if entry.get("rater") not in self.selectedRaters:
-                continue
-            coordinates = entry.get("line", {}).get("points", [])
-            rater = entry.get("rater", "")
-            _, color_bline = self.getColorsForRater(rater)
-            if coordinates:
-                self.bLines.append(self.createMarkupLine("B-line", rater, coordinates, color_bline))
+        # Set programmatic update flag to prevent unsavedChanges from being set
+        self._isProgrammaticUpdate = True
+
+        # Batch scene updates using StartState/EndState
+        slicer.mrmlScene.StartState(slicer.mrmlScene.BatchProcessState)
+        try:
+            if frame is None:
+                # Hide all markups if no frame data
+                for node in self.pleuraLines:
+                    node.GetDisplayNode().SetVisibility(False)
+                for node in self.bLines:
+                    node.GetDisplayNode().SetVisibility(False)
+                return
+
+            self._updateMarkupNodesForFrame(frame)
+        finally:
+            slicer.mrmlScene.EndState(slicer.mrmlScene.BatchProcessState)
+            # Reset programmatic update flag
+            self._isProgrammaticUpdate = False
 
     def drawDepthGuideLine(self, image_size_rows, image_size_cols, depth_ratio=0.5, color=(0, 255, 255), thickness=4, dash_length=20, dash_gap=16):
         """
@@ -2349,6 +2503,15 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             slicer.util.showStatusMessage("Overlay hidden: multiple raters selected", 3000)
             return None
 
+        # If no raters are selected, do not draw any mask
+        if hasattr(self, "selectedRaters") and not self.selectedRaters:
+            overlayArray = slicer.util.arrayFromVolume(parameterNode.overlayVolume)
+            overlayArray[:] = 0
+            overlayArray = self._applyDepthGuideToMask(overlayArray, parameterNode)
+            slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, overlayArray)
+            slicer.util.showStatusMessage("Overlay hidden: no raters selected", 3000)
+            return None
+
         ultrasoundArray = slicer.util.arrayFromVolume(parameterNode.inputVolume)
 
         # Mask array should be the same size as the ultrasound array
@@ -2363,6 +2526,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         for markupNode in self.pleuraLines:
             nodeRater = markupNode.GetAttribute("rater") if markupNode else None
             if hasattr(self, "selectedRaters") and self.selectedRaters and nodeRater not in self.selectedRaters:
+                continue
+            if not markupNode.GetDisplayNode().GetVisibility():
                 continue
 
             for i in range(markupNode.GetNumberOfControlPoints() - 1):
@@ -2383,6 +2548,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         for markupNode in self.bLines:
             nodeRater = markupNode.GetAttribute("rater") if markupNode else None
             if hasattr(self, "selectedRaters") and self.selectedRaters and nodeRater not in self.selectedRaters:
+                continue
+            if not markupNode.GetDisplayNode().GetVisibility():
                 continue
 
             for i in range(markupNode.GetNumberOfControlPoints() - 1):
@@ -2409,8 +2576,14 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # apply depthGuide if enabled
         maskArray = self._applyDepthGuideToMask(maskArray, parameterNode)
 
+        # Compute a hash of the mask array for fast comparison
+        mask_hash = zlib.crc32(maskArray.tobytes())
+        if hasattr(self, '_lastOverlayMaskHash') and self._lastOverlayMaskHash == mask_hash:
+            # No change, skip update
+            return greenPixels / bluePixels if bluePixels != 0 else 0.0
         # Update the overlay volume
         slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, maskArray)
+        self._lastOverlayMaskHash = mask_hash
 
         # Return the ratio of green pixels to blue pixels
         if bluePixels == 0:
@@ -2501,6 +2674,37 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 parent[elem.name] = elem.value
         return parent
 
+    def preallocateMarkupNodesFromAnnotations(self):
+        """
+        Preallocate markup nodes for pleura and B-lines based on the maximum needed in the loaded annotations.
+        """
+        if not hasattr(self, 'pleuraLines'):
+            self.pleuraLines = []
+        if not hasattr(self, 'bLines'):
+            self.bLines = []
+        max_pleura = 0
+        max_blines = 0
+        if self.annotations and 'frame_annotations' in self.annotations:
+            for frame in self.annotations['frame_annotations']:
+                pleura_count = len(frame.get('pleura_lines', []))
+                bline_count = len(frame.get('b_lines', []))
+                if pleura_count > max_pleura:
+                    max_pleura = pleura_count
+                if bline_count > max_blines:
+                    max_blines = bline_count
+
+        # Set programmatic update flag to prevent unsavedChanges from being set
+        self._isProgrammaticUpdate = True
+        try:
+            # Preallocate pleura markup nodes
+            while len(self.pleuraLines) < max_pleura:
+                self.pleuraLines.append(self.createMarkupLine("Pleura", "", [], [1,1,0]))
+            # Preallocate b-line markup nodes
+            while len(self.bLines) < max_blines:
+                self.bLines.append(self.createMarkupLine("B-line", "", [], [0,1,1]))
+        finally:
+            # Reset programmatic update flag
+            self._isProgrammaticUpdate = False
 
     def process(self,
                 inputVolume: vtkMRMLScalarVolumeNode,
