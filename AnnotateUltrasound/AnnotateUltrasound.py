@@ -372,6 +372,23 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.logic.updateCurrentFrame()
         self.updateGuiFromAnnotations()
 
+    def _updateMarkupsAndOverlayProgrammatically(self, setUnsavedChanges=False):
+        """
+        Helper to update line markups and overlay volume programmatically, suppressing unsavedChanges unless specified.
+        """
+        self.logic._isProgrammaticUpdate = True
+        try:
+            self.logic.updateLineMarkups()
+            ratio = self.logic.updateOverlayVolume()
+            if ratio is not None:
+                self._parameterNode.pleuraPercentage = ratio * 100
+            else:
+                self._parameterNode.pleuraPercentage = 0.0
+        finally:
+            self.logic._isProgrammaticUpdate = False
+        if setUnsavedChanges:
+            self._parameterNode.unsavedChanges = True
+
     def onRemoveCurrentFrame(self):
         logging.info('removeCurrentFrame')
 
@@ -382,20 +399,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         else:
             currentFrameIndex = self.logic.sequenceBrowserNode.GetSelectedItemNumber()
             self.logic.removeFrame(currentFrameIndex)
-
-            # Set programmatic update flag to prevent unsavedChanges from being set by updateLineMarkups
-            self.logic._isProgrammaticUpdate = True
-            try:
-                self.logic.updateLineMarkups()
-                ratio = self.logic.updateOverlayVolume()
-                if ratio is not None:
-                    self._parameterNode.pleuraPercentage = ratio * 100
-            finally:
-                # Reset programmatic update flag
-                self.logic._isProgrammaticUpdate = False
-
-            # Set unsavedChanges for the user action of removing a frame
-            self._parameterNode.unsavedChanges = True
+            self._updateMarkupsAndOverlayProgrammatically(setUnsavedChanges=True)
             self.updateGuiFromAnnotations()
 
     def onInputDirectorySelected(self):
@@ -1351,20 +1355,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     def updateRatersFromCheckboxes(self):
         self.selectedRaters = self.getSelectedRatersFromTable()
         self.logic.setSelectedRaters(self.selectedRaters)
-
-        # Set programmatic update flag to prevent unsavedChanges from being set
-        self._isProgrammaticUpdate = True
-        try:
-            self.logic.updateLineMarkups()
-            ratio = self.logic.updateOverlayVolume()
-            if ratio is not None:
-                self._parameterNode.pleuraPercentage = ratio * 100
-            else:
-                self._parameterNode.pleuraPercentage = 0.0
-        finally:
-            # Reset programmatic update flag
-            self._isProgrammaticUpdate = False
-
+        self._updateMarkupsAndOverlayProgrammatically()
         self._updateGUIFromParameterNode()
         self.ui.raterColorTable.repaint()
         self.ui.raterColorTable.update()
@@ -1675,6 +1666,20 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         save_data['frame_annotations'] = copied_frames
         return save_data # a copy of the data, so caller has to save
 
+    def _updateMarkupsAndOverlayProgrammatically(self, parameterNode=None):
+        if parameterNode is None:
+            parameterNode = self.getParameterNode()
+        self._isProgrammaticUpdate = True
+        try:
+            self.updateLineMarkups()
+            ratio = self.updateOverlayVolume()
+            if ratio is not None:
+                parameterNode.pleuraPercentage = ratio * 100
+            else:
+                parameterNode.pleuraPercentage = 0.0
+        finally:
+            self._isProgrammaticUpdate = False
+
     def loadNextSequence(self):
         """
         Load the next sequence in the dataframe.
@@ -1861,15 +1866,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         #self.highlightedRaters = set(self.seenRaters)
 
         # Set programmatic update flag to prevent unsavedChanges from being set
-        self._isProgrammaticUpdate = True
-        try:
-            self.updateLineMarkups()
-            ratio = self.updateOverlayVolume()
-            if ratio is not None:
-                parameterNode.pleuraPercentage = ratio * 100
-        finally:
-            # Reset programmatic update flag
-            self._isProgrammaticUpdate = False
+        self._updateMarkupsAndOverlayProgrammatically(parameterNode)
         parameterNode.EndModify(previousNodeState)
 
         # Set overlay volume as foreground in slice viewers
@@ -1889,17 +1886,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         return self.nextDicomDfIndex
 
     def onSequenceBrowserModified(self, caller, event):
-        # Set programmatic update flag to prevent unsavedChanges from being set
-        self._isProgrammaticUpdate = True
-        try:
-            self.updateLineMarkups()
-            ratio = self.updateOverlayVolume()
-            if ratio is not None:
-                parameterNode = self.getParameterNode()
-                parameterNode.pleuraPercentage = ratio * 100
-        finally:
-            # Reset programmatic update flag
-            self._isProgrammaticUpdate = False
+        self._updateMarkupsAndOverlayProgrammatically(None)
 
     def createMarkupLine(self, name, rater, coordinates, color=[1, 1, 0]):
         markupNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode")
@@ -2190,6 +2177,64 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         return maskArray
 
+    def _updateMarkupNodesForFrame(self, frame):
+        """
+        Update markup nodes for pleura and b-lines for the given frame.
+        """
+        pleura_entries = [entry for entry in frame.get("pleura_lines", []) if entry.get("rater") in self.selectedRaters]
+        bline_entries = [entry for entry in frame.get("b_lines", []) if entry.get("rater") in self.selectedRaters]
+
+        # Ensure enough markup nodes exist
+        while len(self.pleuraLines) < len(pleura_entries):
+            self.pleuraLines.append(self.createMarkupLine("Pleura", "", [], [1,1,0]))
+        while len(self.bLines) < len(bline_entries):
+            self.bLines.append(self.createMarkupLine("B-line", "", [], [0,1,1]))
+
+        # Update pleura markups
+        for i, entry in enumerate(pleura_entries):
+            node = self.pleuraLines[i]
+            coordinates = entry.get("line", {}).get("points", [])
+            rater = entry.get("rater", "")
+            color_pleura, _ = self.getColorsForRater(rater)
+            node.SetAttribute("rater", rater)
+            node.GetDisplayNode().SetSelectedColor(color_pleura)
+            node.GetDisplayNode().SetVisibility(True)
+            # Update control points
+            node.RemoveAllControlPoints()
+            for pt in coordinates:
+                node.AddControlPointWorld(*pt)
+        # Hide unused pleura markups
+        for i in range(len(pleura_entries), len(self.pleuraLines)):
+            self.pleuraLines[i].GetDisplayNode().SetVisibility(False)
+
+        # Hide pleura markups for non-selected raters
+        for node in self.pleuraLines:
+            nodeRater = node.GetAttribute("rater")
+            if nodeRater not in self.selectedRaters:
+                node.GetDisplayNode().SetVisibility(False)
+
+        # Update b-line markups
+        for i, entry in enumerate(bline_entries):
+            node = self.bLines[i]
+            coordinates = entry.get("line", {}).get("points", [])
+            rater = entry.get("rater", "")
+            _, color_bline = self.getColorsForRater(rater)
+            node.SetAttribute("rater", rater)
+            node.GetDisplayNode().SetSelectedColor(color_bline)
+            node.GetDisplayNode().SetVisibility(True)
+            node.RemoveAllControlPoints()
+            for pt in coordinates:
+                node.AddControlPointWorld(*pt)
+        # Hide unused b-line markups
+        for i in range(len(bline_entries), len(self.bLines)):
+            self.bLines[i].GetDisplayNode().SetVisibility(False)
+
+        # Hide b-line markups for non-selected raters
+        for node in self.bLines:
+            nodeRater = node.GetAttribute("rater")
+            if nodeRater not in self.selectedRaters:
+                node.GetDisplayNode().SetVisibility(False)
+
     def updateLineMarkups(self):
         """
         Update the line markups to match the annotations at the current frame index. Reuse markups instead of deleting/creating them every frame. Only update if frame or annotation data has changed.
@@ -2251,47 +2296,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                     node.GetDisplayNode().SetVisibility(False)
                 return
 
-            pleura_entries = [entry for entry in frame.get("pleura_lines", []) if entry.get("rater") in self.selectedRaters]
-            bline_entries = [entry for entry in frame.get("b_lines", []) if entry.get("rater") in self.selectedRaters]
-
-            # Ensure enough markup nodes exist
-            while len(self.pleuraLines) < len(pleura_entries):
-                self.pleuraLines.append(self.createMarkupLine("Pleura", "", [], [1,1,0]))
-            while len(self.bLines) < len(bline_entries):
-                self.bLines.append(self.createMarkupLine("B-line", "", [], [0,1,1]))
-
-            # Update pleura markups
-            for i, entry in enumerate(pleura_entries):
-                node = self.pleuraLines[i]
-                coordinates = entry.get("line", {}).get("points", [])
-                rater = entry.get("rater", "")
-                color_pleura, _ = self.getColorsForRater(rater)
-                node.SetAttribute("rater", rater)
-                node.GetDisplayNode().SetSelectedColor(color_pleura)
-                node.GetDisplayNode().SetVisibility(True)
-                # Update control points
-                node.RemoveAllControlPoints()
-                for pt in coordinates:
-                    node.AddControlPointWorld(*pt)
-            # Hide unused pleura markups
-            for i in range(len(pleura_entries), len(self.pleuraLines)):
-                self.pleuraLines[i].GetDisplayNode().SetVisibility(False)
-
-            # Update b-line markups
-            for i, entry in enumerate(bline_entries):
-                node = self.bLines[i]
-                coordinates = entry.get("line", {}).get("points", [])
-                rater = entry.get("rater", "")
-                _, color_bline = self.getColorsForRater(rater)
-                node.SetAttribute("rater", rater)
-                node.GetDisplayNode().SetSelectedColor(color_bline)
-                node.GetDisplayNode().SetVisibility(True)
-                node.RemoveAllControlPoints()
-                for pt in coordinates:
-                    node.AddControlPointWorld(*pt)
-            # Hide unused b-line markups
-            for i in range(len(bline_entries), len(self.bLines)):
-                self.bLines[i].GetDisplayNode().SetVisibility(False)
+            self._updateMarkupNodesForFrame(frame)
         finally:
             slicer.mrmlScene.EndState(slicer.mrmlScene.BatchProcessState)
             # Reset programmatic update flag
@@ -2498,6 +2503,15 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             slicer.util.showStatusMessage("Overlay hidden: multiple raters selected", 3000)
             return None
 
+        # If no raters are selected, do not draw any mask
+        if hasattr(self, "selectedRaters") and not self.selectedRaters:
+            overlayArray = slicer.util.arrayFromVolume(parameterNode.overlayVolume)
+            overlayArray[:] = 0
+            overlayArray = self._applyDepthGuideToMask(overlayArray, parameterNode)
+            slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, overlayArray)
+            slicer.util.showStatusMessage("Overlay hidden: no raters selected", 3000)
+            return None
+
         ultrasoundArray = slicer.util.arrayFromVolume(parameterNode.inputVolume)
 
         # Mask array should be the same size as the ultrasound array
@@ -2512,6 +2526,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         for markupNode in self.pleuraLines:
             nodeRater = markupNode.GetAttribute("rater") if markupNode else None
             if hasattr(self, "selectedRaters") and self.selectedRaters and nodeRater not in self.selectedRaters:
+                continue
+            if not markupNode.GetDisplayNode().GetVisibility():
                 continue
 
             for i in range(markupNode.GetNumberOfControlPoints() - 1):
@@ -2532,6 +2548,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         for markupNode in self.bLines:
             nodeRater = markupNode.GetAttribute("rater") if markupNode else None
             if hasattr(self, "selectedRaters") and self.selectedRaters and nodeRater not in self.selectedRaters:
+                continue
+            if not markupNode.GetDisplayNode().GetVisibility():
                 continue
 
             for i in range(markupNode.GetNumberOfControlPoints() - 1):
