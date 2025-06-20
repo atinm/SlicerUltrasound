@@ -1314,6 +1314,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.raterColorTable.setItem(row, 2, bline_item)
         self.ui.raterColorTable.blockSignals(False)
 
+        # Expand the raterColorsCollapsibleButton if more than one rater
+        if hasattr(self.ui, 'raterColorsCollapsibleButton'):
+            if len(colors) > 1:
+                self.ui.raterColorsCollapsibleButton.collapsed = False
+
     def getSelectedRatersFromTable(self):
         selected = []
         table = self.ui.raterColorTable
@@ -1553,7 +1558,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
     def updateCurrentFrame(self):
         logging.info('addCurrentFrame')
-
         if self.sequenceBrowserNode is None:
             logging.warning("No sequence browser node found")
             return
@@ -1582,30 +1586,35 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Add pleura lines to annotations with new format
         for markupNode in self.pleuraLines:
             coordinates = []
-
             for i in range(markupNode.GetNumberOfControlPoints()):
                 coord = [0, 0, 0]
                 markupNode.GetNthControlPointPosition(i, coord)
                 coordinates.append(coord)
-
             if coordinates:
-                existing['pleura_lines'].append(
-                    {"rater": markupNode.GetAttribute("rater"), "line": {"points": coordinates}})
-
-        existing['b_lines'] = []  # Reset the list of B-lines
-
-        # Add B-lines to annotations with new format
+                validation = markupNode.GetAttribute("validation")
+                if validation:
+                    validation_obj = json.loads(validation)
+                    existing['pleura_lines'].append(
+                        {"rater": markupNode.GetAttribute("rater"), "line": {"points": coordinates}, "validation": validation_obj})
+                else:
+                    existing['pleura_lines'].append(
+                        {"rater": markupNode.GetAttribute("rater"), "line": {"points": coordinates}})
+        existing['b_lines'] = []
         for markupNode in self.bLines:
             coordinates = []
-
             for i in range(markupNode.GetNumberOfControlPoints()):
                 coord = [0, 0, 0]
                 markupNode.GetNthControlPointPosition(i, coord)
                 coordinates.append(coord)
-
             if coordinates:
-                existing['b_lines'].append(
-                    {"rater": markupNode.GetAttribute("rater"),  "line": {"points": coordinates}})
+                validation = markupNode.GetAttribute("validation")
+                if validation:
+                    validation_obj = json.loads(validation)
+                    existing['b_lines'].append(
+                        {"rater": markupNode.GetAttribute("rater"), "line": {"points": coordinates}, "validation": validation_obj})
+                else:
+                    existing['b_lines'].append(
+                        {"rater": markupNode.GetAttribute("rater"), "line": {"points": coordinates}})
 
     def removeFrame(self, frameIndex):
         logging.info(f"removeFrame -- frameIndex: {frameIndex}")
@@ -1888,19 +1897,19 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
     def onSequenceBrowserModified(self, caller, event):
         self._updateMarkupsAndOverlayProgrammatically(None)
 
-    def createMarkupLine(self, name, rater, coordinates, color=[1, 1, 0]):
+    def createMarkupLine(self, name, rater, coordinates, color=[1, 1, 0], validation=None):
         markupNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode")
         markupNode.CreateDefaultDisplayNodes()
         markupNode.SetName(name)
         markupNode.SetAttribute("rater", rater)
+        if validation is not None:
+            markupNode.SetAttribute("validation", json.dumps(validation))
         markupNode.GetDisplayNode().SetPropertiesLabelVisibility(False)
         markupNode.GetDisplayNode().SetSelectedColor(color)
         for coord in coordinates:
             markupNode.AddControlPointWorld(coord[0], coord[1], coord[2])
-
         self.addObserver(markupNode, markupNode.PointModifiedEvent, self.onPointModified)
         self.addObserver(markupNode, markupNode.PointPositionDefinedEvent, self.onPointPositionDefined)
-
         return markupNode
 
     def clearSceneLines(self):
@@ -2195,11 +2204,20 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             node = self.pleuraLines[i]
             coordinates = entry.get("line", {}).get("points", [])
             rater = entry.get("rater", "")
-            color_pleura, _ = self.getColorsForRater(rater)
+            validation = entry.get("validation", None)
+            # Default to unadjudicated if missing or missing status
+            if not validation or not validation.get("status"):
+                validation = {"status": "unadjudicated"}
             node.SetAttribute("rater", rater)
+            node.SetAttribute("validation", json.dumps(validation))
+            color_pleura, _ = self.getColorsForRater(rater)
             node.GetDisplayNode().SetSelectedColor(color_pleura)
             node.GetDisplayNode().SetVisibility(True)
-            # Update control points
+            # Set opacity based on validation status
+            if validation.get("status", "unadjudicated") == "invalidated":
+                node.GetDisplayNode().SetOpacity(0.3)
+            else:
+                node.GetDisplayNode().SetOpacity(1.0)
             node.RemoveAllControlPoints()
             for pt in coordinates:
                 node.AddControlPointWorld(*pt)
@@ -2218,10 +2236,18 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             node = self.bLines[i]
             coordinates = entry.get("line", {}).get("points", [])
             rater = entry.get("rater", "")
-            _, color_bline = self.getColorsForRater(rater)
+            validation = entry.get("validation", None)
+            if not validation or not validation.get("status"):
+                validation = {"status": "unadjudicated"}
             node.SetAttribute("rater", rater)
+            node.SetAttribute("validation", json.dumps(validation))
+            _, color_bline = self.getColorsForRater(rater)
             node.GetDisplayNode().SetSelectedColor(color_bline)
             node.GetDisplayNode().SetVisibility(True)
+            if validation.get("status", "unadjudicated") == "invalidated":
+                node.GetDisplayNode().SetOpacity(0.3)
+            else:
+                node.GetDisplayNode().SetOpacity(1.0)
             node.RemoveAllControlPoints()
             for pt in coordinates:
                 node.AddControlPointWorld(*pt)
