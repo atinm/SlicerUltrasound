@@ -123,6 +123,7 @@ class AnnotateUltrasoundParameterNode:
     unsavedChanges: bool = False
     depthGuideVisible: bool = True
     rater = ''
+    showInvalidated: bool = True
 
 #
 # AnnotateUltrasoundWidget
@@ -311,6 +312,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
+        if self.logic and self._parameterNode:
+            self.logic.parameterNode = self._parameterNode
 
         # --- Limit raterColorTable visible rows to about 4 programmatically ---
         if hasattr(self.ui, "raterColorTable"):
@@ -330,6 +333,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.invalidateAllUnvalidatedButton.clicked.connect(self.onInvalidateAllUnvalidated)
         if hasattr(self.ui, 'showInvalidatedCheckBox'):
             self.ui.showInvalidatedCheckBox.toggled.connect(self.onShowInvalidatedToggled)
+            self.ui.showInvalidatedCheckBox.setChecked(True)  # Set default to checked
         if hasattr(self.ui, 'adjudicatorModeCheckBox'):
             self.ui.adjudicatorModeCheckBox.toggled.connect(self.onAdjudicatorModeToggled)
         # Set initial state of adjudication controls
@@ -340,6 +344,59 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if not hasattr(self, 'selectionObserverTag') or self.selectionObserverTag is None:
             self.selectionObserverTag = selectionNode.AddObserver(vtk.vtkCommand.ModifiedEvent, self.onSelectionChanged)
 
+        self.setupClickObserverOnRedView()
+
+    def setupClickObserverOnRedView(self):
+        sliceWidget = slicer.app.layoutManager().sliceWidget("Red")
+        renderWindowInteractor = sliceWidget.sliceView().renderWindow().GetInteractor()
+        import vtk
+        self._clickObserverTag = renderWindowInteractor.AddObserver(vtk.vtkCommand.LeftButtonPressEvent, self.onRedViewClick)
+
+    def distancePointToSegment(self, p, a, b):
+        import numpy as np
+        p = np.array(p)
+        a = np.array(a)
+        b = np.array(b)
+        ab = b - a
+        if np.allclose(ab, 0):
+            return np.linalg.norm(p - a)
+        t = np.dot(p - a, ab) / np.dot(ab, ab)
+        t = np.clip(t, 0, 1)
+        closest = a + t * ab
+        return np.linalg.norm(p - closest)
+
+    def onRedViewClick(self, caller, event):
+        x, y = caller.GetEventPosition()
+        # Get the slice widget and node
+        sliceWidget = slicer.app.layoutManager().sliceWidget("Red")
+        sliceNode = sliceWidget.mrmlSliceNode()
+        xyToRas = sliceNode.GetXYToRAS()
+        xy = [x, y, 0, 1]
+        ras = [0, 0, 0, 1]
+        xyToRas.MultiplyPoint(xy, ras)
+        ras = ras[:3]
+        # Find the closest visible markup line node (to any segment)
+        minDist = float('inf')
+        closestNode = None
+        threshold = 3.0  # mm
+        for node in slicer.util.getNodesByClass('vtkMRMLMarkupsLineNode'):
+            displayNode = node.GetDisplayNode()
+            nodeRater = node.GetAttribute('rater')
+            if not displayNode or not displayNode.GetVisibility():
+                continue
+            nPoints = node.GetNumberOfControlPoints()
+            for i in range(nPoints - 1):
+                pt1 = [0, 0, 0]
+                pt2 = [0, 0, 0]
+                node.GetNthControlPointPosition(i, pt1)
+                node.GetNthControlPointPosition(i + 1, pt2)
+                dist = self.distancePointToSegment(ras, pt1, pt2)
+                if dist < minDist:
+                    minDist = dist
+                    closestNode = node
+        if closestNode and minDist < threshold:
+            selectionNode = slicer.app.applicationLogic().GetSelectionNode()
+            selectionNode.SetActivePlaceNodeID(closestNode.GetID())
 
     def onSelectionChanged(self, caller, event):
         selectionNode = slicer.app.applicationLogic().GetSelectionNode()
@@ -1165,6 +1222,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # so that when the scene is saved and reloaded, these settings are restored.
 
         self.setParameterNode(self.logic.getParameterNode())
+        if self.logic and self._parameterNode:
+            self.logic.parameterNode = self._parameterNode
 
         # Select default input nodes if nothing is selected yet to save a few clicks for the user
         if not self._parameterNode.inputVolume:
@@ -1195,6 +1254,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self._parameterNode.disconnectGui(self._parameterNodeGuiTag)
             self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._updateGUIFromParameterNode)
         self._parameterNode = inputParameterNode
+        if self.logic and self._parameterNode:
+            self.logic.parameterNode = self._parameterNode
+
         if self._parameterNode:
             # Note: in the .ui file, a Qt dynamic property called "SlicerParameterName" is set on each
             # ui element that needs connection.
@@ -1443,6 +1505,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         count = 0
         for nodeIndex in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLMarkupsLineNode")):
             markupNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, "vtkMRMLMarkupsLineNode")
+            displayNode = markupNode.GetDisplayNode()
+            if not displayNode or not displayNode.GetVisibility():
+                continue # Skip if not visible
             validation_json = markupNode.GetAttribute("validation")
             status = None
             if validation_json:
@@ -1471,6 +1536,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         count = 0
         for nodeIndex in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLMarkupsLineNode")):
             markupNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, "vtkMRMLMarkupsLineNode")
+            displayNode = markupNode.GetDisplayNode()
+            if not displayNode or not displayNode.GetVisibility():
+                continue # Skip if not visible
             validation_json = markupNode.GetAttribute("validation")
             status = None
             if validation_json:
@@ -1494,6 +1562,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         slicer.util.showStatusMessage(f"Invalidated {count} unadjudicated lines.", 3000)
 
     def onShowInvalidatedToggled(self, checked):
+        if self._parameterNode:
+            self._parameterNode.showInvalidated = checked
         for nodeIndex in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLMarkupsLineNode")):
             markupNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, "vtkMRMLMarkupsLineNode")
             validation_json = markupNode.GetAttribute("validation")
@@ -1566,152 +1636,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                     if len(line_points) == len(points) and all([all(abs(a-b)<1e-6 for a,b in zip(pt1,pt2)) for pt1,pt2 in zip(line_points, points)]):
                         line["validation"] = validation
                         return
-
-    def setup(self) -> None:
-        """
-        Called when the user opens the module the first time and the widget is initialized.
-        """
-        ScriptedLoadableModuleWidget.setup(self)
-
-        # Load widget from .ui file (created by Qt Designer).
-        # Additional widgets can be instantiated manually and added to self.layout.
-        uiWidget = slicer.util.loadUI(self.resourcePath('UI/AnnotateUltrasound.ui'))
-        self.layout.addWidget(uiWidget)
-        self.ui = slicer.util.childWidgetVariables(uiWidget)
-        self.ui.currentFileLabel.setTextInteractionFlags(qt.Qt.TextSelectableByMouse)
-
-        # Set scene in MRML widgets. Make sure that in Qt designer the top-level qMRMLWidget's
-        # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
-        # "setMRMLScene(vtkMRMLScene*)" slot.
-        uiWidget.setMRMLScene(slicer.mrmlScene)
-
-        self.connectKeyboardShortcuts()
-
-        # Set frames table to show 5-6 rows
-        rowHeight = 25  # Approximate height of a row
-        headerHeight = 25  # Height of the header
-        self.ui.framesTableWidget.setFixedHeight(headerHeight + (rowHeight * 6))  # 6 rows + header
-
-        # Set size policy and minimum height for labels scroll area
-        self.ui.labelsScrollArea.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Preferred)
-        self.ui.labelsScrollAreaWidgetContents.setSizePolicy(qt.QSizePolicy.Preferred, qt.QSizePolicy.Preferred)
-        self.ui.labelsScrollArea.setMinimumHeight(200)  # Set a reasonable minimum height
-
-        # Set layout spacing to 0 for compact appearance
-        self.ui.labelsScrollAreaWidgetContents.layout().setSpacing(0)
-        self.ui.labelsScrollAreaWidgetContents.layout().setContentsMargins(0, 0, 0, 0)
-
-        # Ensure labels section starts expanded
-        self.ui.labelAnnotationsCollapsibleButton.collapsed = False
-
-        # Create logic class. Logic implements all computations that should be possible to run
-        # in batch mode, without a graphical user interface.
-        self.logic = AnnotateUltrasoundLogic()
-
-        # Update directory button directory from settings
-        self.ui.inputDirectoryButton.directory = slicer.app.settings().value("AnnotateUltrasound/InputDirectory", "")
-
-        # Set up frames table
-        self.ui.framesTableWidget.setColumnCount(3)
-        self.ui.framesTableWidget.setHorizontalHeaderLabels(["Frame index", "Pleura lines (N)", "B-lines (N)"])
-        header = self.ui.framesTableWidget.horizontalHeader()
-        header.setSectionResizeMode(qt.QHeaderView.Stretch)
-        self.ui.framesTableWidget.setSelectionBehavior(qt.QAbstractItemView.SelectRows)
-        self.ui.framesTableWidget.setSelectionMode(qt.QAbstractItemView.SingleSelection)
-
-        # Connections
-
-        # These connections ensure that we update parameter node when scene is closed
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
-        self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
-
-        # Buttons
-        self.ui.inputDirectoryButton.directoryChanged.connect(self.onInputDirectorySelected)
-        self.ui.readInputButton.connect('clicked(bool)', self.onReadInputButton)
-        self.ui.nextButton.clicked.connect(self.onNextButton)
-        self.ui.previousButton.clicked.connect(self.onPreviousButton)
-        self.ui.saveButton.clicked.connect(self.onSaveButton)
-        self.ui.saveAndLoadNextButton.clicked.connect(self.onSaveAndLoadNextButton)
-        self.ui.intensitySlider.valueChanged.connect(self.onIntensitySliderValueChanged)
-        self.ui.skipToUnlabeledButton.clicked.connect(self.onSkipToUnlabeledButton)
-
-        self.ui.addPleuraButton.toggled.connect(lambda checked: self.onAddLine("Pleura", checked))
-        self.ui.removePleuraButton.clicked.connect(lambda: self.onRemoveLine("Pleura"))
-        self.ui.addBlineButton.toggled.connect(lambda checked: self.onAddLine("Bline", checked))
-        self.ui.removeBlineButton.clicked.connect(lambda: self.onRemoveLine("Bline"))
-        self.ui.overlayVisibilityButton.toggled.connect(self.overlayVisibilityToggled)
-        self.ui.clearAllLinesButton.clicked.connect(self.onClearAllLines)
-        self.ui.addCurrentFrameButton.clicked.connect(self.onAddCurrentFrame)
-        self.ui.removeCurrentFrameButton.clicked.connect(self.onRemoveCurrentFrame)
-
-        # Assign icons to buttons
-        self.ui.nextButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueFillNext.png')))
-        self.ui.previousButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueFillPrevious.png')))
-        self.ui.addPleuraButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueAdd.png')))
-        self.ui.addBlineButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueAdd.png')))
-        self.ui.saveButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueSave.png')))
-        self.ui.saveAndLoadNextButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueSave.png')))
-        self.ui.removePleuraButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueRemove.png')))
-        self.ui.removeBlineButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueRemove.png')))
-        self.ui.overlayVisibilityButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueEye.png')))
-        self.ui.clearAllLinesButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueFillTrash.png')))
-        self.ui.skipToUnlabeledButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueFastForward.png')))
-
-        # Frame table
-        self.ui.framesTableWidget.itemSelectionChanged.connect(self.onFramesTableSelectionChanged)
-
-        # Settings
-        settings = slicer.app.settings()
-        showPleuraPercentage = settings.value('AnnotateUltrasound/ShowPleuraPercentage', 'false')
-        self.ui.showPleuraPercentageCheckBox.setChecked(showPleuraPercentage.lower() == 'true')
-        self.ui.raterName.setText(slicer.app.settings().value("AnnotateUltrasound/Rater", ""))
-        self.ui.raterName.returnPressed.connect(self.onRaterNameChanged)
-        self.ui.showPleuraPercentageCheckBox.connect('toggled(bool)', self.saveUserSettings)
-        self.ui.depthGuideCheckBox.toggled.connect(self.onDepthGuideToggled)
-
-        # Make buttons taller
-        buttonHeight = 40  # Set the height you want for the buttons
-        self.ui.inputDirectoryButton.setFixedHeight(buttonHeight)
-        self.ui.readInputButton.setFixedHeight(buttonHeight)
-        self.ui.nextButton.setFixedHeight(buttonHeight)
-        self.ui.previousButton.setFixedHeight(buttonHeight)
-        self.ui.saveButton.setFixedHeight(buttonHeight)
-        self.ui.saveAndLoadNextButton.setFixedHeight(buttonHeight)
-        self.ui.addPleuraButton.setFixedHeight(buttonHeight)
-        self.ui.removePleuraButton.setFixedHeight(buttonHeight)
-        self.ui.addBlineButton.setFixedHeight(buttonHeight)
-        self.ui.removeBlineButton.setFixedHeight(buttonHeight)
-        self.ui.overlayVisibilityButton.setFixedHeight(buttonHeight)
-        self.ui.clearAllLinesButton.setFixedHeight(buttonHeight)
-        self.ui.addCurrentFrameButton.setFixedHeight(buttonHeight)
-        self.ui.removeCurrentFrameButton.setFixedHeight(buttonHeight)
-
-        # Make sure parameter node is initialized (needed for module reload)
-        self.initializeParameterNode()
-
-        # --- Limit raterColorTable visible rows to about 4 programmatically ---
-        if hasattr(self.ui, "raterColorTable"):
-            vh = self.ui.raterColorTable.verticalHeader()
-            self.ui.raterColorTable.setMaximumHeight(vh.defaultSectionSize * 4 + 2)
-            self.ui.raterColorTable.cellClicked.connect(self.onRaterColorTableClicked)
-            self.ui.raterColorTable.itemChanged.connect(self.onRaterColorSelectionChangedFromUser)
-
-        # --- Adjudication controls ---
-        if hasattr(self.ui, 'validateLineButton'):
-            self.ui.validateLineButton.clicked.connect(self.onValidateLine)
-        if hasattr(self.ui, 'invalidateLineButton'):
-            self.ui.invalidateLineButton.clicked.connect(self.onInvalidateLine)
-        if hasattr(self.ui, 'validateAllButton'):
-            self.ui.validateAllButton.clicked.connect(self.onValidateAllUnvalidated)
-        if hasattr(self.ui, 'invalidateAllUnvalidatedButton'):
-            self.ui.invalidateAllUnvalidatedButton.clicked.connect(self.onInvalidateAllUnvalidated)
-        if hasattr(self.ui, 'showInvalidatedCheckBox'):
-            self.ui.showInvalidatedCheckBox.toggled.connect(self.onShowInvalidatedToggled)
-        if hasattr(self.ui, 'adjudicatorModeCheckBox'):
-            self.ui.adjudicatorModeCheckBox.toggled.connect(self.onAdjudicatorModeToggled)
-        # Set initial state of adjudication controls
-        self.onAdjudicatorModeToggled(self.ui.adjudicatorModeCheckBox.isChecked())
-
 
 #
 # AnnotateUltrasoundLogic
@@ -1897,64 +1821,83 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         return len(self.dicomDf), annotations_created_count
 
     def updateCurrentFrame(self):
-        logging.info('addCurrentFrame')
+        logging.info('updateCurrentFrame')
         if self.sequenceBrowserNode is None:
-            logging.warning("No sequence browser node found")
+            logging.warning("No sequence browser node found, cannot update current frame.")
             return
 
-        # Get the current frame index from the sequence browser
-        currentFrameIndex = max(0, self.sequenceBrowserNode.GetSelectedItemNumber())  # TODO: investigate whey this could be negative!
-        # Check if annotations already has a list of frame annotations. Create it if it doesn't exist.
-        if 'frame_annotations' not in self.annotations:
-            self.annotations['frame_annotations'] = []
+        currentFrameIndex = self.sequenceBrowserNode.GetSelectedItemNumber()
+        if self.annotations is None:
+            self.annotations = {"frame_annotations": []}
 
-        # Find existing frame annotation for currentFrameIndex
-        existing = next((f for f in self.annotations['frame_annotations']
-                         if int(f.get("frame_number", -1)) == currentFrameIndex), None)
-        if not existing:
-            # create an empty frame and append it to annotations
-            existing = {
-                "frame_number": currentFrameIndex,
-                "coordinate_space": "RAS",
-                "pleura_lines": [],
-                "b_lines": []
-            }
-            self.annotations['frame_annotations'].append(existing)
+        # Find or create the frame entry in annotations
+        frame_data = next((item for item in self.annotations['frame_annotations'] if int(item.get("frame_number", -1)) == currentFrameIndex), None)
+        if frame_data is None:
+            frame_data = {"frame_number": currentFrameIndex, "pleura_lines": [], "b_lines": []}
+            self.annotations['frame_annotations'].append(frame_data)
 
-        existing['pleura_lines'] = []  # Reset the list of pleura lines
+        # This set will keep track of which raters we have updated from the scene
+        processed_raters = set()
 
-        # Add pleura lines to annotations with new format
-        for markupNode in self.pleuraLines:
-            coordinates = []
-            for i in range(markupNode.GetNumberOfControlPoints()):
-                coord = [0, 0, 0]
-                markupNode.GetNthControlPointPosition(i, coord)
-                coordinates.append(coord)
-            if coordinates:
-                validation = markupNode.GetAttribute("validation")
-                if validation:
-                    validation_obj = json.loads(validation)
-                    existing['pleura_lines'].append(
-                        {"rater": markupNode.GetAttribute("rater"), "line": {"points": coordinates}, "validation": validation_obj})
-                else:
-                    existing['pleura_lines'].append(
-                        {"rater": markupNode.GetAttribute("rater"), "line": {"points": coordinates}})
-        existing['b_lines'] = []
-        for markupNode in self.bLines:
-            coordinates = []
-            for i in range(markupNode.GetNumberOfControlPoints()):
-                coord = [0, 0, 0]
-                markupNode.GetNthControlPointPosition(i, coord)
-                coordinates.append(coord)
-            if coordinates:
-                validation = markupNode.GetAttribute("validation")
-                if validation:
-                    validation_obj = json.loads(validation)
-                    existing['b_lines'].append(
-                        {"rater": markupNode.GetAttribute("rater"), "line": {"points": coordinates}, "validation": validation_obj})
-                else:
-                    existing['b_lines'].append(
-                        {"rater": markupNode.GetAttribute("rater"), "line": {"points": coordinates}})
+        # Update lists directly from visible markups
+        new_pleura_lines = []
+        for node in self.pleuraLines:
+            if node.GetDisplayNode() and node.GetDisplayNode().GetVisibility() and node.GetNumberOfControlPoints() > 0:
+                rater = node.GetAttribute("rater")
+                processed_raters.add(rater)
+                points = []
+                for i in range(node.GetNumberOfControlPoints()):
+                    coord = [0, 0, 0]
+                    node.GetNthControlPointPosition(i, coord)
+                    points.append(coord)
+
+                validation_json = node.GetAttribute("validation")
+                try:
+                    validation = json.loads(validation_json) if validation_json else {"status": "unadjudicated"}
+                except json.JSONDecodeError:
+                    validation = {"status": "unadjudicated"}
+
+                new_pleura_lines.append({
+                    "rater": rater,
+                    "line": {"points": points},
+                    "validation": validation,
+                })
+
+        new_b_lines = []
+        for node in self.bLines:
+            if node.GetDisplayNode() and node.GetDisplayNode().GetVisibility() and node.GetNumberOfControlPoints() > 0:
+                rater = node.GetAttribute("rater")
+                processed_raters.add(rater)
+                points = []
+                for i in range(node.GetNumberOfControlPoints()):
+                    coord = [0, 0, 0]
+                    node.GetNthControlPointPosition(i, coord)
+                    points.append(coord)
+
+                validation_json = node.GetAttribute("validation")
+                try:
+                    validation = json.loads(validation_json) if validation_json else {"status": "unadjudicated"}
+                except json.JSONDecodeError:
+                    validation = {"status": "unadjudicated"}
+
+                new_b_lines.append({
+                    "rater": rater,
+                    "line": {"points": points},
+                    "validation": validation,
+                })
+
+        # Now, add back the lines from raters that were not visible
+        for line in frame_data.get('pleura_lines', []):
+            if line.get('rater') not in processed_raters:
+                new_pleura_lines.append(line)
+
+        for line in frame_data.get('b_lines', []):
+            if line.get('rater') not in processed_raters:
+                new_b_lines.append(line)
+
+        # Replace the old lists with the new, combined lists
+        frame_data['pleura_lines'] = new_pleura_lines
+        frame_data['b_lines'] = new_b_lines
 
     def removeFrame(self, frameIndex):
         logging.info(f"removeFrame -- frameIndex: {frameIndex}")
@@ -2553,12 +2496,17 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             node.SetAttribute("validation", json.dumps(validation))
             color_pleura, _ = self.getColorsForRater(rater)
             node.GetDisplayNode().SetSelectedColor(color_pleura)
-            node.GetDisplayNode().SetVisibility(True)
-            # Set opacity based on validation status
-            if validation.get("status", "unadjudicated") == "invalidated":
+
+            # Set visibility and opacity based on validation status and UI controls
+            status = validation.get("status", "unadjudicated")
+            if status == "invalidated":
+                showInvalidated = self.parameterNode.showInvalidated if self.parameterNode else True
+                node.GetDisplayNode().SetVisibility(showInvalidated)
                 node.GetDisplayNode().SetOpacity(0.3)
             else:
+                node.GetDisplayNode().SetVisibility(True)
                 node.GetDisplayNode().SetOpacity(1.0)
+
             node.RemoveAllControlPoints()
             for pt in coordinates:
                 node.AddControlPointWorld(*pt)
@@ -2584,11 +2532,17 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             node.SetAttribute("validation", json.dumps(validation))
             _, color_bline = self.getColorsForRater(rater)
             node.GetDisplayNode().SetSelectedColor(color_bline)
-            node.GetDisplayNode().SetVisibility(True)
-            if validation.get("status", "unadjudicated") == "invalidated":
+
+            # Set visibility and opacity based on validation status and UI controls
+            status = validation.get("status", "unadjudicated")
+            if status == "invalidated":
+                showInvalidated = self.parameterNode.showInvalidated if self.parameterNode else True
+                node.GetDisplayNode().SetVisibility(showInvalidated)
                 node.GetDisplayNode().SetOpacity(0.3)
             else:
+                node.GetDisplayNode().SetVisibility(True)
                 node.GetDisplayNode().SetOpacity(1.0)
+
             node.RemoveAllControlPoints()
             for pt in coordinates:
                 node.AddControlPointWorld(*pt)
@@ -3159,7 +3113,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 except Exception as e:
                     logging.warning(f"Failed to load annotation file {filepath}: {e}")
             self.annotations = merged_data
-
 
 #
 # AnnotateUltrasoundTest
