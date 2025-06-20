@@ -939,7 +939,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
     def onLabelsFileSelected(self, labelsFilepath=None):
         logging.info("Loading fixed labels file from Resources directory")
-        labelsFilepath = os.path.join(os.path.dirname(os.path.dirname(__file__)), "AnnotateUltrasound", "Resources", "annotation_labels.csv")
+        # Use self.resourcePath to get the correct path to resources (consistent with other resource usage in this module)
+        labelsFilepath = os.path.join(self.resourcePath('Resources'), "annotation_labels.csv")
         categories = defaultdict(list)
         try:
             with open(labelsFilepath, 'r') as file:
