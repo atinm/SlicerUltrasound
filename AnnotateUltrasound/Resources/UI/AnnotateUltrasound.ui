@@ -102,6 +102,18 @@
                                                             </property>
                                                         </widget>
                                                     </item>
+                                                    <item>
+                                                        <widget class="QPushButton"
+                                                            name="duplicateLineButton">
+                                                            <property name="text">
+                                                                <string>Mark Duplicate</string>
+                                                            </property>
+                                                            <property name="toolTip">
+                                                                <string>Mark the selected line as
+                                                                    duplicate (Shortcut D key)</string>
+                                                            </property>
+                                                        </widget>
+                                                    </item>
                                                 </layout>
                                             </item>
                                             <item>
@@ -111,15 +123,37 @@
                                                         <widget class="QPushButton"
                                                             name="validateAllButton">
                                                             <property name="text">
-                                                                <string>Validate All Unvalidated</string>
+                                                                <string>Validate Rest</string>
+                                                            </property>
+                                                            <property name="toolTip">
+                                                                <string>Mark all visible
+                                                                    unadjudicated lines as validated</string>
                                                             </property>
                                                         </widget>
                                                     </item>
                                                     <item>
                                                         <widget class="QPushButton"
-                                                            name="invalidateAllUnvalidatedButton">
+                                                            name="invalidateAllUnadjudicatedButton">
                                                             <property name="text">
-                                                                <string>Invalidate All Unvalidated</string>
+                                                                <string>Invalidate Rest</string>
+                                                            </property>
+                                                            <property name="toolTip">
+                                                                <string>Mark all visible
+                                                                    unadjudicated lines as
+                                                                    invalidated</string>
+                                                            </property>
+                                                        </widget>
+                                                    </item>
+                                                    <item>
+                                                        <widget class="QPushButton"
+                                                            name="duplicateAllUnadjudicatedButton">
+                                                            <property name="text">
+                                                                <string>Duplicate Rest</string>
+                                                            </property>
+                                                            <property name="toolTip">
+                                                                <string>Mark all visible
+                                                                    unadjudicated lines as
+                                                                    duplicated</string>
                                                             </property>
                                                         </widget>
                                                     </item>
@@ -127,9 +161,13 @@
                                             </item>
                                             <item>
                                                 <widget class="QCheckBox"
-                                                    name="showInvalidatedCheckBox">
+                                                    name="showInvalidOrDuplicateCheckBox">
                                                     <property name="text">
-                                                        <string>Show Invalidated Lines</string>
+                                                        <string>Show Invalidated or Duplicated lines</string>
+                                                    </property>
+                                                    <property name="toolTip">
+                                                        <string>Show lines marked as Invalidated or
+                                                            Duplicated</string>
                                                     </property>
                                                 </widget>
                                             </item>

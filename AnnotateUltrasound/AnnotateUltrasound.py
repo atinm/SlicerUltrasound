@@ -123,7 +123,7 @@ class AnnotateUltrasoundParameterNode:
     unsavedChanges: bool = False
     depthGuideVisible: bool = True
     rater = ''
-    showInvalidated: bool = True
+    showInvalidAndDuplicate: bool = True
     adjudicatorMode: bool = False
 
 #
@@ -171,6 +171,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutV.setKey(qt.QKeySequence('V'))
         self.shortcutI = qt.QShortcut(slicer.util.mainWindow())  # "I" for invalidate line
         self.shortcutI.setKey(qt.QKeySequence('I'))
+        self.shortcutD = qt.QShortcut(slicer.util.mainWindow())  # "D" for duplicate line
+        self.shortcutD.setKey(qt.QKeySequence('D'))
 
         self.raterNameDebounceTimer = qt.QTimer()
         self.raterNameDebounceTimer.setSingleShot(True)
@@ -192,6 +194,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # shortcuts for adjudication actions
         self.shortcutV.connect('activated()', self.onValidateLine)  # "V" to validate selected line
         self.shortcutI.connect('activated()', self.onInvalidateLine)  # "I" to invalidate selected line
+        self.shortcutD.connect('activated()', self.onDuplicateLine)  # "D" to mark selected line as duplicated
 
     def disconnectKeyboardShortcuts(self):
         # Disconnect shortcuts to avoid issues when the user leaves the module
@@ -203,6 +206,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutA.activated.disconnect()
         self.shortcutV.activated.disconnect()
         self.shortcutI.activated.disconnect()
+        self.shortcutD.activated.disconnect()
 
     def setup(self) -> None:
         """
@@ -342,13 +346,18 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if hasattr(self.ui, 'invalidateLineButton'):
             self.ui.invalidateLineButton.clicked.connect(self.onInvalidateLine)
             self.ui.invalidateLineButton.setToolTip("Invalidate the selected line (I)")
+        if hasattr(self.ui, 'duplicateLineButton'):
+            self.ui.duplicateLineButton.clicked.connect(self.onDuplicateLine)
+            self.ui.duplicateLineButton.setToolTip("Duplicate the selected line (D)")
         if hasattr(self.ui, 'validateAllButton'):
-            self.ui.validateAllButton.clicked.connect(self.onValidateAllUnvalidated)
-        if hasattr(self.ui, 'invalidateAllUnvalidatedButton'):
-            self.ui.invalidateAllUnvalidatedButton.clicked.connect(self.onInvalidateAllUnvalidated)
-        if hasattr(self.ui, 'showInvalidatedCheckBox'):
-            self.ui.showInvalidatedCheckBox.toggled.connect(self.onShowInvalidatedToggled)
-            self.ui.showInvalidatedCheckBox.setChecked(True)  # Set default to checked
+            self.ui.validateAllButton.clicked.connect(self.onValidateAllUnadjudicated)
+        if hasattr(self.ui, 'invalidateAllUnadjudicatedButton'):
+            self.ui.invalidateAllUnadjudicatedButton.clicked.connect(self.onInvalidateAllUnadjudicated)
+        if hasattr(self.ui, 'duplicateAllUnadjudicatedButton'):
+            self.ui.duplicateAllUnadjudicatedButton.clicked.connect(self.onDuplicateAllUnadjudicated)
+        if hasattr(self.ui, 'showInvalidOrDuplicateCheckBox'):
+            self.ui.showInvalidOrDuplicateCheckBox.toggled.connect(self.onShowInvalidOrDuplicateToggled)
+            self.ui.showInvalidOrDuplicateCheckBox.setChecked(True)  # Set default to checked
         if hasattr(self.ui, 'adjudicatorModeCheckBox'):
             self.ui.adjudicatorModeCheckBox.toggled.connect(self.onAdjudicatorModeToggled)
         # Set initial state of adjudication controls
@@ -1313,8 +1322,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
             # Update corner annotation if _parameterNode.pleuraPercentage is a non-negative number
             # if we are using multiple raters and have selected more than one, don't show overlay volume
+            adjudicator_mode = getattr(self._parameterNode, 'adjudicatorMode', False)
             selectedRaters = self.logic.getSelectedRaters()
-            if selectedRaters is not None and len(selectedRaters) == 1:
+            if adjudicator_mode or (selectedRaters is not None and len(selectedRaters) == 1):
                 if self.ui.showPleuraPercentageCheckBox.checked and self._parameterNode.pleuraPercentage >= 0:
                     view=slicer.app.layoutManager().sliceWidget("Red").sliceView()
                     view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft,f"B-line/Pleura = {self._parameterNode.pleuraPercentage:.1f} %")
@@ -1515,7 +1525,38 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.logic.updateCurrentFrame()
         slicer.util.showStatusMessage("Line invalidated.", 3000)
 
-    def onValidateAllUnvalidated(self):
+    def onDuplicateLine(self):
+        # Get the selected markup node
+        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
+        selectedNodeID = selectionNode.GetActivePlaceNodeID()
+        if not selectedNodeID:
+            slicer.util.showStatusMessage("No line selected to mark as duplicated.", 3000)
+            return
+        markupNode = slicer.mrmlScene.GetNodeByID(selectedNodeID)
+        if not markupNode or not markupNode.GetClassName() == "vtkMRMLMarkupsLineNode":
+            slicer.util.showStatusMessage("Selected node is not a line.", 3000)
+            return
+        # Only allow duplication if node is visible
+        displayNode = markupNode.GetDisplayNode()
+        if not displayNode or not displayNode.GetVisibility():
+            slicer.util.showStatusMessage("Cannot adjudicate: selected line is not visible.", 3000)
+            return
+        # Get current rater (adjudicator)
+        adjudicator = self.getCurrentRater()
+        validation = {
+            "status": "duplicated",
+            "adjudicator": adjudicator,
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+        markupNode.SetAttribute("validation", json.dumps(validation))
+        # Set opacity to faded (duplicated)
+        displayNode.SetOpacity(0.3)
+        # Also update the corresponding annotation line
+        self._updateAnnotationLineValidation(markupNode, validation)
+        self.logic.updateCurrentFrame()
+        slicer.util.showStatusMessage("Line marked as duplicated.", 3000)
+
+    def onValidateAllUnadjudicated(self):
         # Get current rater (adjudicator)
         adjudicator = self.getCurrentRater()
         count = 0
@@ -1546,7 +1587,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.logic.updateCurrentFrame()
         slicer.util.showStatusMessage(f"Validated {count} unadjudicated lines.", 3000)
 
-    def onInvalidateAllUnvalidated(self):
+    def onInvalidateAllUnadjudicated(self):
         # Get current rater (adjudicator)
         adjudicator = self.getCurrentRater()
         count = 0
@@ -1577,9 +1618,40 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.logic.updateCurrentFrame()
         slicer.util.showStatusMessage(f"Invalidated {count} unadjudicated lines.", 3000)
 
-    def onShowInvalidatedToggled(self, checked):
+    def onDuplicateAllUnadjudicated(self):
+        # Get current rater (adjudicator)
+        adjudicator = self.getCurrentRater()
+        count = 0
+        for nodeIndex in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLMarkupsLineNode")):
+            markupNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, "vtkMRMLMarkupsLineNode")
+            displayNode = markupNode.GetDisplayNode()
+            if not displayNode or not displayNode.GetVisibility():
+                continue # Skip if not visible
+            validation_json = markupNode.GetAttribute("validation")
+            status = None
+            if validation_json:
+                try:
+                    validation = json.loads(validation_json)
+                    status = validation.get("status", None)
+                except Exception:
+                    status = None
+            if not status or status == "unadjudicated":
+                validation = {
+                    "status": "duplicated",
+                    "adjudicator": adjudicator,
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                markupNode.SetAttribute("validation", json.dumps(validation))
+                displayNode = markupNode.GetDisplayNode()
+                if displayNode:
+                    displayNode.SetOpacity(0.3)
+                count += 1
+        self.logic.updateCurrentFrame()
+        slicer.util.showStatusMessage(f"Duplicated {count} unadjudicated lines.", 3000)
+
+    def onShowInvalidOrDuplicateToggled(self, checked):
         if self._parameterNode:
-            self._parameterNode.showInvalidated = checked
+            self._parameterNode.showInvalidAndDuplicate = checked
         for nodeIndex in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLMarkupsLineNode")):
             markupNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, "vtkMRMLMarkupsLineNode")
             validation_json = markupNode.GetAttribute("validation")
@@ -1590,7 +1662,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                     status = validation.get("status", None)
                 except Exception:
                     status = None
-            if status == "invalidated":
+            if status in ("invalidated", "duplicated"):
                 displayNode = markupNode.GetDisplayNode()
                 if displayNode:
                     if checked:
@@ -1598,7 +1670,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                         displayNode.SetOpacity(0.3)
                     else:
                         displayNode.SetVisibility(False)
-        slicer.util.showStatusMessage(f"{'Showing' if checked else 'Hiding'} invalidated lines.", 3000)
+        slicer.util.showStatusMessage(f"{'Showing' if checked else 'Hiding'} invalidated/duplicated lines.", 3000)
 
     def onAdjudicatorModeToggled(self, enabled):
         logging.info(f"Adjudicator mode toggled: {enabled}") # Added this line
@@ -1609,8 +1681,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             getattr(self.ui, 'validateLineButton', None),
             getattr(self.ui, 'invalidateLineButton', None),
             getattr(self.ui, 'validateAllButton', None),
-            getattr(self.ui, 'invalidateAllUnvalidatedButton', None),
-            getattr(self.ui, 'showInvalidatedCheckBox', None)
+            getattr(self.ui, 'invalidateAllUnadjudicatedButton', None),
+            getattr(self.ui, 'showInvalidAndDuplicateCheckBox', None)
         ]
         for ctrl in controls:
             if ctrl:
@@ -1917,6 +1989,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Replace the old lists with the new, combined lists
         frame_data['pleura_lines'] = new_pleura_lines
         frame_data['b_lines'] = new_b_lines
+
+        # At the end of updateCurrentFrame, always update overlays
+        self.updateOverlayVolume()
 
     def removeFrame(self, frameIndex):
         logging.info(f"removeFrame -- frameIndex: {frameIndex}")
@@ -2549,9 +2624,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             # Set visibility and opacity based on validation status and UI controls
             status = validation.get("status", "unadjudicated")
             logging.info(f"Node: {node.GetName()}, Rater: {rater}, Validation Status: {status}")
-            if status == "invalidated":
-                showInvalidated = self.parameterNode.showInvalidated if self.parameterNode else True
-                node.GetDisplayNode().SetVisibility(showInvalidated)
+            if status in ("invalidated", "duplicated"):
+                showInvalidAndDuplicate = self.parameterNode.showInvalidAndDuplicate if self.parameterNode else True
+                node.GetDisplayNode().SetVisibility(showInvalidAndDuplicate)
                 node.GetDisplayNode().SetOpacity(0.3)
             else:
                 node.GetDisplayNode().SetVisibility(True)
@@ -2586,9 +2661,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             # Set visibility and opacity based on validation status and UI controls
             status = validation.get("status", "unadjudicated")
             logging.info(f"Node: {node.GetName()}, Rater: {rater}, Validation Status: {status}")
-            if status == "invalidated":
-                showInvalidated = self.parameterNode.showInvalidated if self.parameterNode else True
-                node.GetDisplayNode().SetVisibility(showInvalidated)
+            if status in ("invalidated", "duplicated"):
+                showInvalidAndDuplicate = self.parameterNode.showInvalidAndDuplicate if self.parameterNode else True
+                node.GetDisplayNode().SetVisibility(showInvalidAndDuplicate)
                 node.GetDisplayNode().SetOpacity(0.3)
             else:
                 node.GetDisplayNode().SetVisibility(True)
@@ -2844,15 +2919,21 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         :return: The ratio of green pixels to blue pixels in the overlay volume. None if inputs not defined yet.
         """
-        # # TODO remove (debugging)
-        # import inspect
-        # caller = inspect.stack()[1].function
-        # print(f"updateOverlayVolume called by {caller}")
-        # print(f"Overlay volume updated with depth guide: {self.depthGuideEnabled}")
         parameterNode = self.getParameterNode()
-
         if parameterNode.overlayVolume is None:
             logging.debug("updateOverlayVolume: No overlay volume found! Cannot update overlay volume.")
+            return None
+
+        adjudicator_mode = getattr(parameterNode, 'adjudicatorMode', False)
+
+        # If not in adjudicator mode and more than one rater is selected, hide overlay and pleura percentage
+        if not adjudicator_mode and hasattr(self, "selectedRaters") and len(self.selectedRaters) > 1:
+            overlayArray = slicer.util.arrayFromVolume(parameterNode.overlayVolume)
+            overlayArray[:] = 0
+            overlayArray = self._applyDepthGuideToMask(overlayArray, parameterNode)
+            slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, overlayArray)
+            slicer.util.showStatusMessage("Overlay hidden: multiple raters selected", 3000)
+            parameterNode.pleuraPercentage = -1.0  # Hide pleura percentage
             return None
 
         if self.annotations is None:
@@ -2863,24 +2944,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         if parameterNode.inputVolume is None:
             logging.debug("No input volume found, not updating overlay volume.")
-            return None
-
-        # if we are using multiple raters and have selected more than one, don't show overlay volume
-        if hasattr(self, "selectedRaters") and len(self.selectedRaters) > 1:
-            overlayArray = slicer.util.arrayFromVolume(parameterNode.overlayVolume)
-            overlayArray[:] = 0
-            overlayArray = self._applyDepthGuideToMask(overlayArray, parameterNode)
-            slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, overlayArray)
-            slicer.util.showStatusMessage("Overlay hidden: multiple raters selected", 3000)
-            return None
-
-        # If no raters are selected, do not draw any mask
-        if hasattr(self, "selectedRaters") and not self.selectedRaters:
-            overlayArray = slicer.util.arrayFromVolume(parameterNode.overlayVolume)
-            overlayArray[:] = 0
-            overlayArray = self._applyDepthGuideToMask(overlayArray, parameterNode)
-            slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, overlayArray)
-            slicer.util.showStatusMessage("Overlay hidden: no raters selected", 3000)
             return None
 
         ultrasoundArray = slicer.util.arrayFromVolume(parameterNode.inputVolume)
@@ -2896,11 +2959,21 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Add pleura lines to mask array using full RGB overlay
         for markupNode in self.pleuraLines:
             nodeRater = markupNode.GetAttribute("rater") if markupNode else None
-            if hasattr(self, "selectedRaters") and self.selectedRaters and nodeRater not in self.selectedRaters:
+            validation_json = markupNode.GetAttribute("validation")
+            status = None
+            if validation_json:
+                try:
+                    validation = json.loads(validation_json)
+                    status = validation.get("status", None)
+                except Exception:
+                    status = None
+            if status != "validated":
+                continue
+            # Always filter by selectedRaters, even in adjudicator mode
+            if not adjudicator_mode and hasattr(self, "selectedRaters") and self.selectedRaters and nodeRater not in self.selectedRaters:
                 continue
             if not markupNode.GetDisplayNode().GetVisibility():
                 continue
-
             for i in range(markupNode.GetNumberOfControlPoints() - 1):
                 coord1 = [0, 0, 0]
                 coord2 = [0, 0, 0]
@@ -2918,11 +2991,21 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Add B-lines to mask array using full RGB overlay
         for markupNode in self.bLines:
             nodeRater = markupNode.GetAttribute("rater") if markupNode else None
+            validation_json = markupNode.GetAttribute("validation")
+            status = None
+            if validation_json:
+                try:
+                    validation = json.loads(validation_json)
+                    status = validation.get("status", None)
+                except Exception:
+                    status = None
+            if status != "validated":
+                continue
+            # Always filter by selectedRaters, even in adjudicator mode
             if hasattr(self, "selectedRaters") and self.selectedRaters and nodeRater not in self.selectedRaters:
                 continue
             if not markupNode.GetDisplayNode().GetVisibility():
                 continue
-
             for i in range(markupNode.GetNumberOfControlPoints() - 1):
                 coord1 = [0, 0, 0]
                 coord2 = [0, 0, 0]
@@ -2951,15 +3034,22 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         mask_hash = zlib.crc32(maskArray.tobytes())
         if hasattr(self, '_lastOverlayMaskHash') and self._lastOverlayMaskHash == mask_hash:
             # No change, skip update
-            return greenPixels / bluePixels if bluePixels != 0 else 0.0
+            if bluePixels == 0:
+                parameterNode.pleuraPercentage = 0.0
+                return 0.0
+            else:
+                parameterNode.pleuraPercentage = greenPixels / bluePixels * 100
+                return greenPixels / bluePixels
         # Update the overlay volume
         slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, maskArray)
         self._lastOverlayMaskHash = mask_hash
 
         # Return the ratio of green pixels to blue pixels
         if bluePixels == 0:
+            parameterNode.pleuraPercentage = 0.0
             return 0.0
         else:
+            parameterNode.pleuraPercentage = greenPixels / bluePixels * 100
             return greenPixels / bluePixels
 
     def dicomHeaderDictForBrowserNode(self, browserNode):
