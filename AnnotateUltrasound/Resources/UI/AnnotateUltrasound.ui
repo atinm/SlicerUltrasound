@@ -90,7 +90,7 @@
                                                         <widget class="QPushButton"
                                                             name="validateLineButton">
                                                             <property name="text">
-                                                                <string>Validate Line</string>
+                                                                <string>Validate Line [V]</string>
                                                             </property>
                                                         </widget>
                                                     </item>
@@ -98,7 +98,7 @@
                                                         <widget class="QPushButton"
                                                             name="invalidateLineButton">
                                                             <property name="text">
-                                                                <string>Invalidate Line</string>
+                                                                <string>Invalidate Line [I]</string>
                                                             </property>
                                                         </widget>
                                                     </item>
@@ -106,11 +106,32 @@
                                                         <widget class="QPushButton"
                                                             name="duplicateLineButton">
                                                             <property name="text">
-                                                                <string>Mark Duplicate</string>
+                                                                <string>Mark Duplicate [U]</string>
                                                             </property>
                                                             <property name="toolTip">
                                                                 <string>Mark the selected line as
-                                                                    duplicate (Shortcut D key)</string>
+                                                                    duplicate (Shortcut U key)</string>
+                                                            </property>
+                                                        </widget>
+                                                    </item>
+                                                </layout>
+                                            </item>
+                                            <item>
+                                                <layout class="QHBoxLayout"
+                                                    name="unadjudicatedNavButtonsLayout">
+                                                    <item>
+                                                        <widget class="QPushButton"
+                                                            name="nextUnadjudicatedButton">
+                                                            <property name="text">
+                                                                <string>Next Line [N]</string>
+                                                            </property>
+                                                        </widget>
+                                                    </item>
+                                                    <item>
+                                                        <widget class="QPushButton"
+                                                            name="prevUnadjudicatedButton">
+                                                            <property name="text">
+                                                                <string>Prev Line [P]</string>
                                                             </property>
                                                         </widget>
                                                     </item>
