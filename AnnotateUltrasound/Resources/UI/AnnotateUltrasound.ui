@@ -83,6 +83,19 @@
                                                     </property>
                                                 </widget>
                                             </item>
+                                        </layout>
+                                    </widget>
+                                </item>
+                                <item>
+                                    <widget class="ctkCollapsibleButton"
+                                        name="adjudicationToolsCollapsibleButton">
+                                        <property name="text">
+                                            <string>Adjudication Tools</string>
+                                        </property>
+                                        <property name="collapsed">
+                                            <bool>true</bool>
+                                        </property>
+                                        <layout class="QVBoxLayout" name="adjudicationToolsVBox">
                                             <item>
                                                 <layout class="QHBoxLayout"
                                                     name="adjudicationButtonsLayout">
@@ -132,6 +145,37 @@
                                                             name="prevUnadjudicatedButton">
                                                             <property name="text">
                                                                 <string>Prev Line [P]</string>
+                                                            </property>
+                                                        </widget>
+                                                    </item>
+                                                </layout>
+                                            </item>
+                                            <item>
+                                                <layout class="QHBoxLayout"
+                                                    name="visibleNavButtonsLayout">
+                                                    <item>
+                                                        <widget class="QPushButton"
+                                                            name="nextVisibleLineButton">
+                                                            <property name="text">
+                                                                <string>Next Visible [Shift+N]</string>
+                                                            </property>
+                                                            <property name="toolTip">
+                                                                <string>Navigate to next visible
+                                                                    annotation line (Shortcut
+                                                                    Shift+N)</string>
+                                                            </property>
+                                                        </widget>
+                                                    </item>
+                                                    <item>
+                                                        <widget class="QPushButton"
+                                                            name="prevVisibleLineButton">
+                                                            <property name="text">
+                                                                <string>Prev Visible [Shift+P]</string>
+                                                            </property>
+                                                            <property name="toolTip">
+                                                                <string>Navigate to previous visible
+                                                                    annotation line (Shortcut
+                                                                    Shift+P)</string>
                                                             </property>
                                                         </widget>
                                                     </item>

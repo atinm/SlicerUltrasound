@@ -177,6 +177,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutN.setKey(qt.QKeySequence('N'))
         self.shortcutP = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutP.setKey(qt.QKeySequence('P'))
+        # Add Shift+N and Shift+P for next/prev visible annotation
+        self.shortcutShiftN = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutShiftN.setKey(qt.QKeySequence('Shift+N'))
+        self.shortcutShiftP = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutShiftP.setKey(qt.QKeySequence('Shift+P'))
 
         self.raterNameDebounceTimer = qt.QTimer()
         self.raterNameDebounceTimer.setSingleShot(True)
@@ -201,6 +206,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutDuplicateLine.connect('activated()', self.onDuplicateLine)  # "U" to mark selected line as duplicated
         self.shortcutN.connect('activated()', self.selectNextUnadjudicatedLine)
         self.shortcutP.connect('activated()', self.selectPreviousUnadjudicatedLine)
+        # Connect Shift+N/P to next/prev visible annotation
+        self.shortcutShiftN.connect('activated()', self.selectNextVisibleLine)
+        self.shortcutShiftP.connect('activated()', self.selectPreviousVisibleLine)
 
     def disconnectKeyboardShortcuts(self):
         # Disconnect shortcuts to avoid issues when the user leaves the module
@@ -215,6 +223,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutDuplicateLine.activated.disconnect()
         self.shortcutN.activated.disconnect()
         self.shortcutP.activated.disconnect()
+        self.shortcutShiftN.activated.disconnect()
+        self.shortcutShiftP.activated.disconnect()
 
     def setup(self) -> None:
         """
@@ -382,6 +392,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.nextUnadjudicatedButton.clicked.connect(self.selectNextUnadjudicatedLine)
         if hasattr(self.ui, 'prevUnadjudicatedButton'):
             self.ui.prevUnadjudicatedButton.clicked.connect(self.selectPreviousUnadjudicatedLine)
+        if hasattr(self.ui, 'nextVisibleLineButton'):
+            self.ui.nextVisibleLineButton.clicked.connect(self.selectNextVisibleLine)
+        if hasattr(self.ui, 'prevVisibleLineButton'):
+            self.ui.prevVisibleLineButton.clicked.connect(self.selectPreviousVisibleLine)
 
     def setupClickObserverOnRedView(self):
         sliceWidget = slicer.app.layoutManager().sliceWidget("Red")
@@ -1417,9 +1431,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.raterColorTable.setItem(row, 2, bline_item)
         self.ui.raterColorTable.blockSignals(False)
 
-        # Expand the raterColorsCollapsibleButton if more than one rater
+        # Expand the raterColorsCollapsibleButton if more than one rater and not in adjudicator mode
         if hasattr(self.ui, 'raterColorsCollapsibleButton'):
-            if len(colors) > 1:
+            if len(colors) > 1 and not self._parameterNode.adjudicatorMode:
                 self.ui.raterColorsCollapsibleButton.collapsed = False
 
     def getSelectedRatersFromTable(self):
@@ -1688,18 +1702,16 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         logging.info(f"Adjudicator mode toggled: {enabled}") # Added this line
         if self._parameterNode:
             self._parameterNode.adjudicatorMode = enabled
-        # Show/hide or enable/disable adjudication controls
-        controls = [
-            getattr(self.ui, 'validateLineButton', None),
-            getattr(self.ui, 'invalidateLineButton', None),
-            getattr(self.ui, 'validateAllButton', None),
-            getattr(self.ui, 'invalidateAllUnadjudicatedButton', None),
-            getattr(self.ui, 'showInvalidAndDuplicateCheckBox', None)
-        ]
-        for ctrl in controls:
-            if ctrl:
-                ctrl.setEnabled(enabled)
-                ctrl.setVisible(enabled)
+        # Show/hide the adjudication tools section
+        if hasattr(self.ui, 'adjudicationToolsCollapsibleButton'):
+            self.ui.adjudicationToolsCollapsibleButton.setVisible(enabled)
+            if enabled:
+                # Expand adjudication tools when entering adjudicator mode
+                self.ui.adjudicationToolsCollapsibleButton.collapsed = False
+        # Collapse rater selection when entering adjudicator mode
+        if hasattr(self.ui, 'raterColorsCollapsibleButton'):
+            if enabled:
+                self.ui.raterColorsCollapsibleButton.collapsed = True
         if self.logic:
             self._updateMarkupsAndOverlayProgrammatically()
 
@@ -1813,6 +1825,56 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         rater = prevNode.GetAttribute("rater") or "unknown"
         line_type = "pleura" if prevNode in self.logic.pleuraLines else "b-line"
         logging.info(f"P: Selected {line_type} line from rater '{rater}' (line {prev_idx+1} of {len(unadjudicated_nodes)})")
+
+    def selectNextVisibleLine(self):
+        # Gather all visible, unadjudicated lines in the current frame
+        visible_nodes = []
+        for node in self.logic.pleuraLines + self.logic.bLines:
+            if node.GetDisplayNode() and node.GetDisplayNode().GetVisibility():
+                visible_nodes.append(node)
+        if not visible_nodes:
+            slicer.util.showStatusMessage("No visible lines in this frame.", 3000)
+            return
+        # Find currently selected node
+        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
+        selectedNodeID = selectionNode.GetActivePlaceNodeID()
+        try:
+            idx = [n.GetID() for n in visible_nodes].index(selectedNodeID)
+            next_idx = (idx + 1) % len(visible_nodes)
+        except ValueError:
+            next_idx = 0
+        nextNode = visible_nodes[next_idx]
+        selectionNode.SetActivePlaceNodeID(nextNode.GetID())
+        slicer.util.showStatusMessage(f"Selected visible line {next_idx+1} of {len(visible_nodes)}.", 2000)
+        self.logic.updateLineMarkups()
+        rater = nextNode.GetAttribute("rater") or "unknown"
+        line_type = "pleura" if nextNode in self.logic.pleuraLines else "b-line"
+        logging.info(f"N: Selected {line_type} line from rater '{rater}' (line {next_idx+1} of {len(visible_nodes)})")
+
+    def selectPreviousVisibleLine(self):
+        # Gather all visible, unadjudicated lines in the current frame
+        visible_nodes = []
+        for node in self.logic.pleuraLines + self.logic.bLines:
+            if node.GetDisplayNode() and node.GetDisplayNode().GetVisibility():
+                visible_nodes.append(node)
+        if not visible_nodes:
+            slicer.util.showStatusMessage("No visible lines in this frame.", 3000)
+            return
+        # Find currently selected node
+        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
+        selectedNodeID = selectionNode.GetActivePlaceNodeID()
+        try:
+            idx = [n.GetID() for n in visible_nodes].index(selectedNodeID)
+            prev_idx = (idx - 1) % len(visible_nodes)
+        except ValueError:
+            prev_idx = len(visible_nodes) - 1
+        prevNode = visible_nodes[prev_idx]
+        selectionNode.SetActivePlaceNodeID(prevNode.GetID())
+        slicer.util.showStatusMessage(f"Selected visible line {prev_idx+1} of {len(visible_nodes)}.", 2000)
+        self.logic.updateLineMarkups()
+        rater = prevNode.GetAttribute("rater") or "unknown"
+        line_type = "pleura" if prevNode in self.logic.pleuraLines else "b-line"
+        logging.info(f"P: Selected {line_type} line from rater '{rater}' (line {prev_idx+1} of {len(visible_nodes)})")
 
 #
 # AnnotateUltrasoundLogic
@@ -2692,18 +2754,15 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         node.SetAttribute("validation", json.dumps(validation))
         status = validation.get("status", "unadjudicated")
         adjudicator_mode = getattr(self.parameterNode, 'adjudicatorMode', False)
-        if adjudicator_mode and status == "unadjudicated":
-            if node.GetID() == selectedNodeID:
-                node.GetDisplayNode().SetSelectedColor([0.996, 0.380, 0.0])  # Bright orange (#FE6100) for selected in adjudicator mode
-            else:
-                current_rater = self.getCurrentRater()
-                if node in self.pleuraLines:
-                    color_pleura, _ = self.getColorsForRater(current_rater)
-                    node.GetDisplayNode().SetSelectedColor(color_pleura)
-                else:
-                    _, color_bline = self.getColorsForRater(current_rater)
-                    node.GetDisplayNode().SetSelectedColor(color_bline)
+
+        # Check if this node is selected - apply selected highlighting regardless of validation status
+        isSelected = (node.GetID() == selectedNodeID)
+
+        if adjudicator_mode and isSelected:
+            # Apply selected highlighting (bright orange color and diamond glyph) to any selected visible node
+            node.GetDisplayNode().SetSelectedColor([0.996, 0.380, 0.0])  # Bright orange (#FE6100) for selected in adjudicator mode
         else:
+            # Apply normal rater colors for non-selected nodes
             if node in self.pleuraLines:
                 color_pleura, _ = self.getColorsForRater(rater)
                 node.GetDisplayNode().SetSelectedColor(color_pleura)
@@ -2727,14 +2786,18 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 node.GetDisplayNode().SetOpacity(0.40)
             elif status == "unadjudicated":
                 node.GetDisplayNode().SetVisibility(True)
-                if node.GetID() == selectedNodeID:
+                if isSelected:
                     node.GetDisplayNode().SetGlyphTypeFromString("Diamond2D")
                     node.GetDisplayNode().SetOpacity(0.80)
                 else:
                     node.GetDisplayNode().SetOpacity(0.65)
             else:  # validated
                 node.GetDisplayNode().SetVisibility(True)
-                node.GetDisplayNode().SetOpacity(1.0)
+                if isSelected:
+                    node.GetDisplayNode().SetGlyphTypeFromString("Diamond2D")
+                    node.GetDisplayNode().SetOpacity(0.80)
+                else:
+                    node.GetDisplayNode().SetOpacity(1.0)
 
         node.RemoveAllControlPoints()
         for pt in coordinates:
