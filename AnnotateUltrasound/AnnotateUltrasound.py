@@ -1398,7 +1398,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.raterColorTable.blockSignals(True)
         self.ui.raterColorTable.clearContents()
         colors = list(self.logic.getAllRaterColors())
-        self.ui.raterColorTable.setRowCount(len(colors))
+
+        # Filter out __selected_node__ before setting row count
+        visible_colors = [(r, (pleura_color, bline_color)) for r, (pleura_color, bline_color) in colors if r != "__selected_node__"]
+
+        self.ui.raterColorTable.setRowCount(len(visible_colors))
         self.ui.raterColorTable.setColumnCount(3)
         self.ui.raterColorTable.setHorizontalHeaderLabels(["Rater", "Pleura", "B-line"])
         header = self.ui.raterColorTable.horizontalHeader()
@@ -1410,7 +1414,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         self.ui.raterColorTable.setColumnWidth(1, 30)
         self.ui.raterColorTable.setColumnWidth(2, 30)
-        for row, (r, (pleura_color, bline_color)) in enumerate(colors):
+        for row, (r, (pleura_color, bline_color)) in enumerate(visible_colors):
             rater_item = qt.QTableWidgetItem(r)
             rater_item.setFlags(qt.Qt.ItemIsUserCheckable | qt.Qt.ItemIsEnabled | qt.Qt.ItemIsSelectable)
             if not hasattr(self, "selectedRaters") or r in self.selectedRaters:
@@ -1433,7 +1437,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Expand the raterColorsCollapsibleButton if more than one rater and not in adjudicator mode
         if hasattr(self.ui, 'raterColorsCollapsibleButton'):
-            if len(colors) > 1 and not self._parameterNode.adjudicatorMode:
+            if len(visible_colors) > 1 and not self._parameterNode.adjudicatorMode:
                 self.ui.raterColorsCollapsibleButton.collapsed = False
 
     def getSelectedRatersFromTable(self):
@@ -1925,23 +1929,25 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
     def getColorsForRater(self, rater: str):
         """
-        Assigns colors to raters so that the first seen rater gets fixed green/blue hues,
-        and subsequent raters are spaced around the color wheel.
-        The order is lexicographically sorted.
+        Assigns colors to raters by allocating 2N total hues evenly around the color wheel,
+        then assigning pairs of hues to each rater for optimal color separation.
+        This ensures no color conflicts between any raters' pleura or bline colors.
         """
         rater = rater.strip().lower()
+
         # Maintain a static/class attribute for seen raters in lex order
         if rater not in self.seenRaters and rater != '':
             self.seenRaters.append(rater)
             self.seenRaters.sort()
+
         rater_index = self.seenRaters.index(rater)
-        if rater_index == 0:
-            pleura_hue = 1/3  # green
-            bline_hue = 2/3   # blue
-        else:
-            hue_offset = (rater_index * 0.2) % 1.0
-            pleura_hue = (1/3 + hue_offset) % 1.0
-            bline_hue = (2/3 + hue_offset) % 1.0
+        num_raters = len(self.seenRaters)
+
+        # Allocate 2N total hues evenly around the color wheel
+        # Each rater gets 2 hues: pleura_hue and bline_hue
+        pleura_hue = (2 * rater_index) / (2 * num_raters)  # First hue for this rater
+        bline_hue = (2 * rater_index + 1) / (2 * num_raters)  # Second hue for this rater
+
         # Use fixed saturation and value for all
         sat = 0.85
         val = 0.95
@@ -2334,12 +2340,18 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         current_rater = self.getParameterNode().rater.strip().lower()
         if current_rater in self.seenRaters:
             self.seenRaters.remove(current_rater)
-        self.seenRaters = [current_rater] + sorted(self.seenRaters)
+        # Remove __selected_node__ if it exists (to avoid duplicates)
+        if "__selected_node__" in self.seenRaters:
+            self.seenRaters.remove("__selected_node__")
+        # Remove current_rater if it exists (to avoid duplicates)
+        if current_rater in self.seenRaters:
+            self.seenRaters.remove(current_rater)
+        # Now build the list: current_rater, __selected_node__, then sorted rest
+        self.seenRaters = [current_rater, "__selected_node__"] + sorted(self.seenRaters)
         self.setSelectedRaters(set(self.seenRaters))
 
         # Preallocate markup nodes based on loaded annotations
         self.preallocateMarkupNodesFromAnnotations()
-
         # Set programmatic update flag to prevent unsavedChanges from being set
         self._updateMarkupsAndOverlayProgrammatically(parameterNode)
         parameterNode.EndModify(previousNodeState)
@@ -2759,8 +2771,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         isSelected = (node.GetID() == selectedNodeID)
 
         if adjudicator_mode and isSelected:
-            # Apply selected highlighting (bright orange color and diamond glyph) to any selected visible node
-            node.GetDisplayNode().SetSelectedColor([0.996, 0.380, 0.0])  # Bright orange (#FE6100) for selected in adjudicator mode
+            # Apply selected highlighting using the __selected_node__ color
+            selected_node_color, _ = self.getColorsForRater("__selected_node__")
+            node.GetDisplayNode().SetSelectedColor(selected_node_color)
         else:
             # Apply normal rater colors for non-selected nodes
             if node in self.pleuraLines:
@@ -3448,3 +3461,4 @@ class AnnotateUltrasoundTest(ScriptedLoadableModuleTest):
         self.assertEqual(outputScalarRange[1], inputScalarRange[1])
 
         self.delayDisplay('Test passed')
+
