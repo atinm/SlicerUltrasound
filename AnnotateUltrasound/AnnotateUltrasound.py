@@ -1700,6 +1700,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             if ctrl:
                 ctrl.setEnabled(enabled)
                 ctrl.setVisible(enabled)
+        if self.logic:
+            self._updateMarkupsAndOverlayProgrammatically()
 
     def getCurrentRater(self):
         # Return the current rater name from parameter node or UI
@@ -2072,6 +2074,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Replace the old lists with the new, combined lists
         frame_data['pleura_lines'] = new_pleura_lines
         frame_data['b_lines'] = new_b_lines
+
+        # Update the markups in the scene to match the annotation data
+        self.updateLineMarkups()
 
         # At the end of updateCurrentFrame, always update overlays
         self.updateOverlayVolume()
@@ -2677,6 +2682,64 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         return maskArray
 
+    def _updateMarkupNode(self, node, entry, selectedNodeID):
+        coordinates = entry.get("line", {}).get("points", [])
+        rater = entry.get("rater", "")
+        validation = entry.get("validation", None)
+        if not validation or not validation.get("status"):
+            validation = {"status": "unadjudicated"}
+        node.SetAttribute("rater", rater)
+        node.SetAttribute("validation", json.dumps(validation))
+        status = validation.get("status", "unadjudicated")
+        adjudicator_mode = getattr(self.parameterNode, 'adjudicatorMode', False)
+        if adjudicator_mode and status == "unadjudicated":
+            if node.GetID() == selectedNodeID:
+                node.GetDisplayNode().SetSelectedColor([0.996, 0.380, 0.0])  # Bright orange (#FE6100) for selected in adjudicator mode
+            else:
+                current_rater = self.getCurrentRater()
+                if node in self.pleuraLines:
+                    color_pleura, _ = self.getColorsForRater(current_rater)
+                    node.GetDisplayNode().SetSelectedColor(color_pleura)
+                else:
+                    _, color_bline = self.getColorsForRater(current_rater)
+                    node.GetDisplayNode().SetSelectedColor(color_bline)
+        else:
+            if node in self.pleuraLines:
+                color_pleura, _ = self.getColorsForRater(rater)
+                node.GetDisplayNode().SetSelectedColor(color_pleura)
+            else:
+                _, color_bline = self.getColorsForRater(rater)
+                node.GetDisplayNode().SetSelectedColor(color_bline)
+
+        # Set visibility, opacity, and line style based on validation status and adjudicator mode
+        status = validation.get("status", "unadjudicated")
+        adjudicator_mode = getattr(self.parameterNode, 'adjudicatorMode', False)
+        node.GetDisplayNode().SetGlyphTypeFromString("Circle2D")
+        node.GetDisplayNode().SetGlyphScale(2.0)
+        node.GetDisplayNode().SetLineThickness(0.25)
+        if not adjudicator_mode:
+            node.GetDisplayNode().SetVisibility(True)
+            node.GetDisplayNode().SetOpacity(1.0)
+        else:
+            if status in ("invalidated", "duplicated"):
+                showInvalidAndDuplicate = self.parameterNode.showInvalidAndDuplicate if self.parameterNode else True
+                node.GetDisplayNode().SetVisibility(showInvalidAndDuplicate)
+                node.GetDisplayNode().SetOpacity(0.40)
+            elif status == "unadjudicated":
+                node.GetDisplayNode().SetVisibility(True)
+                if node.GetID() == selectedNodeID:
+                    node.GetDisplayNode().SetGlyphTypeFromString("Diamond2D")
+                    node.GetDisplayNode().SetOpacity(0.80)
+                else:
+                    node.GetDisplayNode().SetOpacity(0.65)
+            else:  # validated
+                node.GetDisplayNode().SetVisibility(True)
+                node.GetDisplayNode().SetOpacity(1.0)
+
+        node.RemoveAllControlPoints()
+        for pt in coordinates:
+            node.AddControlPointWorld(*pt)
+
     def _updateMarkupNodesForFrame(self, frame):
         """
         Update markup nodes for pleura and b-lines for the given frame.
@@ -2698,42 +2761,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Update pleura markups
         for i, entry in enumerate(pleura_entries):
             node = self.pleuraLines[i]
-            coordinates = entry.get("line", {}).get("points", [])
-            rater = entry.get("rater", "")
-            validation = entry.get("validation", None)
-            # Default to unadjudicated if missing or missing status
-            if not validation or not validation.get("status"):
-                validation = {"status": "unadjudicated"}
-            node.SetAttribute("rater", rater)
-            node.SetAttribute("validation", json.dumps(validation))
-            color_pleura, _ = self.getColorsForRater(rater)
-            node.GetDisplayNode().SetSelectedColor(color_pleura)
-
-            # Set visibility, opacity, and line style based on validation status and adjudicator mode
-            status = validation.get("status", "unadjudicated")
-            adjudicator_mode = getattr(self.parameterNode, 'adjudicatorMode', False)
-            if not adjudicator_mode:
-                node.GetDisplayNode().SetVisibility(True)
-                node.GetDisplayNode().SetOpacity(1.0)
-            else:
-                if status in ("invalidated", "duplicated"):
-                    showInvalidAndDuplicate = self.parameterNode.showInvalidAndDuplicate if self.parameterNode else True
-                    node.GetDisplayNode().SetVisibility(showInvalidAndDuplicate)
-                    node.GetDisplayNode().SetOpacity(0.1)
-                elif status == "unadjudicated":
-                    node.GetDisplayNode().SetVisibility(True)
-                    if node.GetID() == selectedNodeID:
-                        node.GetDisplayNode().SetOpacity(0.8)
-                        logging.info(f"N: updated opacity for selected node {node.GetName()} to 0.8")
-                    else:
-                        node.GetDisplayNode().SetOpacity(0.5)
-                else:  # validated
-                    node.GetDisplayNode().SetVisibility(True)
-                    node.GetDisplayNode().SetOpacity(1.0)
-
-            node.RemoveAllControlPoints()
-            for pt in coordinates:
-                node.AddControlPointWorld(*pt)
+            self._updateMarkupNode(node, entry, selectedNodeID)
         # Hide unused pleura markups
         for i in range(len(pleura_entries), len(self.pleuraLines)):
             self.pleuraLines[i].GetDisplayNode().SetVisibility(False)
@@ -2747,40 +2775,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Update b-line markups
         for i, entry in enumerate(bline_entries):
             node = self.bLines[i]
-            coordinates = entry.get("line", {}).get("points", [])
-            rater = entry.get("rater", "")
-            validation = entry.get("validation", None)
-            if not validation or not validation.get("status"):
-                validation = {"status": "unadjudicated"}
-            node.SetAttribute("rater", rater)
-            node.SetAttribute("validation", json.dumps(validation))
-            _, color_bline = self.getColorsForRater(rater)
-            node.GetDisplayNode().SetSelectedColor(color_bline)
-
-            # Set visibility, opacity, and line style based on validation status and adjudicator mode
-            status = validation.get("status", "unadjudicated")
-            adjudicator_mode = getattr(self.parameterNode, 'adjudicatorMode', False)
-            if not adjudicator_mode:
-                node.GetDisplayNode().SetVisibility(True)
-                node.GetDisplayNode().SetOpacity(1.0)
-            else:
-                if status in ("invalidated", "duplicated"):
-                    showInvalidAndDuplicate = self.parameterNode.showInvalidAndDuplicate if self.parameterNode else True
-                    node.GetDisplayNode().SetVisibility(showInvalidAndDuplicate)
-                    node.GetDisplayNode().SetOpacity(0.1)
-                elif status == "unadjudicated":
-                    node.GetDisplayNode().SetVisibility(True)
-                    if node.GetID() == selectedNodeID:
-                        node.GetDisplayNode().SetOpacity(0.8)
-                    else:
-                        node.GetDisplayNode().SetOpacity(0.5)
-                else:  # validated
-                    node.GetDisplayNode().SetVisibility(True)
-                    node.GetDisplayNode().SetOpacity(1.0)
-
-            node.RemoveAllControlPoints()
-            for pt in coordinates:
-                node.AddControlPointWorld(*pt)
+            self._updateMarkupNode(node, entry, selectedNodeID)
         # Hide unused b-line markups
         for i in range(len(bline_entries), len(self.bLines)):
             self.bLines[i].GetDisplayNode().SetVisibility(False)
@@ -2826,7 +2821,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 cache_data = {
                     'frame': frame,
                     'selectedRaters': sorted(list(self.selectedRaters)) if hasattr(self, 'selectedRaters') else [],
-                    'selectedNodeID': selectedNodeID
+                    'selectedNodeID': selectedNodeID,
+                    'adjudicatorMode': getattr(self.parameterNode, 'adjudicatorMode', False)
                 }
                 frame_hash = hash(json.dumps(cache_data, sort_keys=True))
             except Exception:
@@ -3315,6 +3311,12 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         stopTime = time.time()
         logging.info(f'Processing completed in {stopTime-startTime:.2f} seconds')
+
+    def getCurrentRater(self):
+        parameterNode = self.getParameterNode()
+        if parameterNode and hasattr(parameterNode, 'rater'):
+            return parameterNode.rater.strip().lower()
+        return None
 
 #
 # AnnotateUltrasoundTest
