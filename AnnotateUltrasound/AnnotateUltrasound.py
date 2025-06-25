@@ -457,12 +457,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     def setupClickObserverOnRedView(self):
         sliceWidget = slicer.app.layoutManager().sliceWidget("Red")
         renderWindowInteractor = sliceWidget.sliceView().renderWindow().GetInteractor()
-        import vtk
         self._clickObserverTag = renderWindowInteractor.AddObserver(vtk.vtkCommand.LeftButtonPressEvent, self.onRedViewClick)
 
     # --- Distance point to segment ---
     def distancePointToSegment(self, p, a, b):
-        import numpy as np
         p = np.array(p)
         a = np.array(a)
         b = np.array(b)
@@ -1813,45 +1811,53 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 return browser
         return None
 
-    def _nextFrameInSequence(self):
-        """Go to next frame in the current sequence using Slicer's built-in sequence browser."""
+    def _navigateToFrameInSequence(self, target_frame_calculator, already_at_message):
+        """
+        Generic frame navigation method that eliminates code duplication.
+
+        Args:
+            target_frame_calculator: Function that takes (current_index, max_index) and returns target_index
+            already_at_message: Status message to show when already at the target position
+        """
         activeBrowserNode = self._getActiveSequenceBrowserNode()
         if activeBrowserNode:
             currentIndex = activeBrowserNode.GetSelectedItemNumber()
             maxIndex = activeBrowserNode.GetNumberOfItems() - 1
-            if currentIndex < maxIndex:
-                activeBrowserNode.SetSelectedItemNumber(currentIndex + 1)
+
+            targetIndex = target_frame_calculator(currentIndex, maxIndex)
+
+            if targetIndex != currentIndex:
+                activeBrowserNode.SetSelectedItemNumber(targetIndex)
             else:
-                slicer.util.mainWindow().statusBar().showMessage('⚠️ Already at last frame', 3000)
+                slicer.util.mainWindow().statusBar().showMessage(already_at_message, 3000)
+
+    def _nextFrameInSequence(self):
+        """Go to next frame in the current sequence using Slicer's built-in sequence browser."""
+        def next_target(current, max_index):
+            return current + 1 if current < max_index else current
+
+        self._navigateToFrameInSequence(next_target, '⚠️ Already at last frame')
 
     def _previousFrameInSequence(self):
         """Go to previous frame in the current sequence using Slicer's built-in sequence browser."""
-        activeBrowserNode = self._getActiveSequenceBrowserNode()
-        if activeBrowserNode:
-            currentIndex = activeBrowserNode.GetSelectedItemNumber()
-            if currentIndex > 0:
-                activeBrowserNode.SetSelectedItemNumber(currentIndex - 1)
-            else:
-                slicer.util.mainWindow().statusBar().showMessage('⚠️ Already at first frame', 3000)
+        def previous_target(current, max_index):
+            return current - 1 if current > 0 else current
+
+        self._navigateToFrameInSequence(previous_target, '⚠️ Already at first frame')
 
     def _firstFrameInSequence(self):
         """Go to the first frame in the current sequence."""
-        activeBrowserNode = self._getActiveSequenceBrowserNode()
-        if activeBrowserNode:
-            if activeBrowserNode.GetSelectedItemNumber() > 0:
-                activeBrowserNode.SetSelectedItemNumber(0)
-            else:
-                slicer.util.mainWindow().statusBar().showMessage('⚠️ Already at first frame', 3000)
+        def first_target(current, max_index):
+            return 0 if current > 0 else current
+
+        self._navigateToFrameInSequence(first_target, '⚠️ Already at first frame')
 
     def _lastFrameInSequence(self):
         """Go to the last frame in the current sequence."""
-        activeBrowserNode = self._getActiveSequenceBrowserNode()
-        if activeBrowserNode:
-            maxIndex = activeBrowserNode.GetNumberOfItems() - 1
-            if activeBrowserNode.GetSelectedItemNumber() < maxIndex:
-                activeBrowserNode.SetSelectedItemNumber(maxIndex)
-            else:
-                slicer.util.mainWindow().statusBar().showMessage('⚠️ Already at last frame', 3000)
+        def last_target(current, max_index):
+            return max_index if current < max_index else current
+
+        self._navigateToFrameInSequence(last_target, '⚠️ Already at last frame')
 
     def _togglePlayPauseSequence(self):
         """Toggle play/pause for the current sequence browser."""
@@ -1969,8 +1975,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         The current rater is always assigned green (pleura) and blue (b-line).
         All other raters are evenly spaced across the hue circle, avoiding green/blue hues.
         """
-        import colorsys
-        import numpy as np
 
         rater = rater.strip().lower()
         current_rater = self.getParameterNode().rater.strip().lower()
