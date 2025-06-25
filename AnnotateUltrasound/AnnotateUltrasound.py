@@ -397,12 +397,16 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if hasattr(self.ui, 'prevVisibleLineButton'):
             self.ui.prevVisibleLineButton.clicked.connect(self.selectPreviousVisibleLine)
 
+    # These functions are used to handle clicks on the red view when selecting lines by clicking on the red view
+    # near the line to be selected.
+    # --- Click observer on red view ---
     def setupClickObserverOnRedView(self):
         sliceWidget = slicer.app.layoutManager().sliceWidget("Red")
         renderWindowInteractor = sliceWidget.sliceView().renderWindow().GetInteractor()
         import vtk
         self._clickObserverTag = renderWindowInteractor.AddObserver(vtk.vtkCommand.LeftButtonPressEvent, self.onRedViewClick)
 
+    # --- Distance point to segment ---
     def distancePointToSegment(self, p, a, b):
         import numpy as np
         p = np.array(p)
@@ -416,6 +420,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         closest = a + t * ab
         return np.linalg.norm(p - closest)
 
+    # --- On red view click ---
+    # This function is called when the user clicks on the red view.
+    # It finds the closest visible markup line node (to any segment) and selects it.
+    # If the closest node is within 3 mm of the click, it selects the node.
+    # If the closest node is more than 3 mm away, it does nothing.
     def onRedViewClick(self, caller, event):
         x, y = caller.GetEventPosition()
         # Get the slice widget and node
@@ -818,7 +827,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 bline_item.setData(qt.Qt.DisplayRole, bline_count)
                 self.ui.framesTableWidget.setItem(row, 2, bline_item)
 
-        # reenable sorting afer populating the table
+        # reenable sorting after populating the table
         self.ui.framesTableWidget.setSortingEnabled(True)
 
         # Restore previous sort state
@@ -1399,7 +1408,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.raterColorTable.clearContents()
         colors = list(self.logic.getAllRaterColors())
 
-        # Filter out __selected_node__ before setting row count
+        # Filter out __selected_node__ before setting row count, we don't want to show it in the UI
         visible_colors = [(r, (pleura_color, bline_color)) for r, (pleura_color, bline_color) in colors if r != "__selected_node__"]
 
         self.ui.raterColorTable.setRowCount(len(visible_colors))
@@ -1494,11 +1503,28 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.onRaterColorSelectionChangedFromUser()
 
     def onValidateLine(self):
+        self._setLineValidationStatus("validated", "validate", "validated")
+
+    def onInvalidateLine(self):
+        self._setLineValidationStatus("invalidated", "invalidate", "invalidated")
+
+    def onDuplicateLine(self):
+        self._setLineValidationStatus("duplicated", "mark as duplicated", "marked as duplicated")
+
+    def _setLineValidationStatus(self, status, action_verb, status_description):
+        """
+        Set the validation status of the selected line.
+
+        Args:
+            status: The validation status to set ("validated", "invalidated", or "duplicated")
+            action_verb: The verb for the error message (e.g., "validate", "invalidate")
+            status_description: The description for the success message (e.g., "validated", "invalidated")
+        """
         # Get the selected markup node
         selectionNode = slicer.app.applicationLogic().GetSelectionNode()
         selectedNodeID = selectionNode.GetActivePlaceNodeID()
         if not selectedNodeID:
-            slicer.util.showStatusMessage("No line selected to validate.", 3000)
+            slicer.util.showStatusMessage(f"No line selected to {action_verb}.", 3000)
             return
         markupNode = slicer.mrmlScene.GetNodeByID(selectedNodeID)
         if not markupNode or not markupNode.GetClassName() == "vtkMRMLMarkupsLineNode":
@@ -1512,143 +1538,39 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Get current rater (adjudicator)
         adjudicator = self.getCurrentRater()
         validation = {
-            "status": "validated",
+            "status": status,
             "adjudicator": adjudicator,
             "timestamp": datetime.datetime.now().isoformat()
         }
         markupNode.SetAttribute("validation", json.dumps(validation))
-        # Set opacity to normal (validated)
-        displayNode.SetOpacity(1.0)
+        # Set opacity based on status
+        if status == "validated":
+            displayNode.SetOpacity(1.0)
+        else:
+            displayNode.SetOpacity(0.3)
         # Also update the corresponding annotation line
         self._updateAnnotationLineValidation(markupNode, validation)
         self.logic.updateCurrentFrame()
-        slicer.util.showStatusMessage("Line validated.", 3000)
-
-    def onInvalidateLine(self):
-        # Get the selected markup node
-        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
-        selectedNodeID = selectionNode.GetActivePlaceNodeID()
-        if not selectedNodeID:
-            slicer.util.showStatusMessage("No line selected to invalidate.", 3000)
-            return
-        markupNode = slicer.mrmlScene.GetNodeByID(selectedNodeID)
-        if not markupNode or not markupNode.GetClassName() == "vtkMRMLMarkupsLineNode":
-            slicer.util.showStatusMessage("Selected node is not a line.", 3000)
-            return
-        # Only allow invalidation if node is visible
-        displayNode = markupNode.GetDisplayNode()
-        if not displayNode or not displayNode.GetVisibility():
-            slicer.util.showStatusMessage("Cannot adjudicate: selected line is not visible.", 3000)
-            return
-        # Get current rater (adjudicator)
-        adjudicator = self.getCurrentRater()
-        validation = {
-            "status": "invalidated",
-            "adjudicator": adjudicator,
-            "timestamp": datetime.datetime.now().isoformat()
-        }
-        markupNode.SetAttribute("validation", json.dumps(validation))
-        # Set opacity to faded (invalidated)
-        displayNode.SetOpacity(0.3)
-        # Also update the corresponding annotation line
-        self._updateAnnotationLineValidation(markupNode, validation)
-        self.logic.updateCurrentFrame()
-        slicer.util.showStatusMessage("Line invalidated.", 3000)
-
-    def onDuplicateLine(self):
-        # Get the selected markup node
-        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
-        selectedNodeID = selectionNode.GetActivePlaceNodeID()
-        if not selectedNodeID:
-            slicer.util.showStatusMessage("No line selected to mark as duplicated.", 3000)
-            return
-        markupNode = slicer.mrmlScene.GetNodeByID(selectedNodeID)
-        if not markupNode or not markupNode.GetClassName() == "vtkMRMLMarkupsLineNode":
-            slicer.util.showStatusMessage("Selected node is not a line.", 3000)
-            return
-        # Only allow duplication if node is visible
-        displayNode = markupNode.GetDisplayNode()
-        if not displayNode or not displayNode.GetVisibility():
-            slicer.util.showStatusMessage("Cannot adjudicate: selected line is not visible.", 3000)
-            return
-        # Get current rater (adjudicator)
-        adjudicator = self.getCurrentRater()
-        validation = {
-            "status": "duplicated",
-            "adjudicator": adjudicator,
-            "timestamp": datetime.datetime.now().isoformat()
-        }
-        markupNode.SetAttribute("validation", json.dumps(validation))
-        # Set opacity to faded (duplicated)
-        displayNode.SetOpacity(0.3)
-        # Also update the corresponding annotation line
-        self._updateAnnotationLineValidation(markupNode, validation)
-        self.logic.updateCurrentFrame()
-        slicer.util.showStatusMessage("Line marked as duplicated.", 3000)
+        slicer.util.showStatusMessage(f"Line {status_description}.", 3000)
 
     def onValidateAllUnadjudicated(self):
-        # Get current rater (adjudicator)
-        adjudicator = self.getCurrentRater()
-        count = 0
-        for nodeIndex in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLMarkupsLineNode")):
-            markupNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, "vtkMRMLMarkupsLineNode")
-            displayNode = markupNode.GetDisplayNode()
-            if not displayNode or not displayNode.GetVisibility():
-                continue # Skip if not visible
-            validation_json = markupNode.GetAttribute("validation")
-            status = None
-            if validation_json:
-                try:
-                    validation = json.loads(validation_json)
-                    status = validation.get("status", None)
-                except Exception:
-                    status = None
-            if not status or status == "unadjudicated":
-                validation = {
-                    "status": "validated",
-                    "adjudicator": adjudicator,
-                    "timestamp": datetime.datetime.now().isoformat()
-                }
-                markupNode.SetAttribute("validation", json.dumps(validation))
-                displayNode = markupNode.GetDisplayNode()
-                if displayNode:
-                    displayNode.SetOpacity(1.0)
-                count += 1
-        self.logic.updateCurrentFrame()
-        slicer.util.showStatusMessage(f"Validated {count} unadjudicated lines.", 3000)
+        self._setAllUnadjudicatedLinesStatus("validated", "Validated", 1.0)
 
     def onInvalidateAllUnadjudicated(self):
-        # Get current rater (adjudicator)
-        adjudicator = self.getCurrentRater()
-        count = 0
-        for nodeIndex in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLMarkupsLineNode")):
-            markupNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, "vtkMRMLMarkupsLineNode")
-            displayNode = markupNode.GetDisplayNode()
-            if not displayNode or not displayNode.GetVisibility():
-                continue # Skip if not visible
-            validation_json = markupNode.GetAttribute("validation")
-            status = None
-            if validation_json:
-                try:
-                    validation = json.loads(validation_json)
-                    status = validation.get("status", None)
-                except Exception:
-                    status = None
-            if not status or status == "unadjudicated":
-                validation = {
-                    "status": "invalidated",
-                    "adjudicator": adjudicator,
-                    "timestamp": datetime.datetime.now().isoformat()
-                }
-                markupNode.SetAttribute("validation", json.dumps(validation))
-                displayNode = markupNode.GetDisplayNode()
-                if displayNode:
-                    displayNode.SetOpacity(0.3)
-                count += 1
-        self.logic.updateCurrentFrame()
-        slicer.util.showStatusMessage(f"Invalidated {count} unadjudicated lines.", 3000)
+        self._setAllUnadjudicatedLinesStatus("invalidated", "Invalidated", 0.3)
 
     def onDuplicateAllUnadjudicated(self):
+        self._setAllUnadjudicatedLinesStatus("duplicated", "Duplicated", 0.3)
+
+    def _setAllUnadjudicatedLinesStatus(self, status, status_past_tense, opacity):
+        """
+        Set the validation status of all unadjudicated lines.
+
+        Args:
+            status: The validation status to set ("validated", "invalidated", or "duplicated")
+            status_past_tense: The past tense form for the success message (e.g., "Validated", "Invalidated")
+            opacity: The opacity to set for the lines (1.0 for validated, 0.3 for others)
+        """
         # Get current rater (adjudicator)
         adjudicator = self.getCurrentRater()
         count = 0
@@ -1658,26 +1580,26 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             if not displayNode or not displayNode.GetVisibility():
                 continue # Skip if not visible
             validation_json = markupNode.GetAttribute("validation")
-            status = None
+            current_status = None
             if validation_json:
                 try:
                     validation = json.loads(validation_json)
-                    status = validation.get("status", None)
+                    current_status = validation.get("status", None)
                 except Exception:
-                    status = None
-            if not status or status == "unadjudicated":
+                    current_status = None
+            if not current_status or current_status == "unadjudicated":
                 validation = {
-                    "status": "duplicated",
+                    "status": status,
                     "adjudicator": adjudicator,
                     "timestamp": datetime.datetime.now().isoformat()
                 }
                 markupNode.SetAttribute("validation", json.dumps(validation))
                 displayNode = markupNode.GetDisplayNode()
                 if displayNode:
-                    displayNode.SetOpacity(0.3)
+                    displayNode.SetOpacity(opacity)
                 count += 1
         self.logic.updateCurrentFrame()
-        slicer.util.showStatusMessage(f"Duplicated {count} unadjudicated lines.", 3000)
+        slicer.util.showStatusMessage(f"{status_past_tense} {count} unadjudicated lines.", 3000)
 
     def onShowInvalidOrDuplicateToggled(self, checked):
         if self._parameterNode:
