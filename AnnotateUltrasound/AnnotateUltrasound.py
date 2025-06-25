@@ -159,8 +159,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Add shortcuts for removing lines
         self.shortcutE = qt.QShortcut(slicer.util.mainWindow())  # "E" for removing last pleura line
         self.shortcutE.setKey(qt.QKeySequence('E'))
-        self.shortcutRemoveBline = qt.QShortcut(slicer.util.mainWindow())  # "D" for removing last B-line
-        self.shortcutRemoveBline.setKey(qt.QKeySequence('D'))
+        self.shortcutD = qt.QShortcut(slicer.util.mainWindow())  # "D" for removing last B-line
+        self.shortcutD.setKey(qt.QKeySequence('D'))
 
         # shortcut for saving and loading next scan
         self.shortcutA = qt.QShortcut(slicer.util.mainWindow())  # "A" for save and load next scan
@@ -171,16 +171,16 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutV.setKey(qt.QKeySequence('V'))
         self.shortcutI = qt.QShortcut(slicer.util.mainWindow())  # "I" for invalidate line
         self.shortcutI.setKey(qt.QKeySequence('I'))
-        self.shortcutDuplicateLine = qt.QShortcut(slicer.util.mainWindow())  # "U" for duplicate line
-        self.shortcutDuplicateLine.setKey(qt.QKeySequence('U'))
-        self.shortcutN = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutL = qt.QShortcut(slicer.util.mainWindow())  # "L" for duplicate line
+        self.shortcutL.setKey(qt.QKeySequence('L'))
+        self.shortcutN = qt.QShortcut(slicer.util.mainWindow())  # "N" for next unadjudicated line
         self.shortcutN.setKey(qt.QKeySequence('N'))
-        self.shortcutP = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutP = qt.QShortcut(slicer.util.mainWindow())  # "P" for previous unadjudicated line
         self.shortcutP.setKey(qt.QKeySequence('P'))
         # Add Shift+N and Shift+P for next/prev visible annotation
-        self.shortcutShiftN = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutShiftN = qt.QShortcut(slicer.util.mainWindow())  # "Shift+N" for next visible annotation
         self.shortcutShiftN.setKey(qt.QKeySequence('Shift+N'))
-        self.shortcutShiftP = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutShiftP = qt.QShortcut(slicer.util.mainWindow())  # "Shift+P" for previous visible annotation
         self.shortcutShiftP.setKey(qt.QKeySequence('Shift+P'))
 
         self.raterNameDebounceTimer = qt.QTimer()
@@ -196,14 +196,14 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # New shortcuts for removing lines
         self.shortcutE.connect('activated()', lambda: self.onRemoveLine("Pleura"))  # "E" removes the last pleura line
-        self.shortcutRemoveBline.connect('activated()', lambda: self.onRemoveLine("Bline"))   # "D" removes the last B-line
+        self.shortcutD.connect('activated()', lambda: self.onRemoveLine("Bline"))   # "D" removes the last B-line
 
         self.shortcutA.connect('activated()', self.onSaveAndLoadNextButton)  # "A" to save and load next scan
 
         # shortcuts for adjudication actions
         self.shortcutV.connect('activated()', self.onValidateLine)  # "V" to validate selected line
         self.shortcutI.connect('activated()', self.onInvalidateLine)  # "I" to invalidate selected line
-        self.shortcutDuplicateLine.connect('activated()', self.onDuplicateLine)  # "U" to mark selected line as duplicated
+        self.shortcutL.connect('activated()', self.onDuplicateLine)  # "U" to mark selected line as duplicated
         self.shortcutN.connect('activated()', self.selectNextUnadjudicatedLine)
         self.shortcutP.connect('activated()', self.selectPreviousUnadjudicatedLine)
         # Connect Shift+N/P to next/prev visible annotation
@@ -216,11 +216,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutS.activated.disconnect()
         self.shortcutSpace.activated.disconnect()
         self.shortcutE.activated.disconnect()
-        self.shortcutRemoveBline.activated.disconnect()
+        self.shortcutD.activated.disconnect()
         self.shortcutA.activated.disconnect()
         self.shortcutV.activated.disconnect()
         self.shortcutI.activated.disconnect()
-        self.shortcutDuplicateLine.activated.disconnect()
+        self.shortcutL.activated.disconnect()
         self.shortcutN.activated.disconnect()
         self.shortcutP.activated.disconnect()
         self.shortcutShiftN.activated.disconnect()
@@ -1680,127 +1680,57 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                         line["validation"] = validation
                         return
 
-    def selectNextUnadjudicatedLine(self):
-        # Gather all visible, unadjudicated lines in the current frame
-        unadjudicated_nodes = []
+    def _selectLineByFilter(self, filter_fn, direction, empty_message, status_message_prefix):
+        # Gather all lines matching the filter in the current frame
+        nodes = []
         for node in self.logic.pleuraLines + self.logic.bLines:
-            displayNode = node.GetDisplayNode()
-            if not displayNode or not displayNode.GetVisibility():
-                continue
-            validation_json = node.GetAttribute("validation")
-            status = None
-            if validation_json:
-                try:
-                    validation = json.loads(validation_json)
-                    status = validation.get("status", None)
-                except Exception:
-                    status = None
-            if not status or status == "unadjudicated":
-                unadjudicated_nodes.append(node)
-        if not unadjudicated_nodes:
-            slicer.util.showStatusMessage("No unadjudicated lines in this frame.", 3000)
+            if node.GetDisplayNode() and node.GetDisplayNode().GetVisibility() and filter_fn(node):
+                nodes.append(node)
+        if not nodes:
+            slicer.util.showStatusMessage(empty_message, 3000)
             return
         # Find currently selected node
         selectionNode = slicer.app.applicationLogic().GetSelectionNode()
         selectedNodeID = selectionNode.GetActivePlaceNodeID()
         try:
-            idx = [n.GetID() for n in unadjudicated_nodes].index(selectedNodeID)
-            next_idx = (idx + 1) % len(unadjudicated_nodes)
+            idx = [n.GetID() for n in nodes].index(selectedNodeID)
+            if direction == "next":
+                new_idx = (idx + 1) % len(nodes)
+            else:
+                new_idx = (idx - 1) % len(nodes)
         except ValueError:
-            next_idx = 0
-        nextNode = unadjudicated_nodes[next_idx]
-        selectionNode.SetActivePlaceNodeID(nextNode.GetID())
-        slicer.util.showStatusMessage(f"Selected unadjudicated line {next_idx+1} of {len(unadjudicated_nodes)}.", 2000)
+            new_idx = 0 if direction == "next" else len(nodes) - 1
+        newNode = nodes[new_idx]
+        selectionNode.SetActivePlaceNodeID(newNode.GetID())
+        slicer.util.showStatusMessage(f"{status_message_prefix} {new_idx+1} of {len(nodes)}.", 2000)
         self.logic.updateLineMarkups()
-        rater = nextNode.GetAttribute("rater") or "unknown"
-        line_type = "pleura" if nextNode in self.logic.pleuraLines else "b-line"
-        logging.info(f"N: Selected {line_type} line from rater '{rater}' (line {next_idx+1} of {len(unadjudicated_nodes)})")
+        rater = newNode.GetAttribute("rater") or "unknown"
+        line_type = "pleura" if newNode in self.logic.pleuraLines else "b-line"
+        logging.info(f"{direction[0].upper()}: Selected {line_type} line from rater '{rater}' (line {new_idx+1} of {len(nodes)})")
+
+    def _isUnadjudicated(self, node):
+        """Check if a node is unadjudicated (no validation status or status is 'unadjudicated')."""
+        validation_json = node.GetAttribute("validation")
+        status = None
+        if validation_json:
+            try:
+                validation = json.loads(validation_json)
+                status = validation.get("status", None)
+            except Exception:
+                status = None
+        return not status or status == "unadjudicated"
+
+    def selectNextUnadjudicatedLine(self):
+        self._selectLineByFilter(self._isUnadjudicated, "next", "No unadjudicated lines in this frame.", "Selected unadjudicated line")
 
     def selectPreviousUnadjudicatedLine(self):
-        # Gather all visible, unadjudicated lines in the current frame
-        unadjudicated_nodes = []
-        for node in self.logic.pleuraLines + self.logic.bLines:
-            displayNode = node.GetDisplayNode()
-            if not displayNode or not displayNode.GetVisibility():
-                continue
-            validation_json = node.GetAttribute("validation")
-            status = None
-            if validation_json:
-                try:
-                    validation = json.loads(validation_json)
-                    status = validation.get("status", None)
-                except Exception:
-                    status = None
-            if not status or status == "unadjudicated":
-                unadjudicated_nodes.append(node)
-        if not unadjudicated_nodes:
-            slicer.util.showStatusMessage("No unadjudicated lines in this frame.", 3000)
-            return
-        # Find currently selected node
-        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
-        selectedNodeID = selectionNode.GetActivePlaceNodeID()
-        try:
-            idx = [n.GetID() for n in unadjudicated_nodes].index(selectedNodeID)
-            prev_idx = (idx - 1) % len(unadjudicated_nodes)
-        except ValueError:
-            prev_idx = len(unadjudicated_nodes) - 1
-        prevNode = unadjudicated_nodes[prev_idx]
-        selectionNode.SetActivePlaceNodeID(prevNode.GetID())
-        slicer.util.showStatusMessage(f"Selected unadjudicated line {prev_idx+1} of {len(unadjudicated_nodes)}.", 2000)
-        self.logic.updateLineMarkups()
-        rater = prevNode.GetAttribute("rater") or "unknown"
-        line_type = "pleura" if prevNode in self.logic.pleuraLines else "b-line"
-        logging.info(f"P: Selected {line_type} line from rater '{rater}' (line {prev_idx+1} of {len(unadjudicated_nodes)})")
+        self._selectLineByFilter(self._isUnadjudicated, "previous", "No unadjudicated lines in this frame.", "Selected unadjudicated line")
 
     def selectNextVisibleLine(self):
-        # Gather all visible, unadjudicated lines in the current frame
-        visible_nodes = []
-        for node in self.logic.pleuraLines + self.logic.bLines:
-            if node.GetDisplayNode() and node.GetDisplayNode().GetVisibility():
-                visible_nodes.append(node)
-        if not visible_nodes:
-            slicer.util.showStatusMessage("No visible lines in this frame.", 3000)
-            return
-        # Find currently selected node
-        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
-        selectedNodeID = selectionNode.GetActivePlaceNodeID()
-        try:
-            idx = [n.GetID() for n in visible_nodes].index(selectedNodeID)
-            next_idx = (idx + 1) % len(visible_nodes)
-        except ValueError:
-            next_idx = 0
-        nextNode = visible_nodes[next_idx]
-        selectionNode.SetActivePlaceNodeID(nextNode.GetID())
-        slicer.util.showStatusMessage(f"Selected visible line {next_idx+1} of {len(visible_nodes)}.", 2000)
-        self.logic.updateLineMarkups()
-        rater = nextNode.GetAttribute("rater") or "unknown"
-        line_type = "pleura" if nextNode in self.logic.pleuraLines else "b-line"
-        logging.info(f"N: Selected {line_type} line from rater '{rater}' (line {next_idx+1} of {len(visible_nodes)})")
+        self._selectLineByFilter(lambda node: True, "next", "No visible lines in this frame.", "Selected visible line")
 
     def selectPreviousVisibleLine(self):
-        # Gather all visible, unadjudicated lines in the current frame
-        visible_nodes = []
-        for node in self.logic.pleuraLines + self.logic.bLines:
-            if node.GetDisplayNode() and node.GetDisplayNode().GetVisibility():
-                visible_nodes.append(node)
-        if not visible_nodes:
-            slicer.util.showStatusMessage("No visible lines in this frame.", 3000)
-            return
-        # Find currently selected node
-        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
-        selectedNodeID = selectionNode.GetActivePlaceNodeID()
-        try:
-            idx = [n.GetID() for n in visible_nodes].index(selectedNodeID)
-            prev_idx = (idx - 1) % len(visible_nodes)
-        except ValueError:
-            prev_idx = len(visible_nodes) - 1
-        prevNode = visible_nodes[prev_idx]
-        selectionNode.SetActivePlaceNodeID(prevNode.GetID())
-        slicer.util.showStatusMessage(f"Selected visible line {prev_idx+1} of {len(visible_nodes)}.", 2000)
-        self.logic.updateLineMarkups()
-        rater = prevNode.GetAttribute("rater") or "unknown"
-        line_type = "pleura" if prevNode in self.logic.pleuraLines else "b-line"
-        logging.info(f"P: Selected {line_type} line from rater '{rater}' (line {prev_idx+1} of {len(visible_nodes)})")
+        self._selectLineByFilter(lambda node: True, "previous", "No visible lines in this frame.", "Selected visible line")
 
 #
 # AnnotateUltrasoundLogic
@@ -2269,6 +2199,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if current_rater in self.seenRaters:
             self.seenRaters.remove(current_rater)
         # Now build the list: current_rater, __selected_node__, then sorted rest
+        # we need to add __selected_node__ to the list to ensure that the selected line is always visible and
+        # uses a different color than the other lines
         self.seenRaters = [current_rater, "__selected_node__"] + sorted(self.seenRaters)
         self.setSelectedRaters(set(self.seenRaters))
 
