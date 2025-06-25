@@ -204,6 +204,18 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutSpace = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutSpace.setKey(qt.QKeySequence('Space'))
 
+        # Page Up/Page Down for previous/next clip
+        self.shortcutPageUp = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutPageUp.setKey(qt.QKeySequence('PageUp'))
+        self.shortcutPageDown = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutPageDown.setKey(qt.QKeySequence('PageDown'))
+
+        # Shift+Up/Shift+Down for previous/next clip (in case Page Up/Page Down are intercepted by Slicer)
+        self.shortcutShiftUp = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutShiftUp.setKey(qt.QKeySequence('Shift+Up'))
+        self.shortcutShiftDown = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutShiftDown.setKey(qt.QKeySequence('Shift+Down'))
+
     def connectKeyboardShortcuts(self):
         # Connect shortcuts to respective actions
         self.shortcutW.connect('activated()', lambda: self.onAddLine("Pleura", not self.ui.addPleuraButton.isChecked()))
@@ -232,9 +244,16 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Home/End keys for first/last frame
         self.shortcutHome.connect('activated()', self._firstFrameInSequence)
         self.shortcutEnd.connect('activated()', self._lastFrameInSequence)
-
         # Spacebar for play/pause
         self.shortcutSpace.connect('activated()', self._togglePlayPauseSequence)
+
+        # Page Up/Page Down for previous/next clip
+        self.shortcutPageUp.connect('activated()', self._onPageUpPressed)
+        self.shortcutPageDown.connect('activated()', self._onPageDownPressed)
+
+        # Shift+Up/Shift+Down for previous/next clip
+        self.shortcutShiftUp.connect('activated()', self._onPreviousClipPressed)
+        self.shortcutShiftDown.connect('activated()', self._onNextClipPressed)
 
     def disconnectKeyboardShortcuts(self):
         # Disconnect shortcuts to avoid issues when the user leaves the module
@@ -253,6 +272,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutShiftP.activated.disconnect()
         self.shortcutRightArrow.activated.disconnect()
         self.shortcutLeftArrow.activated.disconnect()
+        self.shortcutPageUp.activated.disconnect()
+        self.shortcutPageDown.activated.disconnect()
+        self.shortcutShiftUp.activated.disconnect()
+        self.shortcutShiftDown.activated.disconnect()
 
     def setup(self) -> None:
         """
@@ -1823,6 +1846,31 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if activeBrowserNode:
             isPlaying = activeBrowserNode.GetPlaybackActive()
             activeBrowserNode.SetPlaybackActive(not isPlaying)
+
+    def _navigateToClip(self, direction):
+        """Helper method to navigate to previous or next clip."""
+        direction_text = "previous" if direction == "previous" else "next"
+        slicer.util.mainWindow().statusBar().showMessage(f'Loading {direction_text} clip...', 2000)
+        if direction == "previous":
+            self.onPreviousButton()
+        else:
+            self.onNextButton()
+
+    def _onPageUpPressed(self):
+        """Handle Page Up press for previous clip."""
+        self._navigateToClip("previous")
+
+    def _onPageDownPressed(self):
+        """Handle Page Down press for next clip."""
+        self._navigateToClip("next")
+
+    def _onPreviousClipPressed(self):
+        """Handle Shift+Up or Ctrl+Up press for previous clip."""
+        self._navigateToClip("previous")
+
+    def _onNextClipPressed(self):
+        """Handle Shift+Down or Ctrl+Down press for next clip."""
+        self._navigateToClip("next")
 
 #
 # AnnotateUltrasoundLogic
