@@ -153,8 +153,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutW.setKey(qt.QKeySequence('W'))
         self.shortcutS = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutS.setKey(qt.QKeySequence('S'))
-        self.shortcutSpace = qt.QShortcut(slicer.util.mainWindow())
-        self.shortcutSpace.setKey(qt.QKeySequence('Space'))
+        self.shortcutO = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutO.setKey(qt.QKeySequence('O'))
 
         # Add shortcuts for removing lines
         self.shortcutE = qt.QShortcut(slicer.util.mainWindow())  # "E" for removing last pleura line
@@ -183,16 +183,32 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutShiftP = qt.QShortcut(slicer.util.mainWindow())  # "Shift+P" for previous visible annotation
         self.shortcutShiftP.setKey(qt.QKeySequence('Shift+P'))
 
+        # Arrow keys for next/previous frame (Slicer commands)
+        self.shortcutRightArrow = qt.QShortcut(slicer.util.mainWindow())  # "Right Arrow" for next frame
+        self.shortcutRightArrow.setKey(qt.QKeySequence('Right'))
+        self.shortcutLeftArrow = qt.QShortcut(slicer.util.mainWindow())  # "Left Arrow" for previous frame
+        self.shortcutLeftArrow.setKey(qt.QKeySequence('Left'))
+
+        # Home/End keys for first/last frame
+        self.shortcutHome = qt.QShortcut(slicer.util.mainWindow())  # "Home" for first frame
+        self.shortcutHome.setKey(qt.QKeySequence('Home'))
+        self.shortcutEnd = qt.QShortcut(slicer.util.mainWindow())  # "End" for last frame
+        self.shortcutEnd.setKey(qt.QKeySequence('End'))
+
         self.raterNameDebounceTimer = qt.QTimer()
         self.raterNameDebounceTimer.setSingleShot(True)
         self.raterNameDebounceTimer.setInterval(300)  # ms of idle time before triggering
         self.raterNameDebounceTimer.timeout.connect(self.onRaterNameChanged)
 
+        # Spacebar for play/pause
+        self.shortcutSpace = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutSpace.setKey(qt.QKeySequence('Space'))
+
     def connectKeyboardShortcuts(self):
         # Connect shortcuts to respective actions
         self.shortcutW.connect('activated()', lambda: self.onAddLine("Pleura", not self.ui.addPleuraButton.isChecked()))
         self.shortcutS.connect('activated()', lambda: self.onAddLine("Bline", not self.ui.addBlineButton.isChecked()))
-        self.shortcutSpace.connect('activated()', lambda: self.ui.overlayVisibilityButton.toggle())
+        self.shortcutO.connect('activated()', lambda: self.ui.overlayVisibilityButton.toggle())
 
         # New shortcuts for removing lines
         self.shortcutE.connect('activated()', lambda: self.onRemoveLine("Pleura"))  # "E" removes the last pleura line
@@ -210,11 +226,21 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutShiftN.connect('activated()', self.selectNextVisibleLine)
         self.shortcutShiftP.connect('activated()', self.selectPreviousVisibleLine)
 
+        # Arrow keys for next/previous frame (Slicer commands)
+        self.shortcutRightArrow.connect('activated()', self._nextFrameInSequence)
+        self.shortcutLeftArrow.connect('activated()', self._previousFrameInSequence)
+        # Home/End keys for first/last frame
+        self.shortcutHome.connect('activated()', self._firstFrameInSequence)
+        self.shortcutEnd.connect('activated()', self._lastFrameInSequence)
+
+        # Spacebar for play/pause
+        self.shortcutSpace.connect('activated()', self._togglePlayPauseSequence)
+
     def disconnectKeyboardShortcuts(self):
         # Disconnect shortcuts to avoid issues when the user leaves the module
         self.shortcutW.activated.disconnect()
         self.shortcutS.activated.disconnect()
-        self.shortcutSpace.activated.disconnect()
+        self.shortcutO.activated.disconnect()
         self.shortcutE.activated.disconnect()
         self.shortcutD.activated.disconnect()
         self.shortcutA.activated.disconnect()
@@ -225,6 +251,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutP.activated.disconnect()
         self.shortcutShiftN.activated.disconnect()
         self.shortcutShiftP.activated.disconnect()
+        self.shortcutRightArrow.activated.disconnect()
+        self.shortcutLeftArrow.activated.disconnect()
 
     def setup(self) -> None:
         """
@@ -1731,6 +1759,70 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
     def selectPreviousVisibleLine(self):
         self._selectLineByFilter(lambda node: True, "previous", "No visible lines in this frame.", "Selected visible line")
+
+    def _getActiveSequenceBrowserNode(self):
+        """Return the active sequence browser node, even if the toolbar is focused on a sequence node."""
+        node = slicer.modules.sequences.toolBar().activeBrowserNode()
+        if node is None:
+            return None
+        # If it's already a browser node, return it
+        if isinstance(node, slicer.vtkMRMLSequenceBrowserNode):
+            return node
+        # Otherwise, find the browser node that references this sequence node
+        sequenceBrowsers = slicer.util.getNodesByClass("vtkMRMLSequenceBrowserNode")
+        for browser in sequenceBrowsers:
+            collection = vtk.vtkCollection()
+            browser.GetSynchronizedSequenceNodes(collection, True)
+            if collection.IsItemPresent(node):
+                return browser
+        return None
+
+    def _nextFrameInSequence(self):
+        """Go to next frame in the current sequence using Slicer's built-in sequence browser."""
+        activeBrowserNode = self._getActiveSequenceBrowserNode()
+        if activeBrowserNode:
+            currentIndex = activeBrowserNode.GetSelectedItemNumber()
+            maxIndex = activeBrowserNode.GetNumberOfItems() - 1
+            if currentIndex < maxIndex:
+                activeBrowserNode.SetSelectedItemNumber(currentIndex + 1)
+            else:
+                slicer.util.mainWindow().statusBar().showMessage('⚠️ Already at last frame', 3000)
+
+    def _previousFrameInSequence(self):
+        """Go to previous frame in the current sequence using Slicer's built-in sequence browser."""
+        activeBrowserNode = self._getActiveSequenceBrowserNode()
+        if activeBrowserNode:
+            currentIndex = activeBrowserNode.GetSelectedItemNumber()
+            if currentIndex > 0:
+                activeBrowserNode.SetSelectedItemNumber(currentIndex - 1)
+            else:
+                slicer.util.mainWindow().statusBar().showMessage('⚠️ Already at first frame', 3000)
+
+    def _firstFrameInSequence(self):
+        """Go to the first frame in the current sequence."""
+        activeBrowserNode = self._getActiveSequenceBrowserNode()
+        if activeBrowserNode:
+            if activeBrowserNode.GetSelectedItemNumber() > 0:
+                activeBrowserNode.SetSelectedItemNumber(0)
+            else:
+                slicer.util.mainWindow().statusBar().showMessage('⚠️ Already at first frame', 3000)
+
+    def _lastFrameInSequence(self):
+        """Go to the last frame in the current sequence."""
+        activeBrowserNode = self._getActiveSequenceBrowserNode()
+        if activeBrowserNode:
+            maxIndex = activeBrowserNode.GetNumberOfItems() - 1
+            if activeBrowserNode.GetSelectedItemNumber() < maxIndex:
+                activeBrowserNode.SetSelectedItemNumber(maxIndex)
+            else:
+                slicer.util.mainWindow().statusBar().showMessage('⚠️ Already at last frame', 3000)
+
+    def _togglePlayPauseSequence(self):
+        """Toggle play/pause for the current sequence browser."""
+        activeBrowserNode = self._getActiveSequenceBrowserNode()
+        if activeBrowserNode:
+            isPlaying = activeBrowserNode.GetPlaybackActive()
+            activeBrowserNode.SetPlaybackActive(not isPlaying)
 
 #
 # AnnotateUltrasoundLogic
