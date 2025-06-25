@@ -3143,16 +3143,20 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Add pleura lines to mask array using full RGB overlay
         for markupNode in self.pleuraLines:
             nodeRater = markupNode.GetAttribute("rater") if markupNode else None
-            validation_json = markupNode.GetAttribute("validation")
-            status = None
-            if validation_json:
-                try:
-                    validation = json.loads(validation_json)
-                    status = validation.get("status", None)
-                except Exception:
-                    status = None
-            if status != "validated":
-                continue
+
+            # Only check validation status in adjudicator mode
+            if adjudicator_mode:
+                validation_json = markupNode.GetAttribute("validation")
+                status = None
+                if validation_json:
+                    try:
+                        validation = json.loads(validation_json)
+                        status = validation.get("status", None)
+                    except Exception:
+                        status = None
+                if status != "validated":
+                    continue
+
             # Always filter by selectedRaters, even in adjudicator mode
             if not adjudicator_mode and hasattr(self, "selectedRaters") and self.selectedRaters and nodeRater not in self.selectedRaters:
                 continue
@@ -3175,16 +3179,20 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Add B-lines to mask array using full RGB overlay
         for markupNode in self.bLines:
             nodeRater = markupNode.GetAttribute("rater") if markupNode else None
-            validation_json = markupNode.GetAttribute("validation")
-            status = None
-            if validation_json:
-                try:
-                    validation = json.loads(validation_json)
-                    status = validation.get("status", None)
-                except Exception:
-                    status = None
-            if status != "validated":
-                continue
+
+            # Only check validation status in adjudicator mode
+            if adjudicator_mode:
+                validation_json = markupNode.GetAttribute("validation")
+                status = None
+                if validation_json:
+                    try:
+                        validation = json.loads(validation_json)
+                        status = validation.get("status", None)
+                    except Exception:
+                        status = None
+                if status != "validated":
+                    continue
+
             # Always filter by selectedRaters, even in adjudicator mode
             if hasattr(self, "selectedRaters") and self.selectedRaters and nodeRater not in self.selectedRaters:
                 continue
