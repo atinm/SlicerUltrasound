@@ -272,6 +272,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutShiftP.activated.disconnect()
         self.shortcutRightArrow.activated.disconnect()
         self.shortcutLeftArrow.activated.disconnect()
+        self.shortcutHome.activated.disconnect()
+        self.shortcutEnd.activated.disconnect()
+        self.shortcutSpace.activated.disconnect()
         self.shortcutPageUp.activated.disconnect()
         self.shortcutPageDown.activated.disconnect()
         self.shortcutShiftUp.activated.disconnect()
@@ -718,6 +721,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         self._updateGUIFromParameterNode()
 
+        # Set focus to red view after initial load to ensure keyboard shortcuts work
+        if numFilesFound > 0:
+            self._setRedViewFocus()
+
     def confirmUnsavedChanges(self):
         """
         Asks the user if they want to save unsaved changes before continuing.
@@ -808,6 +815,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.overlayVisibilityButton.setChecked(True)
 
         self.logic.loadAnnotations(self.logic.nextDicomDfIndex - 1, self.ui.adjudicatorModeCheckBox.isChecked())
+
+        # Set focus to red view after navigation to ensure keyboard shortcuts work
+        self._setRedViewFocus()
 
     def updateGuiFromAnnotations(self):
         # Check checkboxes in the labels scroll area if the labels are present in the logic.annotations
@@ -952,6 +962,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         self.logic.loadPreviousSequence()
         self.logic.loadAnnotations(self.logic.nextDicomDfIndex - 1, self.ui.adjudicatorModeCheckBox.isChecked())
+
+        # Set focus to red view after navigation to ensure keyboard shortcuts work
+        self._setRedViewFocus()
 
     def saveAnnotations(self):
         """
@@ -1847,6 +1860,37 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             isPlaying = activeBrowserNode.GetPlaybackActive()
             activeBrowserNode.SetPlaybackActive(not isPlaying)
 
+    def _setRedViewFocus(self):
+        """Set focus to the red view to ensure keyboard shortcuts work immediately."""
+        # Use a timer to delay focus setting to ensure all UI updates are complete
+        qt.QTimer.singleShot(200, self._delayedSetRedViewFocus)
+
+    def _delayedSetRedViewFocus(self):
+        """Delayed focus setting to ensure all UI updates are complete."""
+        try:
+            # Since shortcuts are connected to main window, focus on that
+            mainWindow = slicer.util.mainWindow()
+            if mainWindow:
+                mainWindow.activateWindow()
+                mainWindow.setFocus()
+                mainWindow.raise_()
+
+            # Also try setting focus to the module widget itself
+            if hasattr(self, 'parent') and self.parent:
+                self.parent.setFocus()
+
+        except Exception as e:
+            logging.warning(f"Could not set focus: {e}")
+
+    def _forceShortcutsActive(self):
+        """Force keyboard shortcuts to be active by temporarily disconnecting and reconnecting them."""
+        try:
+            # Temporarily disconnect and reconnect shortcuts to force them to be active
+            self.disconnectKeyboardShortcuts()
+            qt.QTimer.singleShot(50, self.connectKeyboardShortcuts)
+        except Exception as e:
+            logging.warning(f"Could not force shortcuts active: {e}")
+
     def _navigateToClip(self, direction):
         """Helper method to navigate to previous or next clip."""
         direction_text = "previous" if direction == "previous" else "next"
@@ -1921,33 +1965,54 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
     def getColorsForRater(self, rater: str):
         """
-        Assigns colors to raters by allocating 2N total hues evenly around the color wheel,
-        then assigning pairs of hues to each rater for optimal color separation.
-        This ensures no color conflicts between any raters' pleura or bline colors.
+        Assign unique, visually distinct colors for pleura and b-lines per rater.
+        The current rater is always assigned green (pleura) and blue (b-line).
+        All other raters are evenly spaced across the hue circle, avoiding green/blue hues.
         """
-        rater = rater.strip().lower()
+        import colorsys
+        import numpy as np
 
-        # Maintain a static/class attribute for seen raters in lex order
+        rater = rater.strip().lower()
+        current_rater = self.getParameterNode().rater.strip().lower()
+
         if rater not in self.seenRaters and rater != '':
             self.seenRaters.append(rater)
             self.seenRaters.sort()
 
-        rater_index = self.seenRaters.index(rater)
-        num_raters = len(self.seenRaters)
+        if current_rater not in self.seenRaters:
+            self.seenRaters.append(current_rater)
+            self.seenRaters.sort()
 
-        # Allocate 2N total hues evenly around the color wheel
-        # Each rater gets 2 hues: pleura_hue and bline_hue
-        pleura_hue = (2 * rater_index) / (2 * num_raters)  # First hue for this rater
-        bline_hue = (2 * rater_index + 1) / (2 * num_raters)  # Second hue for this rater
+        raters = self.seenRaters
+        num_raters = len(raters)
 
-        # Use fixed saturation and value for all
-        sat = 0.85
-        val = 0.95
-        pleura_rgb = colorsys.hsv_to_rgb(pleura_hue, sat, val)
-        bline_rgb = colorsys.hsv_to_rgb(bline_hue, sat, val)
-        pleura_color = [float(x) for x in pleura_rgb]
-        bline_color = [float(x) for x in bline_rgb]
-        return pleura_color, bline_color
+        if rater not in raters:
+            return [1.0, 0.0, 0.0], [1.0, 0.5, 0.0]  # fallback red/orange
+
+        # Current rater gets green + blue
+        if rater == current_rater:
+            pleura_rgb = colorsys.hsv_to_rgb(0.33, 0.85, 0.95)  # green
+            bline_rgb = colorsys.hsv_to_rgb(0.66, 0.85, 0.95)   # blue
+            return list(pleura_rgb), list(bline_rgb)
+
+        # For other raters, assign 2×(N−1) hues, excluding green/blue ranges
+        other_raters = [r for r in raters if r != current_rater]
+        rater_index = other_raters.index(rater)
+
+        total_needed = 2 * (num_raters - 1)
+        hue_candidates = np.linspace(0, 1, total_needed + 4, endpoint=False)  # add extra to allow filtering
+
+        # Remove hues too close to green (0.33) and blue (0.66)
+        filtered_hues = [h for h in hue_candidates if abs(h - 0.33) > 0.07 and abs(h - 0.66) > 0.07]
+
+        # Use the first 2*(N-1) valid hues
+        usable_hues = filtered_hues[:total_needed]
+        pleura_hue = usable_hues[2 * rater_index]
+        bline_hue = usable_hues[2 * rater_index + 1]
+
+        pleura_rgb = colorsys.hsv_to_rgb(pleura_hue, 0.85, 0.95)
+        bline_rgb = colorsys.hsv_to_rgb(bline_hue, 0.85, 0.95)
+        return list(pleura_rgb), list(bline_rgb)
 
     def getAllRaterColors(self):
         """
