@@ -148,6 +148,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         self.updatingGUI = False
 
+        # Flag to track if this is the first load of DICOM data
+        self._isFirstDicomLoad = True
+
         # Shortcuts
         self.shortcutW = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutW.setKey(qt.QKeySequence('W'))
@@ -658,8 +661,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.logic.extractAndSetupRaters()
         # Copy the seenRaters from logic to widget for UI purposes
         self.seenRaters = self.logic.seenRaters.copy()
-        # Update the collapsed state based on the new rater information
-        self._setRaterColorTableCollapsedState()
 
     def onReadInputButton(self):
         """
@@ -733,6 +734,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.progressBar.value = self.currentDicomDfIndex
 
             self.ui.overlayVisibilityButton.setChecked(True)
+
+            # Mark that this is no longer the first DICOM load
+            self._isFirstDicomLoad = False
         else:
             statusText = 'Could not find any files to load in input directory!'
             slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
@@ -1478,6 +1482,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 self.ui.workflowCollapsibleButton.collapsed = True
                 self.ui.sectorAnnotationsCollapsibleButton.collapsed = True
                 self.ui.labelAnnotationsCollapsibleButton.collapsed = True
+                # Collapse rater color table when no DICOM is loaded (no raters to display)
+                if hasattr(self.ui, 'raterColorsCollapsibleButton'):
+                    self._setRaterColorTableCollapsedState(True)
             else:
                 self.ui.inputsCollapsibleButton.collapsed = True
                 self.ui.workflowCollapsibleButton.collapsed = False
@@ -1492,27 +1499,23 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             settings = qt.QSettings()
             settings.setValue('AnnotateUltrasound/Rater', self.ui.raterName.text.strip())
 
-            # Only update raterColorTable if present
-            if hasattr(self.ui, 'raterColorTable'):
+            # Only update raterColorTable if present and DICOM is loaded
+            if hasattr(self.ui, 'raterColorTable') and self._parameterNode.dfLoaded:
                 self.populateRaterColorTable()
-            elif hasattr(self.ui, 'raterColorsCollapsibleButton'):
-                # Just update the collapsed state without repopulating the table
-                self._setRaterColorTableCollapsedState()
         finally:
             self.updatingGUI = False
 
-    def _setRaterColorTableCollapsedState(self):
+    def _setRaterColorTableCollapsedState(self, collapsed):
         """
-        Set the collapsed state of the rater color table based on adjudicator mode.
+        Set the collapsed state of the rater color table.
+
+        Args:
+            collapsed: True to collapse, False to expand
         """
         if not hasattr(self.ui, 'raterColorsCollapsibleButton'):
             return
 
-        if self._parameterNode.adjudicatorMode:
-            # Always collapse in adjudicator mode
-            self.ui.raterColorsCollapsibleButton.collapsed = True
-        else:
-            self.ui.raterColorsCollapsibleButton.collapsed = True
+        self.ui.raterColorsCollapsibleButton.collapsed = collapsed
 
     def populateRaterColorTable(self):
         if not hasattr(self.ui, 'raterColorTable'):
@@ -1557,8 +1560,16 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.raterColorTable.setItem(row, 2, bline_item)
         self.ui.raterColorTable.blockSignals(False)
 
-        # Set the collapsed state based on adjudicator mode
-        self._setRaterColorTableCollapsedState()
+        # Set the collapsed state based on whether there are raters and adjudicator mode
+        if len(visible_colors) == 0:
+            # No raters to display, collapse
+            self._setRaterColorTableCollapsedState(True)
+        else:
+            # Has raters, follow adjudicator mode logic
+            if self._isFirstDicomLoad:
+                self._setRaterColorTableCollapsedState(self._parameterNode.adjudicatorMode)
+            else:
+                self._setRaterColorTableCollapsedState(self._parameterNode.adjudicatorMode)
 
     def getSelectedRatersFromTable(self):
         selected = []
@@ -1755,9 +1766,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             else:
                 # Expand sector annotations when exiting adjudicator mode
                 self.ui.sectorAnnotationsCollapsibleButton.collapsed = False
-        # Collapse rater selection when entering adjudicator mode
+        # Toggle rater selection collapse/expand based on adjudicator mode
         if hasattr(self.ui, 'raterColorsCollapsibleButton'):
-            self._setRaterColorTableCollapsedState()
+            self.ui.raterColorsCollapsibleButton.collapsed = enabled
         if self.logic:
             self._updateMarkupsAndOverlayProgrammatically()
 
