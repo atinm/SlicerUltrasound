@@ -1479,7 +1479,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             else:
                 self.ui.inputsCollapsibleButton.collapsed = True
                 self.ui.workflowCollapsibleButton.collapsed = False
-                self.ui.sectorAnnotationsCollapsibleButton.collapsed = False
+                # Only expand sector annotations if not in adjudicator mode
+                if not self._parameterNode.adjudicatorMode:
+                    self.ui.sectorAnnotationsCollapsibleButton.collapsed = False
+                else:
+                    self.ui.sectorAnnotationsCollapsibleButton.collapsed = True
                 self.ui.labelAnnotationsCollapsibleButton.collapsed = False
 
             # Save rater name to settings
@@ -1724,6 +1728,14 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             if enabled:
                 # Expand adjudication tools when entering adjudicator mode
                 self.ui.adjudicationToolsCollapsibleButton.collapsed = False
+        # Show/hide the sector annotations section (line creation tools)
+        if hasattr(self.ui, 'sectorAnnotationsCollapsibleButton'):
+            if enabled:
+                # Collapse sector annotations when entering adjudicator mode
+                self.ui.sectorAnnotationsCollapsibleButton.collapsed = True
+            else:
+                # Expand sector annotations when exiting adjudicator mode
+                self.ui.sectorAnnotationsCollapsibleButton.collapsed = False
         # Collapse rater selection when entering adjudicator mode
         if hasattr(self.ui, 'raterColorsCollapsibleButton'):
             if enabled:
