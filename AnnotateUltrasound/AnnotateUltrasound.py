@@ -632,18 +632,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         ensuring the current rater is included even if not present in any frame annotations.
         Sets self.seenRaters to a sorted list of rater names.
         """
-        raters_seen = {
-            line.get("rater")
-            for frame in self.logic.annotations.get("frame_annotations", [])
-            for key in ["pleura_lines", "b_lines"]
-            for line in frame.get(key, [])
-            if line.get("rater")
-        }
-        if self._parameterNode.rater and self._parameterNode.rater in raters_seen:
-            raters_seen.discard(self._parameterNode.rater)
-        # always put current rater at the top
-        raters_seen = [self._parameterNode.rater] + sorted(raters_seen)
-        self.seenRaters = raters_seen
+        # Use the Logic's centralized method to extract and set up raters
+        self.logic.extractAndSetupRaters()
+        # Copy the seenRaters from logic to widget for UI purposes
+        self.seenRaters = self.logic.seenRaters.copy()
 
     def onReadInputButton(self):
         """
@@ -687,6 +679,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.progressBar.value = 0
             waitDialog = self.createWaitDialog("Loading first sequence", "Loading first sequence...")
             self.currentDicomDfIndex = self.logic.loadNextSequence()
+
+            # Add observer for the new sequence browser node
+            if self.logic.sequenceBrowserNode:
+                self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
+
             # Update self.ui.currentFileLabel using the DICOM file name
             currentDicomFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['Filepath']
             currentDicomFilename = os.path.basename(currentDicomFilepath)
@@ -770,6 +767,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         showDepthGuide = self._parameterNode.depthGuideVisible
 
         currentDicomDfIndex = self.logic.loadNextSequence()
+
+        # Add observer for the new sequence browser node
+        if self.logic.sequenceBrowserNode:
+            self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
+
         # After loading the next sequence, extract seen raters and update checkboxes
         self.extractSeenRaters()
         self.selectedRaters = set(self.seenRaters)
@@ -1002,6 +1004,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 with open(annotationsFilepath, 'w') as f:
                     json.dump(save_data, f)
                 logging.info(f"Annotations saved to {annotationsFilepath}")
+        return True
 
     def onSaveButton(self):
         """
@@ -1307,6 +1310,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         sliceAnnotations = slicer.modules.DataProbeInstance.infoWidget.sliceAnnotations
         sliceAnnotations.sliceViewAnnotationsEnabled=False
         sliceAnnotations.updateSliceViewFromGUI()
+
+        # Add sequence browser observer if sequence browser exists
+        if self.logic and self.logic.sequenceBrowserNode:
+            self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
 
         self._updateGUIFromParameterNode()
 
@@ -1828,6 +1835,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
             if targetIndex != currentIndex:
                 activeBrowserNode.SetSelectedItemNumber(targetIndex)
+                # Reset selected node ID when changing frames
+                selectionNode = slicer.app.applicationLogic().GetSelectionNode()
+                if selectionNode:
+                    selectionNode.SetActivePlaceNodeID("")
             else:
                 slicer.util.mainWindow().statusBar().showMessage(already_at_message, 3000)
 
@@ -1921,6 +1932,17 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     def _onNextClipPressed(self):
         """Handle Shift+Down or Ctrl+Down press for next clip."""
         self._navigateToClip("next")
+
+    def onSequenceBrowserModified(self, caller, event):
+        """Handle sequence browser modifications (e.g., frame navigation via Slicer UI)."""
+        # Reset selected node ID when sequence browser changes (UI state management)
+        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
+        if selectionNode:
+            selectionNode.SetActivePlaceNodeID("")
+
+        # Call Logic class to update markups (data processing)
+        if self.logic:
+            self.logic._updateMarkupsAndOverlayProgrammatically(None)
 
 #
 # AnnotateUltrasoundLogic
@@ -2388,35 +2410,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Load annotations using the dedicated method. The adjudicator mode flag comes from the widget's parameter node.
         self.loadAnnotations(self.nextDicomDfIndex - 1, self.parameterNode.adjudicatorMode)
 
-        # Extract all unique raters from the loaded annotations
-        self.seenRaters = []
-        if self.annotations and 'frame_annotations' in self.annotations:
-            for frame in self.annotations['frame_annotations']:
-                for line_type in ['pleura_lines', 'b_lines']:
-                    for line in frame.get(line_type, []):
-                        rater = line.get('rater')
-                        if rater and rater not in self.seenRaters:
-                            self.seenRaters.append(rater)
-
-        current_rater = self.getParameterNode().rater.strip().lower()
-        if current_rater in self.seenRaters:
-            self.seenRaters.remove(current_rater)
-        # Remove __selected_node__ if it exists (to avoid duplicates)
-        if "__selected_node__" in self.seenRaters:
-            self.seenRaters.remove("__selected_node__")
-        # Remove current_rater if it exists (to avoid duplicates)
-        if current_rater in self.seenRaters:
-            self.seenRaters.remove(current_rater)
-        # Now build the list: current_rater, __selected_node__, then sorted rest
-        # we need to add __selected_node__ to the list to ensure that the selected line is always visible and
-        # uses a different color than the other lines
-        self.seenRaters = [current_rater, "__selected_node__"] + sorted(self.seenRaters)
-        self.setSelectedRaters(set(self.seenRaters))
-
-        # Preallocate markup nodes based on loaded annotations
-        self.preallocateMarkupNodesFromAnnotations()
-        # Set programmatic update flag to prevent unsavedChanges from being set
-        self._updateMarkupsAndOverlayProgrammatically(parameterNode)
         parameterNode.EndModify(previousNodeState)
 
         # Set overlay volume as foreground in slice viewers
@@ -2428,9 +2421,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         displayNode = overlayVolume.GetDisplayNode()
         displayNode.SetWindow(255)
         displayNode.SetLevel(127)
-
-        # Observe the ultrasound image for changes
-        self.addObserver(self.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
 
         # Return the index of the loaded sequence in the dataframe
         return self.nextDicomDfIndex
@@ -2526,7 +2516,12 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                     logging.warning(f"Failed to load or merge annotation file {filepath}: {e}")
             self.annotations = merged_data
 
-    def onSequenceBrowserModified(self, caller, event):
+        # Extract and set up raters using the centralized method
+        self.extractAndSetupRaters()
+
+        # Preallocate markup nodes based on loaded annotations
+        self.preallocateMarkupNodesFromAnnotations()
+        # Set programmatic update flag to prevent unsavedChanges from being set
         self._updateMarkupsAndOverlayProgrammatically(None)
 
     def createMarkupLine(self, name, rater, coordinates, color=[1, 1, 0], validation=None):
@@ -2862,18 +2857,18 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 node.GetDisplayNode().SetOpacity(0.40)
             elif status == "unadjudicated":
                 node.GetDisplayNode().SetVisibility(True)
-                if isSelected:
-                    node.GetDisplayNode().SetGlyphTypeFromString("Diamond2D")
-                    node.GetDisplayNode().SetOpacity(0.80)
-                else:
+                if not isSelected:
                     node.GetDisplayNode().SetOpacity(0.65)
             else:  # validated
                 node.GetDisplayNode().SetVisibility(True)
-                if isSelected:
-                    node.GetDisplayNode().SetGlyphTypeFromString("Diamond2D")
-                    node.GetDisplayNode().SetOpacity(0.80)
-                else:
-                    node.GetDisplayNode().SetOpacity(1.0)
+                if not isSelected:
+                    node.GetDisplayNode().SetOpacity(0.85)
+
+            # Selected node highlighting is independent of validation status
+            if isSelected:
+                node.GetDisplayNode().SetGlyphScale(3.0)
+                node.GetDisplayNode().SetGlyphTypeFromString("Diamond2D")
+                node.GetDisplayNode().SetOpacity(1.0)
 
         node.RemoveAllControlPoints()
         for pt in coordinates:
@@ -3458,6 +3453,37 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         stopTime = time.time()
         logging.info(f'Processing completed in {stopTime-startTime:.2f} seconds')
+
+    def extractAndSetupRaters(self):
+        """
+        Extract all unique raters from the loaded annotations and set up selectedRaters.
+        This centralizes the rater extraction logic to avoid duplication.
+        """
+        # Extract all unique raters from the loaded annotations
+        seenRaters = []
+        if self.annotations and 'frame_annotations' in self.annotations:
+            for frame in self.annotations['frame_annotations']:
+                for line_type in ['pleura_lines', 'b_lines']:
+                    for line in frame.get(line_type, []):
+                        rater = line.get('rater')
+                        if rater and rater not in seenRaters:
+                            seenRaters.append(rater)
+
+        parameterNode = self.getParameterNode()
+        current_rater = parameterNode.rater.strip().lower()
+        if current_rater in seenRaters:
+            seenRaters.remove(current_rater)
+        # Remove __selected_node__ if it exists (to avoid duplicates)
+        if "__selected_node__" in seenRaters:
+            seenRaters.remove("__selected_node__")
+        # Remove current_rater if it exists (to avoid duplicates)
+        if current_rater in seenRaters:
+            seenRaters.remove(current_rater)
+        # Now build the list: current_rater, __selected_node__, then sorted rest
+        # we need to add __selected_node__ to the list to ensure that the selected line is always visible and
+        # uses a different color than the other lines
+        self.seenRaters = [current_rater, "__selected_node__"] + sorted(seenRaters)
+        self.setSelectedRaters(set(self.seenRaters))
 
     def getCurrentRater(self):
         parameterNode = self.getParameterNode()
