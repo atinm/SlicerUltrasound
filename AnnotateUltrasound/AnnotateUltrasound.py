@@ -2069,8 +2069,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
     def getColorsForRater(self, rater: str):
         """
         Assign unique, visually distinct colors for pleura and b-lines per rater.
-        The current rater is always assigned green (pleura) and blue (b-line).
-        All other raters are evenly spaced across the hue circle, avoiding green/blue hues.
+        Each rater gets completely unique colors that are distinct both within the rater and between raters.
+        Uses golden ratio distribution starting from green (pleura) and blue (b-lines).
         """
 
         rater = rater.strip().lower()
@@ -2085,34 +2085,41 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             self.seenRaters.sort()
 
         raters = self.seenRaters
-        num_raters = len(raters)
 
         if rater not in raters:
             return [1.0, 0.0, 0.0], [1.0, 0.5, 0.0]  # fallback red/orange
 
         # Current rater gets green + blue
         if rater == current_rater:
-            pleura_rgb = colorsys.hsv_to_rgb(0.33, 0.85, 0.95)  # green
-            bline_rgb = colorsys.hsv_to_rgb(0.66, 0.85, 0.95)   # blue
+            pleura_rgb = colorsys.hsv_to_rgb(0.33, 0.95, 1.0)  # bright green
+            bline_rgb = colorsys.hsv_to_rgb(0.66, 0.95, 1.0)   # bright blue
             return list(pleura_rgb), list(bline_rgb)
 
-        # For other raters, assign 2×(N−1) hues, excluding green/blue ranges
-        other_raters = [r for r in raters if r != current_rater]
-        rater_index = other_raters.index(rater)
+        # Count all raters (excluding current rater)
+        regular_raters = [r for r in raters if r != current_rater]
+        N = len(regular_raters)
 
-        total_needed = 2 * (num_raters - 1)
-        hue_candidates = np.linspace(0, 1, total_needed + 4, endpoint=False)  # add extra to allow filtering
+        if N == 0:
+            return [1.0, 0.0, 0.0], [1.0, 0.5, 0.0]  # fallback red/orange
 
-        # Remove hues too close to green (0.33) and blue (0.66)
-        filtered_hues = [h for h in hue_candidates if abs(h - 0.33) > 0.07 and abs(h - 0.66) > 0.07]
+        # Find the index of this rater among all non-current raters
+        rater_index = regular_raters.index(rater)
 
-        # Use the first 2*(N-1) valid hues
-        usable_hues = filtered_hues[:total_needed]
-        pleura_hue = usable_hues[2 * rater_index]
-        bline_hue = usable_hues[2 * rater_index + 1]
+        # Use golden ratio for non-repeating distribution
+        # φ = (1 + √5) / 2 ≈ 1.618033988749895
+        golden_ratio = (1 + 5**0.5) / 2
 
-        pleura_rgb = colorsys.hsv_to_rgb(pleura_hue, 0.85, 0.95)
-        bline_rgb = colorsys.hsv_to_rgb(bline_hue, 0.85, 0.95)
+        # Start from positions after green and blue to avoid conflicts with current rater
+        pleura_start = (0.33 + golden_ratio) % 1.0  # Start after green
+        bline_start = (0.66 + golden_ratio) % 1.0   # Start after blue
+
+        # Generate hues by adding golden ratio steps from the starting points
+        pleura_hue = (pleura_start + rater_index * golden_ratio) % 1.0
+        bline_hue = (bline_start + rater_index * golden_ratio) % 1.0
+
+        # Ensure pleura and b-line colors are distinct by adjusting saturation and value
+        pleura_rgb = colorsys.hsv_to_rgb(pleura_hue, 0.95, 1.0)  # bright colors
+        bline_rgb = colorsys.hsv_to_rgb(bline_hue, 0.95, 1.0)   # bright colors
         return list(pleura_rgb), list(bline_rgb)
 
     def getAllRaterColors(self):
