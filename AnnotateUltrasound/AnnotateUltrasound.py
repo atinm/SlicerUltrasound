@@ -658,6 +658,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.logic.extractAndSetupRaters()
         # Copy the seenRaters from logic to widget for UI purposes
         self.seenRaters = self.logic.seenRaters.copy()
+        # Update the collapsed state based on the new rater information
+        self._setRaterColorTableCollapsedState()
 
     def onReadInputButton(self):
         """
@@ -1490,11 +1492,27 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             settings = qt.QSettings()
             settings.setValue('AnnotateUltrasound/Rater', self.ui.raterName.text.strip())
 
-            # Only update raterColorTable if present;
+            # Only update raterColorTable if present
             if hasattr(self.ui, 'raterColorTable'):
                 self.populateRaterColorTable()
+            elif hasattr(self.ui, 'raterColorsCollapsibleButton'):
+                # Just update the collapsed state without repopulating the table
+                self._setRaterColorTableCollapsedState()
         finally:
             self.updatingGUI = False
+
+    def _setRaterColorTableCollapsedState(self):
+        """
+        Set the collapsed state of the rater color table based on adjudicator mode.
+        """
+        if not hasattr(self.ui, 'raterColorsCollapsibleButton'):
+            return
+
+        if self._parameterNode.adjudicatorMode:
+            # Always collapse in adjudicator mode
+            self.ui.raterColorsCollapsibleButton.collapsed = True
+        else:
+            self.ui.raterColorsCollapsibleButton.collapsed = True
 
     def populateRaterColorTable(self):
         if not hasattr(self.ui, 'raterColorTable'):
@@ -1503,8 +1521,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.raterColorTable.clearContents()
         colors = list(self.logic.getAllRaterColors())
 
-        # Filter out __selected_node__ before setting row count, we don't want to show it in the UI
-        visible_colors = [(r, (pleura_color, bline_color)) for r, (pleura_color, bline_color) in colors if r != "__selected_node__"]
+        # Filter out __selected_node__, __adjudicated_node__ before setting row count, we don't want to show it in the UI
+        visible_colors = [(r, (pleura_color, bline_color)) for r, (pleura_color, bline_color) in colors if r != "__selected_node__" and r != "__adjudicated_node__"]
 
         self.ui.raterColorTable.setRowCount(len(visible_colors))
         self.ui.raterColorTable.setColumnCount(3)
@@ -1539,10 +1557,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.raterColorTable.setItem(row, 2, bline_item)
         self.ui.raterColorTable.blockSignals(False)
 
-        # Expand the raterColorsCollapsibleButton if more than one rater and not in adjudicator mode
-        if hasattr(self.ui, 'raterColorsCollapsibleButton'):
-            if len(visible_colors) > 1 and not self._parameterNode.adjudicatorMode:
-                self.ui.raterColorsCollapsibleButton.collapsed = False
+        # Set the collapsed state based on adjudicator mode
+        self._setRaterColorTableCollapsedState()
 
     def getSelectedRatersFromTable(self):
         selected = []
@@ -1561,7 +1577,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         if not hasattr(self.ui, 'raterColorTable'):
             return
-
         table = self.ui.raterColorTable
         table.blockSignals(True)
         try:
@@ -1644,6 +1659,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             displayNode.SetOpacity(0.3)
         # Also update the corresponding annotation line
         self._updateAnnotationLineValidation(markupNode, validation)
+        # Reset cache to force immediate color updates when validation status changes
+        self.logic._resetMarkupCache()
         self.logic.updateCurrentFrame()
         slicer.util.showStatusMessage(f"Line {status_description}.", 3000)
 
@@ -1692,6 +1709,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 if displayNode:
                     displayNode.SetOpacity(opacity)
                 count += 1
+        # Reset cache to force immediate color updates when validation status changes
+        self.logic._resetMarkupCache()
         self.logic.updateCurrentFrame()
         slicer.util.showStatusMessage(f"{status_past_tense} {count} unadjudicated lines.", 3000)
 
@@ -1738,8 +1757,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 self.ui.sectorAnnotationsCollapsibleButton.collapsed = False
         # Collapse rater selection when entering adjudicator mode
         if hasattr(self.ui, 'raterColorsCollapsibleButton'):
-            if enabled:
-                self.ui.raterColorsCollapsibleButton.collapsed = True
+            self._setRaterColorTableCollapsedState()
         if self.logic:
             self._updateMarkupsAndOverlayProgrammatically()
 
@@ -2872,6 +2890,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         return maskArray
 
     def _updateMarkupNode(self, node, entry, selectedNodeID):
+        # Check if node is still valid
+        if not node or not slicer.mrmlScene.IsNodePresent(node):
+            return
+
         coordinates = entry.get("line", {}).get("points", [])
         rater = entry.get("rater", "")
         validation = entry.get("validation", None)
@@ -2885,10 +2907,17 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Ensure display node exists
         displayNode = node.GetDisplayNode()
         if displayNode is None:
-            node.CreateDefaultDisplayNodes()
-            displayNode = node.GetDisplayNode()
-            if displayNode is None:
-                logging.error(f"Failed to create display node for markup node {node.GetName()}")
+            # Check if scene is valid before creating display nodes
+            if not slicer.mrmlScene:
+                return
+            try:
+                node.CreateDefaultDisplayNodes()
+                displayNode = node.GetDisplayNode()
+                if displayNode is None:
+                    logging.error(f"Failed to create display node for markup node {node.GetName()}")
+                    return
+            except Exception as e:
+                logging.error(f"Exception creating display node for {node.GetName()}: {e}")
                 return
 
         # Check if this node is selected - apply selected highlighting regardless of validation status
@@ -2900,15 +2929,24 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             displayNode.SetSelectedColor(selected_node_color)
         else:
             # Apply colors based on mode and validation status
-            if adjudicator_mode and status == "unadjudicated":
-                # In adjudicator mode, unadjudicated lines use current rater's colors
-                current_rater = self.getCurrentRater()
-                if node in self.pleuraLines:
-                    color_pleura, _ = self.getColorsForRater(current_rater)
-                    displayNode.SetSelectedColor(color_pleura)
+            if adjudicator_mode:
+                if status == "unadjudicated":
+                    # In adjudicator mode, unadjudicated lines use current rater's colors
+                    current_rater = self.getCurrentRater()
+                    if node in self.pleuraLines:
+                        color_pleura, _ = self.getColorsForRater(current_rater)
+                        displayNode.SetSelectedColor(color_pleura)
+                    else:
+                        _, color_bline = self.getColorsForRater(current_rater)
+                        displayNode.SetSelectedColor(color_bline)
                 else:
-                    _, color_bline = self.getColorsForRater(current_rater)
-                    displayNode.SetSelectedColor(color_bline)
+                    # In adjudicator mode, validated/invalidated/duplicated lines use __adjudicated_node__ color
+                    if node in self.pleuraLines:
+                        color_pleura, _ = self.getColorsForRater("__adjudicated_node__")
+                        displayNode.SetSelectedColor(color_pleura)
+                    else:
+                        _, color_bline = self.getColorsForRater("__adjudicated_node__")
+                        displayNode.SetSelectedColor(color_bline)
             else:
                 # Use original rater's colors for validated/invalidated/duplicated lines or non-adjudicator mode
                 if node in self.pleuraLines:
@@ -2960,6 +2998,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         """
         Update markup nodes for pleura and b-lines for the given frame.
         """
+        # Check if scene is valid before proceeding
+        if not slicer.mrmlScene:
+            return
+
         # Always filter by selectedRaters, even in adjudicator mode
         pleura_entries = [entry for entry in frame.get("pleura_lines", []) if entry.get("rater", "").strip().lower() in {r.strip().lower() for r in self.selectedRaters}]
         bline_entries = [entry for entry in frame.get("b_lines", []) if entry.get("rater", "").strip().lower() in {r.strip().lower() for r in self.selectedRaters}]
@@ -3014,6 +3056,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         """
         Update the line markups to match the annotations at the current frame index. Reuse markups instead of deleting/creating them every frame. Only update if frame or annotation data has changed.
         """
+        # Check if scene is valid before proceeding
+        if not slicer.mrmlScene:
+            return
+
         # Initialize cache attributes if not present
         if not hasattr(self, '_lastMarkupFrameIndex'):
             self._lastMarkupFrameIndex = None
@@ -3570,13 +3616,16 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Remove __selected_node__ if it exists (to avoid duplicates)
         if "__selected_node__" in seenRaters:
             seenRaters.remove("__selected_node__")
+        # Remove __adjudicated_node__ if it exists (to avoid duplicates)
+        if "__adjudicated_node__" in seenRaters:
+            seenRaters.remove("__adjudicated_node__")
         # Remove current_rater if it exists (to avoid duplicates)
         if current_rater in seenRaters:
             seenRaters.remove(current_rater)
-        # Now build the list: current_rater, __selected_node__, then sorted rest
-        # we need to add __selected_node__ to the list to ensure that the selected line is always visible and
+        # Now build the list: current_rater, __selected_node__, __adjudicated_node__then sorted rest
+        # we need to add __selected_node__, __adjudicated_node__ to the list to ensure that the selected line is always visible and
         # uses a different color than the other lines
-        self.seenRaters = [current_rater, "__selected_node__"] + sorted(seenRaters)
+        self.seenRaters = [current_rater, "__selected_node__", "__adjudicated_node__"] + sorted(seenRaters)
         self.setSelectedRaters(set(self.seenRaters))
 
     def getCurrentRater(self):
@@ -3584,6 +3633,15 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if parameterNode and hasattr(parameterNode, 'rater'):
             return parameterNode.rater.strip().lower()
         return None
+
+    def _resetMarkupCache(self):
+        """
+        Reset the markup cache to force immediate updates when validation status changes.
+        """
+        if hasattr(self, '_lastMarkupFrameIndex'):
+            self._lastMarkupFrameIndex = None
+        if hasattr(self, '_lastMarkupFrameHash'):
+            self._lastMarkupFrameHash = None
 
 #
 # AnnotateUltrasoundTest
@@ -3652,4 +3710,5 @@ class AnnotateUltrasoundTest(ScriptedLoadableModuleTest):
         self.assertEqual(outputScalarRange[1], inputScalarRange[1])
 
         self.delayDisplay('Test passed')
+
 
