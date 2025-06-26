@@ -171,8 +171,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutV.setKey(qt.QKeySequence('V'))
         self.shortcutI = qt.QShortcut(slicer.util.mainWindow())  # "I" for invalidate line
         self.shortcutI.setKey(qt.QKeySequence('I'))
-        self.shortcutL = qt.QShortcut(slicer.util.mainWindow())  # "L" for duplicate line
-        self.shortcutL.setKey(qt.QKeySequence('L'))
+        self.shortcutU = qt.QShortcut(slicer.util.mainWindow())  # "U" for duplicate line
+        self.shortcutU.setKey(qt.QKeySequence('U'))
         self.shortcutN = qt.QShortcut(slicer.util.mainWindow())  # "N" for next unadjudicated line
         self.shortcutN.setKey(qt.QKeySequence('N'))
         self.shortcutP = qt.QShortcut(slicer.util.mainWindow())  # "P" for previous unadjudicated line
@@ -216,6 +216,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutShiftDown = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutShiftDown.setKey(qt.QKeySequence('Shift+Down'))
 
+        self.shortcutL = qt.QShortcut(slicer.util.mainWindow())  # "L" for show/hide lines
+        self.shortcutL.setKey(qt.QKeySequence('L'))
+
     def connectKeyboardShortcuts(self):
         # Connect shortcuts to respective actions
         self.shortcutW.connect('activated()', lambda: self.onAddLine("Pleura", not self.ui.addPleuraButton.isChecked()))
@@ -231,7 +234,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # shortcuts for adjudication actions
         self.shortcutV.connect('activated()', self.onValidateLine)  # "V" to validate selected line
         self.shortcutI.connect('activated()', self.onInvalidateLine)  # "I" to invalidate selected line
-        self.shortcutL.connect('activated()', self.onDuplicateLine)  # "U" to mark selected line as duplicated
+        self.shortcutU.connect('activated()', self.onDuplicateLine)  # "U" to mark selected line as duplicated
         self.shortcutN.connect('activated()', self.selectNextUnadjudicatedLine)
         self.shortcutP.connect('activated()', self.selectPreviousUnadjudicatedLine)
         # Connect Shift+N/P to next/prev visible annotation
@@ -255,6 +258,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutShiftUp.connect('activated()', self._onPreviousClipPressed)
         self.shortcutShiftDown.connect('activated()', self._onNextClipPressed)
 
+        self.shortcutL.connect('activated()', lambda: self.onShowHideLines(None))  # "L" to show/hide lines
+
     def disconnectKeyboardShortcuts(self):
         # Disconnect shortcuts to avoid issues when the user leaves the module
         self.shortcutW.activated.disconnect()
@@ -265,7 +270,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutA.activated.disconnect()
         self.shortcutV.activated.disconnect()
         self.shortcutI.activated.disconnect()
-        self.shortcutL.activated.disconnect()
+        self.shortcutU.activated.disconnect()
         self.shortcutN.activated.disconnect()
         self.shortcutP.activated.disconnect()
         self.shortcutShiftN.activated.disconnect()
@@ -279,6 +284,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutPageDown.activated.disconnect()
         self.shortcutShiftUp.activated.disconnect()
         self.shortcutShiftDown.activated.disconnect()
+        self.shortcutL.activated.disconnect()
 
     def setup(self) -> None:
         """
@@ -356,6 +362,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.clearAllLinesButton.clicked.connect(self.onClearAllLines)
         self.ui.addCurrentFrameButton.clicked.connect(self.onAddCurrentFrame)
         self.ui.removeCurrentFrameButton.clicked.connect(self.onRemoveCurrentFrame)
+        self.ui.showHideLinesButton.toggled.connect(self.onShowHideLines)
 
         # Assign icons to buttons
         self.ui.nextButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueFillNext.png')))
@@ -369,6 +376,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.overlayVisibilityButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueEye.png')))
         self.ui.clearAllLinesButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueFillTrash.png')))
         self.ui.skipToUnlabeledButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueFastForward.png')))
+        self.ui.showHideLinesButton.setIcon(qt.QIcon(self.resourcePath('Icons/blueEye.png')))
 
         # Frame table
         self.ui.framesTableWidget.itemSelectionChanged.connect(self.onFramesTableSelectionChanged)
@@ -1579,7 +1587,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
     def onDuplicateLine(self):
         self._setLineValidationStatus("duplicated", "mark as duplicated", "marked as duplicated")
-
     def _setLineValidationStatus(self, status, action_verb, status_description):
         """
         Set the validation status of the selected line.
@@ -1943,6 +1950,20 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Call Logic class to update markups (data processing)
         if self.logic:
             self.logic._updateMarkupsAndOverlayProgrammatically(None)
+
+    def onShowHideLines(self, checked=None):
+        """Toggle visibility of all lines and overlays."""
+        if checked is None:
+            # Toggle button state
+            self.ui.showHideLinesButton.setChecked(not self.ui.showHideLinesButton.isChecked())
+            checked = self.ui.showHideLinesButton.isChecked()
+        # Set visibility of all lines
+        for node in self.logic.pleuraLines + self.logic.bLines:
+            displayNode = node.GetDisplayNode()
+            if displayNode:
+                displayNode.SetVisibility(checked)
+        # Also toggle overlay visibility
+        self.ui.overlayVisibilityButton.setChecked(checked)
 
 #
 # AnnotateUltrasoundLogic
