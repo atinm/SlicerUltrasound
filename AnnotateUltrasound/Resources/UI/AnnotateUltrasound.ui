@@ -225,6 +225,18 @@
                                                 </layout>
                                             </item>
                                             <item>
+                                                <widget class="QPushButton"
+                                                    name="resetAllAdjudicationButton">
+                                                    <property name="text">
+                                                        <string>Reset All [R]</string>
+                                                    </property>
+                                                    <property name="toolTip">
+                                                        <string>Reset all lines to unadjudicated
+                                                            (Shortcut R key)</string>
+                                                    </property>
+                                                </widget>
+                                            </item>
+                                            <item>
                                                 <widget class="QCheckBox"
                                                     name="showInvalidOrDuplicateCheckBox">
                                                     <property name="text">

@@ -219,6 +219,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutL = qt.QShortcut(slicer.util.mainWindow())  # "L" for show/hide lines
         self.shortcutL.setKey(qt.QKeySequence('L'))
 
+        self.shortcutR = qt.QShortcut(slicer.util.mainWindow())  # "R" for reset all adjudication
+        self.shortcutR.setKey(qt.QKeySequence('R'))
+
     def connectKeyboardShortcuts(self):
         # Connect shortcuts to respective actions
         self.shortcutW.connect('activated()', lambda: self.onAddLine("Pleura", not self.ui.addPleuraButton.isChecked()))
@@ -259,6 +262,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutShiftDown.connect('activated()', self._onNextClipPressed)
 
         self.shortcutL.connect('activated()', lambda: self.onShowHideLines(None))  # "L" to show/hide lines
+        self.shortcutR.connect('activated()', self.onResetAllAdjudication)
 
     def disconnectKeyboardShortcuts(self):
         # Disconnect shortcuts to avoid issues when the user leaves the module
@@ -285,6 +289,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutShiftUp.activated.disconnect()
         self.shortcutShiftDown.activated.disconnect()
         self.shortcutL.activated.disconnect()
+        self.shortcutR.activated.disconnect()
 
     def setup(self) -> None:
         """
@@ -435,6 +440,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.invalidateAllUnadjudicatedButton.clicked.connect(self.onInvalidateAllUnadjudicated)
         if hasattr(self.ui, 'duplicateAllUnadjudicatedButton'):
             self.ui.duplicateAllUnadjudicatedButton.clicked.connect(self.onDuplicateAllUnadjudicated)
+        if hasattr(self.ui, 'resetAllAdjudicationButton'):
+            self.ui.resetAllAdjudicationButton.clicked.connect(self.onResetAllAdjudication)
         if hasattr(self.ui, 'showInvalidOrDuplicateCheckBox'):
             self.ui.showInvalidOrDuplicateCheckBox.toggled.connect(self.onShowInvalidOrDuplicateToggled)
             self.ui.showInvalidOrDuplicateCheckBox.setChecked(True)  # Set default to checked
@@ -514,9 +521,14 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 if dist < minDist:
                     minDist = dist
                     closestNode = node
+        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
         if closestNode and minDist < threshold:
-            selectionNode = slicer.app.applicationLogic().GetSelectionNode()
             selectionNode.SetActivePlaceNodeID(closestNode.GetID())
+        else:
+            # Clear selection if clicking away from any line
+            selectionNode.SetActivePlaceNodeID("")
+        # Update line markups to refresh visual appearance (highlighting, etc.)
+        self.logic.updateLineMarkups()
 
     def onSelectionChanged(self, caller, event):
         selectionNode = slicer.app.applicationLogic().GetSelectionNode()
@@ -527,6 +539,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 displayNode = node.GetDisplayNode()
                 if not displayNode or not displayNode.GetVisibility():
                     selectionNode.SetActivePlaceNodeID("")  # Clear selection
+        # Update line markups to refresh visual appearance (highlighting, etc.)
+        self.logic.updateLineMarkups()
 
     def saveUserSettings(self):
         settings = qt.QSettings()
@@ -1965,6 +1979,16 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Also toggle overlay visibility
         self.ui.overlayVisibilityButton.setChecked(checked)
 
+    def onResetAllAdjudication(self):
+        """Reset all lines in the current frame to unadjudicated status."""
+        for node in self.logic.pleuraLines + self.logic.bLines:
+            displayNode = node.GetDisplayNode()
+            if displayNode and displayNode.GetVisibility():
+                node.SetAttribute("validation", json.dumps({"status": "unadjudicated"}))
+                displayNode.SetOpacity(1.0)
+        self.logic.updateCurrentFrame()
+        slicer.util.showStatusMessage("All lines reset to unadjudicated.", 3000)
+
 #
 # AnnotateUltrasoundLogic
 #
@@ -2846,50 +2870,75 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         status = validation.get("status", "unadjudicated")
         adjudicator_mode = getattr(self.parameterNode, 'adjudicatorMode', False)
 
+        # Ensure display node exists
+        displayNode = node.GetDisplayNode()
+        if displayNode is None:
+            node.CreateDefaultDisplayNodes()
+            displayNode = node.GetDisplayNode()
+            if displayNode is None:
+                logging.error(f"Failed to create display node for markup node {node.GetName()}")
+                return
+
         # Check if this node is selected - apply selected highlighting regardless of validation status
         isSelected = (node.GetID() == selectedNodeID)
 
         if adjudicator_mode and isSelected:
             # Apply selected highlighting using the __selected_node__ color
             selected_node_color, _ = self.getColorsForRater("__selected_node__")
-            node.GetDisplayNode().SetSelectedColor(selected_node_color)
+            displayNode.SetSelectedColor(selected_node_color)
         else:
-            # Apply normal rater colors for non-selected nodes
-            if node in self.pleuraLines:
-                color_pleura, _ = self.getColorsForRater(rater)
-                node.GetDisplayNode().SetSelectedColor(color_pleura)
+            # Apply colors based on mode and validation status
+            if adjudicator_mode and status == "unadjudicated":
+                # In adjudicator mode, unadjudicated lines use current rater's colors
+                current_rater = self.getCurrentRater()
+                if node in self.pleuraLines:
+                    color_pleura, _ = self.getColorsForRater(current_rater)
+                    displayNode.SetSelectedColor(color_pleura)
+                else:
+                    _, color_bline = self.getColorsForRater(current_rater)
+                    displayNode.SetSelectedColor(color_bline)
             else:
-                _, color_bline = self.getColorsForRater(rater)
-                node.GetDisplayNode().SetSelectedColor(color_bline)
+                # Use original rater's colors for validated/invalidated/duplicated lines or non-adjudicator mode
+                if node in self.pleuraLines:
+                    color_pleura, _ = self.getColorsForRater(rater)
+                    displayNode.SetSelectedColor(color_pleura)
+                else:
+                    _, color_bline = self.getColorsForRater(rater)
+                    displayNode.SetSelectedColor(color_bline)
 
         # Set visibility, opacity, and line style based on validation status and adjudicator mode
         status = validation.get("status", "unadjudicated")
         adjudicator_mode = getattr(self.parameterNode, 'adjudicatorMode', False)
-        node.GetDisplayNode().SetGlyphTypeFromString("Circle2D")
-        node.GetDisplayNode().SetGlyphScale(2.0)
-        node.GetDisplayNode().SetLineThickness(0.25)
+        displayNode.SetGlyphTypeFromString("Circle2D")
+        displayNode.SetGlyphScale(2.0)
+        displayNode.SetLineThickness(0.25)
         if not adjudicator_mode:
-            node.GetDisplayNode().SetVisibility(True)
-            node.GetDisplayNode().SetOpacity(1.0)
+            displayNode.SetVisibility(True)
+            displayNode.SetOpacity(1.0)
         else:
-            if status in ("invalidated", "duplicated"):
+            if status == "invalidated":
                 showInvalidAndDuplicate = self.parameterNode.showInvalidAndDuplicate if self.parameterNode else True
-                node.GetDisplayNode().SetVisibility(showInvalidAndDuplicate)
-                node.GetDisplayNode().SetOpacity(0.40)
+                displayNode.SetVisibility(showInvalidAndDuplicate)
+                displayNode.SetGlyphTypeFromString("Cross2D")
+                displayNode.SetOpacity(0.40)
+            elif status == "duplicated":
+                showInvalidAndDuplicate = self.parameterNode.showInvalidAndDuplicate if self.parameterNode else True
+                displayNode.SetVisibility(showInvalidAndDuplicate)
+                displayNode.SetGlyphTypeFromString("Diamond2D")
+                displayNode.SetOpacity(0.50)
             elif status == "unadjudicated":
-                node.GetDisplayNode().SetVisibility(True)
+                displayNode.SetVisibility(True)
                 if not isSelected:
-                    node.GetDisplayNode().SetOpacity(0.65)
+                    displayNode.SetOpacity(0.65)
             else:  # validated
-                node.GetDisplayNode().SetVisibility(True)
+                displayNode.SetVisibility(True)
                 if not isSelected:
-                    node.GetDisplayNode().SetOpacity(0.85)
+                    displayNode.SetOpacity(0.85)
 
             # Selected node highlighting is independent of validation status
             if isSelected:
-                node.GetDisplayNode().SetGlyphScale(3.0)
-                node.GetDisplayNode().SetGlyphTypeFromString("Diamond2D")
-                node.GetDisplayNode().SetOpacity(1.0)
+                displayNode.SetGlyphScale(3.0)
+                displayNode.SetOpacity(1.0)
 
         node.RemoveAllControlPoints()
         for pt in coordinates:
@@ -2919,13 +2968,17 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             self._updateMarkupNode(node, entry, selectedNodeID)
         # Hide unused pleura markups
         for i in range(len(pleura_entries), len(self.pleuraLines)):
-            self.pleuraLines[i].GetDisplayNode().SetVisibility(False)
+            displayNode = self.pleuraLines[i].GetDisplayNode()
+            if displayNode:
+                displayNode.SetVisibility(False)
 
         # Hide pleura markups for non-selected raters
         for node in self.pleuraLines:
             nodeRater = node.GetAttribute("rater")
             if nodeRater not in self.selectedRaters:
-                node.GetDisplayNode().SetVisibility(False)
+                displayNode = node.GetDisplayNode()
+                if displayNode:
+                    displayNode.SetVisibility(False)
 
         # Update b-line markups
         for i, entry in enumerate(bline_entries):
@@ -2933,13 +2986,17 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             self._updateMarkupNode(node, entry, selectedNodeID)
         # Hide unused b-line markups
         for i in range(len(bline_entries), len(self.bLines)):
-            self.bLines[i].GetDisplayNode().SetVisibility(False)
+            displayNode = self.bLines[i].GetDisplayNode()
+            if displayNode:
+                displayNode.SetVisibility(False)
 
         # Hide b-line markups for non-selected raters
         for node in self.bLines:
             nodeRater = node.GetAttribute("rater")
             if nodeRater not in self.selectedRaters:
-                node.GetDisplayNode().SetVisibility(False)
+                displayNode = node.GetDisplayNode()
+                if displayNode:
+                    displayNode.SetVisibility(False)
 
     def updateLineMarkups(self):
         """
@@ -3000,9 +3057,13 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             if frame is None:
                 # Hide all markups if no frame data
                 for node in self.pleuraLines:
-                    node.GetDisplayNode().SetVisibility(False)
+                    displayNode = node.GetDisplayNode()
+                    if displayNode:
+                        displayNode.SetVisibility(False)
                 for node in self.bLines:
-                    node.GetDisplayNode().SetVisibility(False)
+                    displayNode = node.GetDisplayNode()
+                    if displayNode:
+                        displayNode.SetVisibility(False)
                 return
 
             self._updateMarkupNodesForFrame(frame)
