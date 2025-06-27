@@ -151,6 +151,13 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Flag to track if this is the first load of DICOM data
         self._isFirstDicomLoad = True
 
+        # Flag to track if the user manually expanded the rater table
+        self._userManuallySetRaterTableState = False
+        self._lastUserManualCollapsedState = None  # Track the last state the user manually set
+
+        # Flag to prevent rater table state changes during navigation
+        self._isNavigating = False
+
         # Shortcuts
         self.shortcutW = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutW.setKey(qt.QKeySequence('W'))
@@ -449,7 +456,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.showInvalidOrDuplicateCheckBox.toggled.connect(self.onShowInvalidOrDuplicateToggled)
             self.ui.showInvalidOrDuplicateCheckBox.setChecked(True)  # Set default to checked
         if hasattr(self.ui, 'adjudicatorModeCheckBox'):
-            self.ui.adjudicatorModeCheckBox.toggled.connect(self.onAdjudicatorModeToggled)
+            self.ui.adjudicatorModeCheckBox.toggled.connect(self.onAdjudicatorModeCheckBoxToggled)
         # Set initial state of adjudication controls
         self.onAdjudicatorModeToggled(self.ui.adjudicatorModeCheckBox.isChecked())
 
@@ -468,6 +475,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.nextVisibleLineButton.clicked.connect(self.selectNextVisibleLine)
         if hasattr(self.ui, 'prevVisibleLineButton'):
             self.ui.prevVisibleLineButton.clicked.connect(self.selectPreviousVisibleLine)
+
+        # Connect rater table collapsed signal to detect user manual changes
+        if hasattr(self.ui, 'raterColorsCollapsibleButton'):
+            self.ui.raterColorsCollapsibleButton.connect('collapsedChanged(bool)', self.onRaterColorTableCollapsedChanged)
 
     # These functions are used to handle clicks on the red view when selecting lines by clicking on the red view
     # near the line to be selected.
@@ -703,6 +714,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.progressBar.maximum = numFilesFound
             self.ui.progressBar.value = 0
             waitDialog = self.createWaitDialog("Loading first sequence", "Loading first sequence...")
+
+            # Set navigation flag to prevent rater table state changes
+            self._isNavigating = True
+
             self.currentDicomDfIndex = self.logic.loadNextSequence()
 
             # Add observer for the new sequence browser node
@@ -743,6 +758,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.statusLabel.setText(statusText)
 
         self._updateGUIFromParameterNode()
+
+        # Clear navigation flag after all operations are complete
+        self._isNavigating = False
 
         # Set focus to red view after initial load to ensure keyboard shortcuts work
         if numFilesFound > 0:
@@ -790,6 +808,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Create a dialog to ask the user to wait while the next sequence is loaded.
 
         waitDialog = self.createWaitDialog("Loading next sequence", "Loading next sequence...")
+
+        # Set navigation flag to prevent rater table state changes
+        self._isNavigating = True
 
         # Saving settings
         showDepthGuide = self._parameterNode.depthGuideVisible
@@ -843,6 +864,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.overlayVisibilityButton.setChecked(True)
 
         self.logic.loadAnnotations(self.logic.nextDicomDfIndex - 1, self.ui.adjudicatorModeCheckBox.isChecked())
+
+        # Clear navigation flag after all operations are complete
+        self._isNavigating = False
 
         # Set focus to red view after navigation to ensure keyboard shortcuts work
         self._setRedViewFocus()
@@ -950,6 +974,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Create a dialog to ask the user to wait while the next sequence is loaded.
         waitDialog = self.createWaitDialog("Loading previous sequence", "Loading previous sequence...")
 
+        # Set navigation flag to prevent rater table state changes
+        self._isNavigating = True
+
         # Saving settings
         showDepthGuide = self._parameterNode.depthGuideVisible
 
@@ -991,55 +1018,85 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.logic.loadPreviousSequence()
         self.logic.loadAnnotations(self.logic.nextDicomDfIndex - 1, self.ui.adjudicatorModeCheckBox.isChecked())
 
+        # Clear navigation flag after all operations are complete
+        self._isNavigating = False
+
         # Set focus to red view after navigation to ensure keyboard shortcuts work
         self._setRedViewFocus()
 
     def saveAnnotations(self):
         """
         Save annotations depending on adjudicator mode.
+        Returns True if save was successful, False otherwise.
         """
-        adjudicator_mode = hasattr(self.ui, 'adjudicatorModeCheckBox') and self.ui.adjudicatorModeCheckBox.isChecked()
-        rater = self._parameterNode.rater.strip().lower()
-        base_file_path = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['Filepath']
-        base_prefix = os.path.splitext(base_file_path)[0]
-        adjudication_file = f"{base_prefix}.adjudication.json"
-        if adjudicator_mode:
-            # Save all lines (combined, no filtering) to adjudication file
-            save_data = self.logic.convert_ras_to_lps(self.logic.annotations.get("frame_annotations", []))
-            with open(adjudication_file, 'w') as f:
-                json.dump(save_data, f)
-            logging.info(f"Annotations saved to {adjudication_file}")
-        else:
-            # Save only current rater's lines as before
-            filtered_frames = []
-            for frame in self.logic.annotations.get("frame_annotations", []):
-                pleura = [line for line in frame.get("pleura_lines", []) if line.get("rater", "").strip().lower() == rater]
-                b_lines = [line for line in frame.get("b_lines", []) if line.get("rater", "").strip().lower() == rater]
-                if pleura or b_lines:
-                    filtered_frames.append({
-                        "frame_number": frame["frame_number"],
-                        "coordinate_space": "RAS",
-                        "pleura_lines": pleura,
-                        "b_lines": b_lines
-                    })
-            if filtered_frames or self._parameterNode.unsavedChanges:
-                save_data = self.logic.convert_ras_to_lps(filtered_frames)
-                annotationsFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['AnnotationsFilepath']
-                base_path, ext = os.path.splitext(annotationsFilepath)
-                if not base_path.endswith(f".{rater}"):
-                    annotationsFilepath = f"{base_path}.{rater}.json"
-                    self.logic.dicomDf.at[self.logic.nextDicomDfIndex - 1, 'AnnotationsFilepath'] = annotationsFilepath
-                with open(annotationsFilepath, 'w') as f:
+        try:
+            adjudicator_mode = hasattr(self.ui, 'adjudicatorModeCheckBox') and self.ui.adjudicatorModeCheckBox.isChecked()
+            rater = self._parameterNode.rater.strip().lower()
+            base_file_path = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['Filepath']
+            base_prefix = os.path.splitext(base_file_path)[0]
+            adjudication_file = f"{base_prefix}.adjudication.json"
+
+            if adjudicator_mode:
+                # Save all lines (combined, no filtering) to adjudication file
+                save_data = self.logic.convert_ras_to_lps(self.logic.annotations.get("frame_annotations", []))
+                with open(adjudication_file, 'w') as f:
                     json.dump(save_data, f)
-                logging.info(f"Annotations saved to {annotationsFilepath}")
-        return True
+                logging.info(f"Annotations saved to {adjudication_file}")
+                status_message = f"✅ Adjudication annotations saved successfully to {os.path.basename(adjudication_file)}"
+                slicer.util.showStatusMessage(status_message, 3000)
+                self.ui.statusLabel.setText(status_message)
+            else:
+                # Save only current rater's lines as before
+                filtered_frames = []
+                for frame in self.logic.annotations.get("frame_annotations", []):
+                    pleura = [line for line in frame.get("pleura_lines", []) if line.get("rater", "").strip().lower() == rater]
+                    b_lines = [line for line in frame.get("b_lines", []) if line.get("rater", "").strip().lower() == rater]
+                    if pleura or b_lines:
+                        filtered_frames.append({
+                            "frame_number": frame["frame_number"],
+                            "coordinate_space": "RAS",
+                            "pleura_lines": pleura,
+                            "b_lines": b_lines
+                        })
+                if filtered_frames or self._parameterNode.unsavedChanges:
+                    save_data = self.logic.convert_ras_to_lps(filtered_frames)
+                    annotationsFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['AnnotationsFilepath']
+                    base_path, ext = os.path.splitext(annotationsFilepath)
+                    if not base_path.endswith(f".{rater}"):
+                        annotationsFilepath = f"{base_path}.{rater}.json"
+                        self.logic.dicomDf.at[self.logic.nextDicomDfIndex - 1, 'AnnotationsFilepath'] = annotationsFilepath
+                    with open(annotationsFilepath, 'w') as f:
+                        json.dump(save_data, f)
+                    logging.info(f"Annotations saved to {annotationsFilepath}")
+                    status_message = f"✅ Annotations saved successfully to {os.path.basename(annotationsFilepath)}"
+                    slicer.util.showStatusMessage(status_message, 3000)
+                    self.ui.statusLabel.setText(status_message)
+                else:
+                    # No annotations to save
+                    status_message = "ℹ️ No annotations to save"
+                    slicer.util.showStatusMessage(status_message, 2000)
+                    self.ui.statusLabel.setText(status_message)
+
+            # Clear unsaved changes flag on successful save
+            self._parameterNode.unsavedChanges = False
+            return True
+
+        except Exception as e:
+            error_message = f"❌ Failed to save annotations: {str(e)}"
+            logging.error(error_message)
+            slicer.util.showStatusMessage(error_message, 5000)
+            self.ui.statusLabel.setText(error_message)
+            return False
 
     def onSaveButton(self):
         """
         Saves current annotations to json file only
         """
-        logging.info('onSaveButton (save')
-        self.saveAnnotations()
+        logging.info('onSaveButton (save)')
+        success = self.saveAnnotations()
+        if not success:
+            # Error message already shown by saveAnnotations
+            return
 
     def onSaveAndLoadNextButton(self):
         """
@@ -1047,8 +1104,12 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         """
         logging.info('onSaveAndLoadNextButton (save and load next scan)')
 
-        if self.saveAnnotations():
+        success = self.saveAnnotations()
+        if success:
             self.onNextButton()
+        else:
+            # Error message already shown by saveAnnotations, don't proceed to next
+            return
 
     def onAddLine(self, lineType, checked):
         logging.info(f"onAddLine -- lineType: {lineType}, checked: {checked}")
@@ -1419,7 +1480,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             # ui element that needs connection.
             self._parameterNodeGuiTag = self._parameterNode.connectGui(self.ui)
             self.addObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self._updateGUIFromParameterNode)
-            self._updateGUIFromParameterNode()
 
     def _updateGUIFromParameterNode(self, caller=None, event=None) -> None:
         if self.updatingGUI:
@@ -1495,6 +1555,21 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                     self.ui.sectorAnnotationsCollapsibleButton.collapsed = True
                 self.ui.labelAnnotationsCollapsibleButton.collapsed = False
 
+                # Handle rater table collapse/expand logic
+                if hasattr(self.ui, 'raterColorsCollapsibleButton'):
+                    # During navigation, allow content updates but prevent collapse/expand state changes
+                    if self._isNavigating:
+                        # Skip collapse/expand logic during navigation, but still populate content
+                        pass
+                    else:
+                        # If user manually set state, always restore it
+                        if self._userManuallySetRaterTableState:
+                            if self._lastUserManualCollapsedState is not None:
+                                self._setRaterColorTableCollapsedState(self._lastUserManualCollapsedState)
+                        else:
+                            should_collapse = self._parameterNode.adjudicatorMode
+                            self._setRaterColorTableCollapsedState(should_collapse)
+
             # Save rater name to settings
             settings = qt.QSettings()
             settings.setValue('AnnotateUltrasound/Rater', self.ui.raterName.text.strip())
@@ -1516,6 +1591,14 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             return
 
         self.ui.raterColorsCollapsibleButton.collapsed = collapsed
+
+    def onRaterColorTableCollapsedChanged(self, collapsed):
+        """
+        Called when the user manually expands/collapses the rater table.
+        Sets the flag to respect user's manual state.
+        """
+        self._userManuallySetRaterTableState = True
+        self._lastUserManualCollapsedState = collapsed
 
     def populateRaterColorTable(self):
         if not hasattr(self.ui, 'raterColorTable'):
@@ -1559,17 +1642,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.raterColorTable.setItem(row, 1, pleura_item)
             self.ui.raterColorTable.setItem(row, 2, bline_item)
         self.ui.raterColorTable.blockSignals(False)
-
-        # Set the collapsed state based on whether there are raters and adjudicator mode
-        if len(visible_colors) == 0:
-            # No raters to display, collapse
-            self._setRaterColorTableCollapsedState(True)
-        else:
-            # Has raters, follow adjudicator mode logic
-            if self._isFirstDicomLoad:
-                self._setRaterColorTableCollapsedState(self._parameterNode.adjudicatorMode)
-            else:
-                self._setRaterColorTableCollapsedState(self._parameterNode.adjudicatorMode)
 
     def getSelectedRatersFromTable(self):
         selected = []
@@ -1696,33 +1768,53 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Get current rater (adjudicator)
         adjudicator = self.getCurrentRater()
         count = 0
-        for nodeIndex in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLMarkupsLineNode")):
-            markupNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, "vtkMRMLMarkupsLineNode")
-            displayNode = markupNode.GetDisplayNode()
-            if not displayNode or not displayNode.GetVisibility():
-                continue # Skip if not visible
-            validation_json = markupNode.GetAttribute("validation")
-            current_status = None
-            if validation_json:
-                try:
-                    validation = json.loads(validation_json)
-                    current_status = validation.get("status", None)
-                except Exception:
-                    current_status = None
-            if not current_status or current_status == "unadjudicated":
-                validation = {
-                    "status": status,
-                    "adjudicator": adjudicator,
-                    "timestamp": datetime.datetime.now().isoformat()
-                }
-                markupNode.SetAttribute("validation", json.dumps(validation))
+
+        # Set programmatic update flag to prevent unsavedChanges from being set
+        self.logic._isProgrammaticUpdate = True
+
+        try:
+            for nodeIndex in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLMarkupsLineNode")):
+                markupNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, "vtkMRMLMarkupsLineNode")
                 displayNode = markupNode.GetDisplayNode()
-                if displayNode:
-                    displayNode.SetOpacity(opacity)
-                count += 1
-        # Reset cache to force immediate color updates when validation status changes
-        self.logic._resetMarkupCache()
-        self.logic.updateCurrentFrame()
+                if not displayNode or not displayNode.GetVisibility():
+                    continue # Skip if not visible
+                validation_json = markupNode.GetAttribute("validation")
+                current_status = None
+                if validation_json:
+                    try:
+                        validation = json.loads(validation_json)
+                        current_status = validation.get("status", None)
+                    except Exception:
+                        current_status = None
+                if not current_status or current_status == "unadjudicated":
+                    validation = {
+                        "status": status,
+                        "adjudicator": adjudicator,
+                        "timestamp": datetime.datetime.now().isoformat()
+                    }
+                    markupNode.SetAttribute("validation", json.dumps(validation))
+
+                    # Update the annotation data for this line
+                    self._updateAnnotationLineValidation(markupNode, validation)
+
+                    count += 1
+
+            # Reset cache to force immediate color updates when validation status changes
+            self.logic._resetMarkupCache()
+
+            # Update the visual appearance of all lines
+            self.logic.updateLineMarkups()
+
+            # Update the current frame to save the changes to annotations
+            self.logic.updateCurrentFrame()
+
+        finally:
+            # Reset programmatic update flag
+            self.logic._isProgrammaticUpdate = False
+
+        # Set unsavedChanges since this is a user action that modifies validation status
+        self._parameterNode.unsavedChanges = True
+
         slicer.util.showStatusMessage(f"{status_past_tense} {count} unadjudicated lines.", 3000)
 
     def onShowInvalidOrDuplicateToggled(self, checked):
@@ -1749,7 +1841,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         slicer.util.showStatusMessage(f"{'Showing' if checked else 'Hiding'} invalidated/duplicated lines.", 3000)
 
     def onAdjudicatorModeToggled(self, enabled):
-        logging.info(f"Adjudicator mode toggled: {enabled}") # Added this line
         if self._parameterNode:
             self._parameterNode.adjudicatorMode = enabled
         # Show/hide the adjudication tools section
@@ -1766,11 +1857,19 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             else:
                 # Expand sector annotations when exiting adjudicator mode
                 self.ui.sectorAnnotationsCollapsibleButton.collapsed = False
-        # Toggle rater selection collapse/expand based on adjudicator mode
-        if hasattr(self.ui, 'raterColorsCollapsibleButton'):
-            self.ui.raterColorsCollapsibleButton.collapsed = enabled
         if self.logic:
             self._updateMarkupsAndOverlayProgrammatically()
+
+    def onAdjudicatorModeCheckBoxToggled(self, enabled):
+        """
+        Called when the user manually toggles the adjudicator mode checkbox.
+        This resets the user manual state to allow programmatic control.
+        """
+        # Reset user manual state flag and last manual state when user manually changes adjudicator mode
+        self._userManuallySetRaterTableState = False
+        self._lastUserManualCollapsedState = None
+        # Call the regular toggle method
+        self.onAdjudicatorModeToggled(enabled)
 
     def getCurrentRater(self):
         # Return the current rater name from parameter node or UI
@@ -2028,6 +2127,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 node.SetAttribute("validation", json.dumps({"status": "unadjudicated"}))
                 displayNode.SetOpacity(1.0)
         self.logic.updateCurrentFrame()
+        self._parameterNode.unsavedChanges = True
         slicer.util.showStatusMessage("All lines reset to unadjudicated.", 3000)
 
 #
@@ -3728,5 +3828,4 @@ class AnnotateUltrasoundTest(ScriptedLoadableModuleTest):
         self.assertEqual(outputScalarRange[1], inputScalarRange[1])
 
         self.delayDisplay('Test passed')
-
 

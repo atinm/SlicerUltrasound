@@ -64,7 +64,7 @@
                                             <string>Rater Selection</string>
                                         </property>
                                         <property name="collapsed">
-                                            <bool>true</bool>
+                                            <bool>false</bool>
                                         </property>
                                         <layout class="QVBoxLayout" name="annotatorVBox">
                                             <item>
