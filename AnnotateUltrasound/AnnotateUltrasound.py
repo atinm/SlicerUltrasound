@@ -1632,37 +1632,73 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             }
             self.annotations['frame_annotations'].append(existing)
 
-        existing['pleura_lines'] = []  # Reset the list of pleura lines
+        # Get current rater
+        current_rater = self.getParameterNode().rater.strip().lower()
+        # Remove only current rater's lines from existing annotations
+        existing['pleura_lines'] = [
+            line for line in existing['pleura_lines']
+            if line.get("rater", "").strip().lower() != current_rater
+        ]
+        existing['b_lines'] = [
+            line for line in existing['b_lines']
+            if line.get("rater", "").strip().lower() != current_rater
+        ]
 
-        # Add pleura lines to annotations with new format
-        for markupNode in self.pleuraLines:
+        # Add current rater's pleura lines to annotations
+        pleura_saved = 0
+        for i, markupNode in enumerate(self.pleuraLines):
+            nodeRater = markupNode.GetAttribute("rater") if markupNode else ""
+            is_visible = markupNode.GetDisplayNode().GetVisibility() if markupNode else False
+            num_points = markupNode.GetNumberOfControlPoints() if markupNode else 0
+
+            if nodeRater.strip().lower() != current_rater:
+                continue  # Skip lines from other raters
+
+            # Only save visible nodes with valid coordinates
+            if not is_visible:
+                continue  # Skip hidden nodes
+
             coordinates = []
-
-            for i in range(markupNode.GetNumberOfControlPoints()):
+            for j in range(num_points):
                 coord = [0, 0, 0]
-                markupNode.GetNthControlPointPosition(i, coord)
+                markupNode.GetNthControlPointPosition(j, coord)
                 coordinates.append(coord)
 
-            if coordinates:
-                existing['pleura_lines'].append(
-                    {"rater": markupNode.GetAttribute("rater"), "line": {"points": coordinates}})
+            if coordinates and len(coordinates) >= 2:  # Only save lines with at least 2 points
+                line_data = {
+                    "rater": markupNode.GetAttribute("rater"),
+                    "line": {"points": coordinates}
+                }
+                existing['pleura_lines'].append(line_data)
+                pleura_saved += 1
 
-        existing['b_lines'] = []  # Reset the list of B-lines
+        # Add current rater's B-lines to annotations
+        bline_saved = 0
+        for i, markupNode in enumerate(self.bLines):
+            nodeRater = markupNode.GetAttribute("rater") if markupNode else ""
+            is_visible = markupNode.GetDisplayNode().GetVisibility() if markupNode else False
+            num_points = markupNode.GetNumberOfControlPoints() if markupNode else 0
 
-        # Add B-lines to annotations with new format
-        for markupNode in self.bLines:
+            if nodeRater.strip().lower() != current_rater:
+                continue  # Skip lines from other raters
+
+            # Only save visible nodes with valid coordinates
+            if not is_visible:
+                continue  # Skip hidden nodes
+
             coordinates = []
-
-            for i in range(markupNode.GetNumberOfControlPoints()):
+            for j in range(num_points):
                 coord = [0, 0, 0]
-                markupNode.GetNthControlPointPosition(i, coord)
+                markupNode.GetNthControlPointPosition(j, coord)
                 coordinates.append(coord)
 
-            if coordinates:
-                existing['b_lines'].append(
-                    {"rater": markupNode.GetAttribute("rater"),  "line": {"points": coordinates}})
-
-        logging.debug(f"Updated frame {currentFrameIndex}: {len(existing['pleura_lines'])} pleura lines, {len(existing['b_lines'])} b-lines")
+            if coordinates and len(coordinates) >= 2:  # Only save lines with at least 2 points
+                line_data = {
+                    "rater": markupNode.GetAttribute("rater"),
+                    "line": {"points": coordinates}
+                }
+                existing['b_lines'].append(line_data)
+                bline_saved += 1
 
     def removeFrame(self, frameIndex):
         logging.info(f"removeFrame -- frameIndex: {frameIndex}")
@@ -1911,8 +1947,11 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         self.annotations = merged_data
 
-        # Preallocate markup nodes based on loaded annotations
-        self.preallocateMarkupNodesFromAnnotations()
+        # Clean up duplicates from the loaded annotation data
+        self.cleanupAnnotationDuplicates()
+
+        # Initialize markup nodes based on loaded annotations
+        self.initializeMarkupNodesFromAnnotations()
 
         if current_rater in self.seenRaters:
             self.seenRaters.remove(current_rater)
@@ -2241,7 +2280,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         pleura_entries = [entry for entry in frame.get("pleura_lines", []) if entry.get("rater") in self.selectedRaters]
         bline_entries = [entry for entry in frame.get("b_lines", []) if entry.get("rater") in self.selectedRaters]
 
-        # Ensure enough markup nodes exist
+        # Ensure we have enough markup nodes (create more if needed, but don't remove for performance)
         while len(self.pleuraLines) < len(pleura_entries):
             self.pleuraLines.append(self.createMarkupLine("Pleura", "", [], [1,1,0]))
         while len(self.bLines) < len(bline_entries):
@@ -2260,15 +2299,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             node.RemoveAllControlPoints()
             for pt in coordinates:
                 node.AddControlPointWorld(*pt)
+
         # Hide unused pleura markups
         for i in range(len(pleura_entries), len(self.pleuraLines)):
             self.pleuraLines[i].GetDisplayNode().SetVisibility(False)
-
-        # Hide pleura markups for non-selected raters
-        for node in self.pleuraLines:
-            nodeRater = node.GetAttribute("rater")
-            if nodeRater not in self.selectedRaters:
-                node.GetDisplayNode().SetVisibility(False)
 
         # Update b-line markups
         for i, entry in enumerate(bline_entries):
@@ -2282,15 +2316,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             node.RemoveAllControlPoints()
             for pt in coordinates:
                 node.AddControlPointWorld(*pt)
+
         # Hide unused b-line markups
         for i in range(len(bline_entries), len(self.bLines)):
             self.bLines[i].GetDisplayNode().SetVisibility(False)
-
-        # Hide b-line markups for non-selected raters
-        for node in self.bLines:
-            nodeRater = node.GetAttribute("rater")
-            if nodeRater not in self.selectedRaters:
-                node.GetDisplayNode().SetVisibility(False)
 
     def updateLineMarkups(self):
         """
@@ -2731,38 +2760,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 parent[elem.name] = elem.value
         return parent
 
-    def preallocateMarkupNodesFromAnnotations(self):
-        """
-        Preallocate markup nodes for pleura and B-lines based on the maximum needed in the loaded annotations.
-        """
-        if not hasattr(self, 'pleuraLines'):
-            self.pleuraLines = []
-        if not hasattr(self, 'bLines'):
-            self.bLines = []
-        max_pleura = 0
-        max_blines = 0
-        if self.annotations and 'frame_annotations' in self.annotations:
-            for frame in self.annotations['frame_annotations']:
-                pleura_count = len(frame.get('pleura_lines', []))
-                bline_count = len(frame.get('b_lines', []))
-                if pleura_count > max_pleura:
-                    max_pleura = pleura_count
-                if bline_count > max_blines:
-                    max_blines = bline_count
-
-        # Set programmatic update flag to prevent unsavedChanges from being set
-        self._isProgrammaticUpdate = True
-        try:
-            # Preallocate pleura markup nodes
-            while len(self.pleuraLines) < max_pleura:
-                self.pleuraLines.append(self.createMarkupLine("Pleura", "", [], [1,1,0]))
-            # Preallocate b-line markup nodes
-            while len(self.bLines) < max_blines:
-                self.bLines.append(self.createMarkupLine("B-line", "", [], [0,1,1]))
-        finally:
-            # Reset programmatic update flag
-            self._isProgrammaticUpdate = False
-
     def process(self,
                 inputVolume: vtkMRMLScalarVolumeNode,
                 outputVolume: vtkMRMLScalarVolumeNode,
@@ -2799,6 +2796,141 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         stopTime = time.time()
         logging.info(f'Processing completed in {stopTime-startTime:.2f} seconds')
+
+    def cleanupAnnotationDuplicates(self):
+        """
+        Remove duplicate lines from the annotation data in memory.
+        Lines are only considered duplicates if they have identical points AND the same rater.
+        This prevents duplicates from being displayed. We shouldn't need this anymore but it's here just in case
+        there are files that have duplicates that got saved from previous versions of the module.
+        """
+        if not self.annotations or 'frame_annotations' not in self.annotations:
+            return
+
+        total_removed = 0
+        has_duplicates = False
+
+        for frame in self.annotations['frame_annotations']:
+            frame_num = frame.get('frame_number', 'unknown')
+
+            # Check pleura lines for duplicates
+            if 'pleura_lines' in frame:
+                original_count = len(frame['pleura_lines'])
+                seen_pleura = set()
+                unique_pleura = []
+
+                for i, entry in enumerate(frame['pleura_lines']):
+                    points = entry.get('line', {}).get('points', [])
+                    rater = entry.get('rater', '')
+                    # Create a hash of points and rater
+                    points_hash = hash(tuple(tuple(pt) for pt in points) + (rater,))
+
+                    if points_hash not in seen_pleura:
+                        seen_pleura.add(points_hash)
+                        unique_pleura.append(entry)
+                    else:
+                        has_duplicates = True
+
+                if has_duplicates:
+                    frame['pleura_lines'] = unique_pleura
+                    removed = original_count - len(unique_pleura)
+                    total_removed += removed
+
+            # Check b-lines for duplicates
+            if 'b_lines' in frame:
+                original_count = len(frame['b_lines'])
+                seen_blines = set()
+                unique_blines = []
+
+                for i, entry in enumerate(frame['b_lines']):
+                    points = entry.get('line', {}).get('points', [])
+                    rater = entry.get('rater', '')
+                    # Create a hash of points and rater
+                    points_hash = hash(tuple(tuple(pt) for pt in points) + (rater,))
+
+                    if points_hash not in seen_blines:
+                        seen_blines.add(points_hash)
+                        unique_blines.append(entry)
+                    else:
+                        has_duplicates = True
+
+                if has_duplicates:
+                    frame['b_lines'] = unique_blines
+                    removed = original_count - len(unique_blines)
+                    total_removed += removed
+
+        if has_duplicates:
+            # Reinitialize markup nodes if needed after cleanup
+            self.reinitializeMarkupNodesIfNeeded()
+
+    def initializeMarkupNodesFromAnnotations(self):
+        """
+        Initialize markup nodes based on the maximum number needed across all frames.
+        This ensures we start with the right number of nodes and don't need to create/remove them constantly.
+        """
+        if not self.annotations or 'frame_annotations' not in self.annotations:
+            return
+
+        # Calculate maximum number of lines needed across all frames
+        max_pleura_lines = 0
+        max_blines = 0
+
+        for frame in self.annotations['frame_annotations']:
+            pleura_count = len(frame.get('pleura_lines', []))
+            bline_count = len(frame.get('b_lines', []))
+            max_pleura_lines = max(max_pleura_lines, pleura_count)
+            max_blines = max(max_blines, bline_count)
+
+        # Add some buffer for new lines (at least 2 of each type, but cap at reasonable limits)
+        max_pleura_lines = max(max_pleura_lines, 2)
+        max_blines = max(max_blines, 2)
+
+        # Cap the maximum to prevent excessive node creation
+        max_pleura_lines = min(max_pleura_lines, 10)  # Cap at 10 pleura nodes
+        max_blines = min(max_blines, 10)              # Cap at 10 B-line nodes
+
+        # Clear existing nodes
+        self.clearSceneLines()
+
+        # Create the required number of nodes
+        for i in range(max_pleura_lines):
+            self.pleuraLines.append(self.createMarkupLine("Pleura", "", [], [1,1,0]))
+        for i in range(max_blines):
+            self.bLines.append(self.createMarkupLine("B-line", "", [], [0,1,1]))
+
+    def reinitializeMarkupNodesIfNeeded(self):
+        """
+        Reinitialize markup nodes if the current number doesn't match what's needed.
+        This is useful after cleaning up duplicates or when the annotation data changes significantly.
+        """
+        if not self.annotations or 'frame_annotations' not in self.annotations:
+            return
+
+        # Calculate what we actually need now
+        max_pleura_lines = 0
+        max_blines = 0
+
+        for frame in self.annotations['frame_annotations']:
+            pleura_count = len(frame.get('pleura_lines', []))
+            bline_count = len(frame.get('b_lines', []))
+            max_pleura_lines = max(max_pleura_lines, pleura_count)
+            max_blines = max(max_blines, bline_count)
+
+        # Add buffer
+        max_pleura_lines = max(max_pleura_lines, 2)
+        max_blines = max(max_blines, 2)
+
+        # Cap the maximum
+        max_pleura_lines = min(max_pleura_lines, 10)
+        max_blines = min(max_blines, 10)
+
+        current_pleura = len(self.pleuraLines)
+        current_blines = len(self.bLines)
+
+        # Only reinitialize if there's a significant difference
+        if (abs(current_pleura - max_pleura_lines) > 2 or
+            abs(current_blines - max_blines) > 2):
+            self.initializeMarkupNodesFromAnnotations()
 
 
 #
