@@ -145,6 +145,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         self.updatingGUI = False
 
+        # Flag to prevent multiple updateCurrentFrame calls during line placement
+        self._isUpdatingCurrentFrame = False
+
         # Shortcuts
         self.shortcutW = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutW.setKey(qt.QKeySequence('W'))
@@ -741,87 +744,113 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     def saveAnnotations(self):
         """
         Saves current annotations to rater-specific json file.
+        Returns True if save was successful, False otherwise.
         """
-        # Add annotation line control points to the annotations dictionary and save it to file
-        if self.logic.annotations is None:
-            logging.error("saveAnnotations: No annotations loaded")
-            return
+        try:
+            # Add annotation line control points to the annotations dictionary and save it to file
+            if self.logic.annotations is None:
+                logging.error("saveAnnotations: No annotations loaded")
+                return False
 
-        # Check if rater name is set and not empty; if not, prompt user to enter one
-        rater = self._parameterNode.rater
-        if not rater:
-            qt.QMessageBox.warning(
-                slicer.util.mainWindow(),
-                "Missing Rater Name",
-                "Rater name is not set. Please enter your rater name before saving."
-            )
-            self.ui.statusLabel.setText("⚠️ Please enter a rater name before saving.")
-            return
+            # Check if rater name is set and not empty; if not, prompt user to enter one
+            rater = self._parameterNode.rater
+            if not rater:
+                qt.QMessageBox.warning(
+                    slicer.util.mainWindow(),
+                    "Missing Rater Name",
+                    "Rater name is not set. Please enter your rater name before saving."
+                )
+                self.ui.statusLabel.setText("⚠️ Please enter a rater name before saving.")
+                return False
 
-        waitDialog = self.createWaitDialog("Saving annotations", "Saving annotations...")
+            waitDialog = self.createWaitDialog("Saving annotations", "Saving annotations...")
 
-        # Check if any labels are checked
-        annotationLabels = []
-        for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())):
-            widget = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
-            if not isinstance(widget, qt.QGroupBox):
-                continue
-            # Find all checkboxes in groupBox
-            for j in reversed(range(widget.layout().count())):
-                checkBox = widget.layout().itemAt(j).widget()
-                if isinstance(checkBox, qt.QCheckBox) and checkBox.isChecked():
-                    # Use original category/label for saving
-                    origCategory = checkBox.property('originalCategory')
-                    origLabel = checkBox.property('originalLabel')
-                    annotationLabels.append(f"{origCategory}/{origLabel}")
-        self.logic.annotations['labels'] = annotationLabels
+            # Check if any labels are checked
+            annotationLabels = []
+            for i in reversed(range(self.ui.labelsScrollAreaWidgetContents.layout().count())):
+                widget = self.ui.labelsScrollAreaWidgetContents.layout().itemAt(i).widget()
+                if not isinstance(widget, qt.QGroupBox):
+                    continue
+                # Find all checkboxes in groupBox
+                for j in reversed(range(widget.layout().count())):
+                    checkBox = widget.layout().itemAt(j).widget()
+                    if isinstance(checkBox, qt.QCheckBox) and checkBox.isChecked():
+                        # Use original category/label for saving
+                        origCategory = checkBox.property('originalCategory')
+                        origLabel = checkBox.property('originalLabel')
+                        annotationLabels.append(f"{origCategory}/{origLabel}")
+            self.logic.annotations['labels'] = annotationLabels
 
-        # Filter annotations to include only current rater's lines
-        rater = self._parameterNode.rater.strip().lower()
-        filtered_frames = []
-        for frame in self.logic.annotations.get("frame_annotations", []):
-            pleura = [line for line in frame.get("pleura_lines", []) if line.get("rater", "").strip().lower() == rater]
-            b_lines = [line for line in frame.get("b_lines", []) if line.get("rater", "").strip().lower() == rater]
-            if pleura or b_lines:
-                filtered_frames.append({
-                    "frame_number": frame["frame_number"],
-                    "coordinate_space": "RAS",
-                    "pleura_lines": pleura,
-                    "b_lines": b_lines
-                })
+            # Filter annotations to include only current rater's lines
+            rater = self._parameterNode.rater.strip().lower()
+            filtered_frames = []
+            total_pleura_lines = 0
+            total_b_lines = 0
 
-        # if we have frames from the current rater or we deleted all lines so unsavedChanges is true
-        if filtered_frames or self._parameterNode.unsavedChanges:
-            # Convert RAS to LPS before saving
-            save_data = self.logic.convert_ras_to_lps(filtered_frames)
+            for frame in self.logic.annotations.get("frame_annotations", []):
+                pleura = [line for line in frame.get("pleura_lines", []) if line.get("rater", "").strip().lower() == rater]
+                b_lines = [line for line in frame.get("b_lines", []) if line.get("rater", "").strip().lower() == rater]
+                total_pleura_lines += len(pleura)
+                total_b_lines += len(b_lines)
 
-            # Save annotations to file (use rater-specific filename from dicomDf)
-            annotationsFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['AnnotationsFilepath']
-            base_path, ext = os.path.splitext(annotationsFilepath)
-            if not base_path.endswith(f".{rater}"):
-                annotationsFilepath = f"{base_path}.{rater}.json"
-                self.logic.dicomDf.at[self.logic.nextDicomDfIndex - 1, 'AnnotationsFilepath'] = annotationsFilepath
+                if pleura or b_lines:
+                    filtered_frames.append({
+                        "frame_number": frame["frame_number"],
+                        "coordinate_space": "RAS",
+                        "pleura_lines": pleura,
+                        "b_lines": b_lines
+                    })
 
-            with open(annotationsFilepath, 'w') as f:
-                json.dump(save_data, f)
+            logging.info(f"Saving {len(filtered_frames)} frames with {total_pleura_lines} pleura lines and {total_b_lines} b-lines for rater '{rater}'")
 
-        waitDialog.close()
+            # if we have frames from the current rater or we deleted all lines so unsavedChanges is true
+            if filtered_frames or self._parameterNode.unsavedChanges:
+                # Convert RAS to LPS before saving
+                save_data = self.logic.convert_ras_to_lps(filtered_frames)
 
-        self._parameterNode.unsavedChanges = False
+                # Save annotations to file (use rater-specific filename from dicomDf)
+                annotationsFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['AnnotationsFilepath']
+                base_path, ext = os.path.splitext(annotationsFilepath)
+                if not base_path.endswith(f".{rater}"):
+                    annotationsFilepath = f"{base_path}.{rater}.json"
+                    self.logic.dicomDf.at[self.logic.nextDicomDfIndex - 1, 'AnnotationsFilepath'] = annotationsFilepath
 
-        if filtered_frames:
-            logging.info(f"Annotations saved to {annotationsFilepath}")
-        else:
-            logging.info(f"No annotations to save for current rater")
+                with open(annotationsFilepath, 'w') as f:
+                    json.dump(save_data, f)
 
-        return True
+                waitDialog.close()
+
+                self._parameterNode.unsavedChanges = False
+
+                statusText = f"✅ Annotations saved successfully to {os.path.basename(annotationsFilepath)}"
+                slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
+                self.ui.statusLabel.setText(statusText)
+                logging.info(f"Annotations saved to {annotationsFilepath}")
+                return True
+            else:
+                waitDialog.close()
+                statusText = "ℹ️ No annotations to save"
+                slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
+                self.ui.statusLabel.setText(statusText)
+                logging.info(f"No annotations to save for current rater")
+                return True
+
+        except Exception as e:
+            statusText = f"❌ Failed to save annotations: {str(e)}"
+            slicer.util.mainWindow().statusBar().showMessage(statusText, 5000)
+            self.ui.statusLabel.setText(statusText)
+            logging.error(f"Error saving annotations: {e}")
+            return False
 
     def onSaveButton(self):
         """
         Saves current annotations to json file only
         """
-        logging.info('onSaveButton (save')
-        self.saveAnnotations()
+        logging.info('onSaveButton (save)')
+        success = self.saveAnnotations()
+        if not success:
+            # Error message already shown by saveAnnotations
+            return
 
     def onSaveAndLoadNextButton(self):
         """
@@ -829,8 +858,12 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         """
         logging.info('onSaveAndLoadNextButton (save and load next scan)')
 
-        if self.saveAnnotations():
+        success = self.saveAnnotations()
+        if success:
             self.onNextButton()
+        else:
+            # Error message already shown by saveAnnotations, don't proceed to next
+            return
 
     def onAddLine(self, lineType, checked):
         logging.info(f"onAddLine -- lineType: {lineType}, checked: {checked}")
@@ -851,16 +884,23 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 logging.error(f"Unknown line type {lineType}")
                 return
 
-            logging.info("Auto-saving frame annotations")
-            self.logic.updateCurrentFrame()
-            self.updateGuiFromAnnotations()
-
             # If current line has less than 2 control points, remove it
             if len(linesList) > 0:
                 currentLine = linesList[-1]
                 if currentLine.GetNumberOfControlPoints() < 2:
                     linesList.pop()
                     slicer.mrmlScene.RemoveNode(currentLine)
+
+            # Only update if we're not already updating (prevents duplicate calls)
+            if not self._isUpdatingCurrentFrame:
+                self._isUpdatingCurrentFrame = True
+                try:
+                    logging.info("Auto-saving frame annotations")
+                    self.logic.updateCurrentFrame()
+                    self.updateGuiFromAnnotations()
+                finally:
+                    self._isUpdatingCurrentFrame = False
+
             ratio = self.logic.updateOverlayVolume()
             if ratio is not None:
                 self._parameterNode.pleuraPercentage = ratio * 100
@@ -901,9 +941,15 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             logging.error(f"Unknown line type {lineType}")
             return
 
-        logging.info("Auto-saving frame annotations")
-        self.logic.updateCurrentFrame()
-        self.updateGuiFromAnnotations()
+        # Only update if we're not already updating (prevents duplicate calls)
+        if not self._isUpdatingCurrentFrame:
+            self._isUpdatingCurrentFrame = True
+            try:
+                logging.info("Auto-saving frame annotations")
+                self.logic.updateCurrentFrame()
+                self.updateGuiFromAnnotations()
+            finally:
+                self._isUpdatingCurrentFrame = False
 
     def delayedOnEndPlaceMode(self, lineType):
         logging.info(f"delayedOnEndPlaceMode -- lineType: {lineType}")
@@ -915,9 +961,15 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             logging.error(f"Unknown line type {lineType}")
             return
 
-        logging.info("Auto-saving frame annotations")
-        self.logic.updateCurrentFrame()
-        self.updateGuiFromAnnotations()
+        # Only update if we're not already updating (prevents duplicate calls)
+        if not self._isUpdatingCurrentFrame:
+            self._isUpdatingCurrentFrame = True
+            try:
+                logging.info("Auto-saving frame annotations")
+                self.logic.updateCurrentFrame()
+                self.updateGuiFromAnnotations()
+            finally:
+                self._isUpdatingCurrentFrame = False
 
     def onRemovePleuraLine(self):
         logging.info('onRemovePleuraLine')
@@ -1429,12 +1481,12 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             self.seenRaters.sort()
         rater_index = self.seenRaters.index(rater)
         if rater_index == 0:
-            pleura_hue = 1/3  # green
-            bline_hue = 2/3   # blue
+            pleura_hue = 2/3  # blue
+            bline_hue = 1/3   # green
         else:
             hue_offset = (rater_index * 0.2) % 1.0
-            pleura_hue = (1/3 + hue_offset) % 1.0
-            bline_hue = (2/3 + hue_offset) % 1.0
+            pleura_hue = (2/3 + hue_offset) % 1.0
+            bline_hue = (1/3 + hue_offset) % 1.0
         # Use fixed saturation and value for all
         sat = 0.85
         val = 0.95
@@ -1553,7 +1605,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         return len(self.dicomDf), annotations_created_count
 
     def updateCurrentFrame(self):
-        logging.info('addCurrentFrame')
+        logging.info('updateCurrentFrame')
 
         if self.sequenceBrowserNode is None:
             logging.warning("No sequence browser node found")
@@ -1561,6 +1613,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         # Get the current frame index from the sequence browser
         currentFrameIndex = max(0, self.sequenceBrowserNode.GetSelectedItemNumber())  # TODO: investigate whey this could be negative!
+        logging.debug(f"Updating frame {currentFrameIndex} with {len(self.pleuraLines)} pleura lines and {len(self.bLines)} b-lines")
+
         # Check if annotations already has a list of frame annotations. Create it if it doesn't exist.
         if 'frame_annotations' not in self.annotations:
             self.annotations['frame_annotations'] = []
@@ -1607,6 +1661,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             if coordinates:
                 existing['b_lines'].append(
                     {"rater": markupNode.GetAttribute("rater"),  "line": {"points": coordinates}})
+
+        logging.debug(f"Updated frame {currentFrameIndex}: {len(existing['pleura_lines'])} pleura lines, {len(existing['b_lines'])} b-lines")
 
     def removeFrame(self, frameIndex):
         logging.info(f"removeFrame -- frameIndex: {frameIndex}")
