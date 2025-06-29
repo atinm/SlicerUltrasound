@@ -160,7 +160,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Flag to prevent rater table state changes during navigation
         self._isNavigating = False
 
-        # Initialize debounce timer for rater name
         self.raterNameDebounceTimer = qt.QTimer()
         self.raterNameDebounceTimer.setSingleShot(True)
         self.raterNameDebounceTimer.setInterval(300)  # ms of idle time before triggering
@@ -367,6 +366,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
+        if self.logic and self._parameterNode:
+            self.logic.parameterNode = self._parameterNode
 
         if self.logic and self._parameterNode:
             self.logic.parameterNode = self._parameterNode
@@ -420,6 +421,12 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutShiftUp.activated.disconnect()
         self.shortcutShiftDown.activated.disconnect()
         self.shortcutL.activated.disconnect()
+
+        # Connect rater table collapsed signal to detect user manual changes
+        if hasattr(self.ui, 'raterColorsCollapsibleButton'):
+            self.ui.raterColorsCollapsibleButton.connect('collapsedChanged(bool)', self.onRaterColorTableCollapsedChanged)
+            # Set rater color table to expanded by default
+            self.ui.raterColorsCollapsibleButton.collapsed = False
 
         # Connect rater table collapsed signal to detect user manual changes
         if hasattr(self.ui, 'raterColorsCollapsibleButton'):
@@ -1388,6 +1395,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.logic._getOrCreateParameterNode()
 
         self.setParameterNode(self.logic.getParameterNode())
+        if self.logic and self._parameterNode:
+            self.logic.parameterNode = self._parameterNode
 
         if self.logic and self._parameterNode:
             self.logic.parameterNode = self._parameterNode
@@ -1772,12 +1781,21 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.onNextButton()
 
     def _onPageUpPressed(self):
+<<<<<<< HEAD
         """Handle Page Up press for next clip."""
         self._navigateToClip("next")
 
     def _onPageDownPressed(self):
         """Handle Page Down press for previous clip."""
         self._navigateToClip("previous")
+=======
+        """Handle Page Up press for previous clip."""
+        self._navigateToClip("previous")
+
+    def _onPageDownPressed(self):
+        """Handle Page Down press for next clip."""
+        self._navigateToClip("next")
+>>>>>>> ea0183d (Usability improvements)
 
     def _onPreviousClipPressed(self):
         """Handle Shift+Up or Ctrl+Up press for previous clip."""
