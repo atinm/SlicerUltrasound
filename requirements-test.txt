@@ -2,4 +2,5 @@ pytest
 pytest-mock
 pytest-cov
 pandas
-pydicom 
+pydicom
+pillow
