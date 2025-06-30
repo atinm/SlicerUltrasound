@@ -11,7 +11,8 @@ jobs:
 
     strategy:
       matrix:
-        python-version: [3.9, 3.12]  # Test multiple Python versions
+        # Match the version in .python-version file.
+        python-version: [3.9]
 
     steps:
     - name: Checkout code
