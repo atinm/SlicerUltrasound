@@ -1781,21 +1781,12 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.onNextButton()
 
     def _onPageUpPressed(self):
-<<<<<<< HEAD
         """Handle Page Up press for next clip."""
         self._navigateToClip("next")
 
     def _onPageDownPressed(self):
         """Handle Page Down press for previous clip."""
         self._navigateToClip("previous")
-=======
-        """Handle Page Up press for previous clip."""
-        self._navigateToClip("previous")
-
-    def _onPageDownPressed(self):
-        """Handle Page Down press for next clip."""
-        self._navigateToClip("next")
->>>>>>> ea0183d (Usability improvements)
 
     def _onPreviousClipPressed(self):
         """Handle Shift+Up or Ctrl+Up press for previous clip."""
