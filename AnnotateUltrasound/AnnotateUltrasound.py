@@ -156,9 +156,22 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Flag to track if the user manually expanded the rater table
         self._userManuallySetRaterTableState = False
         self._lastUserManualCollapsedState = None  # Track the last state the user manually set
+        # Flag to prevent rater table state changes during navigation
 
         # Flag to prevent rater table state changes during navigation
         self._isNavigating = False
+
+        # Arrow keys for next/previous frame (Slicer commands)
+        self.shortcutRightArrow = qt.QShortcut(slicer.util.mainWindow())  # "Right Arrow" for next frame
+        self.shortcutRightArrow.setKey(qt.QKeySequence('Right'))
+        self.shortcutLeftArrow = qt.QShortcut(slicer.util.mainWindow())  # "Left Arrow" for previous frame
+        self.shortcutLeftArrow.setKey(qt.QKeySequence('Left'))
+
+        # Home/End keys for first/last frame
+        self.shortcutHome = qt.QShortcut(slicer.util.mainWindow())  # "Home" for first frame
+        self.shortcutHome.setKey(qt.QKeySequence('Home'))
+        self.shortcutEnd = qt.QShortcut(slicer.util.mainWindow())  # "End" for last frame
+        self.shortcutEnd.setKey(qt.QKeySequence('End'))
 
         self.raterNameDebounceTimer = qt.QTimer()
         self.raterNameDebounceTimer.setSingleShot(True)
@@ -421,6 +434,12 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutShiftUp.activated.disconnect()
         self.shortcutShiftDown.activated.disconnect()
         self.shortcutL.activated.disconnect()
+
+        # Connect rater table collapsed signal to detect user manual changes
+        if hasattr(self.ui, 'raterColorsCollapsibleButton'):
+            self.ui.raterColorsCollapsibleButton.connect('collapsedChanged(bool)', self.onRaterColorTableCollapsedChanged)
+            # Set rater color table to expanded by default
+            self.ui.raterColorsCollapsibleButton.collapsed = False
 
         # Connect rater table collapsed signal to detect user manual changes
         if hasattr(self.ui, 'raterColorsCollapsibleButton'):
@@ -1395,9 +1414,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.logic._getOrCreateParameterNode()
 
         self.setParameterNode(self.logic.getParameterNode())
-        if self.logic and self._parameterNode:
-            self.logic.parameterNode = self._parameterNode
-
         if self.logic and self._parameterNode:
             self.logic.parameterNode = self._parameterNode
 
