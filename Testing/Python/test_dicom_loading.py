@@ -27,7 +27,7 @@ class DicomLoadingTest:
     def __init__(self):
         self.widget = None
         self.logic = None
-        self.test_data_dir = os.path.join(modulePath, 'Testing', 'Python', 'test_data')
+        self.test_data_dir = os.path.join(modulePath, 'test_data')
 
     def setUp(self):
         """Set up the test environment."""
