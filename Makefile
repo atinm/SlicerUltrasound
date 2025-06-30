@@ -1,0 +1,147 @@
+.PHONY: test test-slicer test-gui install-deps clean find-slicer-python debug-python build-testing
+
+# Default target
+all: test
+
+# Find Slicer's Python executable
+find-slicer-python:
+	@echo "Finding Slicer's Python executable..."
+	@if command -v Slicer >/dev/null 2>&1; then \
+		echo "Slicer found in PATH"; \
+	elif [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
+		echo "Slicer found at /Applications/Slicer.app/Contents/MacOS/Slicer"; \
+	elif [ -f "/usr/local/bin/Slicer" ]; then \
+		echo "Slicer found at /usr/local/bin/Slicer"; \
+	else \
+		echo "ERROR: Slicer not found. Please install Slicer or add it to your PATH."; \
+		exit 1; \
+	fi
+
+# Debug Python execution
+debug-python:
+	@echo "=== Python Execution Debug ==="
+	@echo "System Python: $(shell which python)"
+	@echo "System Python version: $(shell python --version 2>&1)"
+	@echo ""
+	@echo "Slicer Python:"
+	@echo "  /Applications/Slicer.app/Contents/bin/PythonSlicer"
+	@echo ""
+	@echo "CTest will run tests in Slicer's Python environment."
+	@echo "=================================="
+
+# Build with testing enabled
+build-testing: find-slicer-python
+	@echo "Building with testing enabled..."
+	@if [ ! -d "build" ]; then \
+		mkdir build; \
+	fi
+	cd build && cmake -DBUILD_TESTING=ON ..
+	cd build && make -j$(shell nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+
+# Run Slicer-native tests (recommended for Slicer extensions)
+test-slicer: build-testing
+	@echo "Running Slicer-native tests..."
+	cd build && ctest -V
+
+# Run GUI tests (requires display and user interaction simulation)
+test-gui: find-slicer-python
+	@echo "Running GUI tests (requires display)..."
+	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
+		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
+	elif [ -f "/usr/local/bin/Slicer" ]; then \
+		/usr/local/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
+	else \
+		echo "❌ Slicer not found. Please install Slicer first."; \
+		exit 1; \
+	fi
+
+# Run DICOM loading tests (requires display and real DICOM data)
+test-dicom: find-slicer-python
+	@echo "Running DICOM loading tests (requires display)..."
+	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
+		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script Testing/Python/test_dicom_loading.py; \
+	elif [ -f "/usr/local/bin/Slicer" ]; then \
+		/usr/local/bin/Slicer --python-script Testing/Python/test_dicom_loading.py; \
+	else \
+		echo "❌ Slicer not found. Please install Slicer first."; \
+		exit 1; \
+	fi
+
+# Debug DICOM import (interactive debugging)
+debug-dicom: find-slicer-python
+	@echo "Running DICOM import debug (requires display)..."
+	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
+		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script Testing/Python/debug_dicom_import.py; \
+	elif [ -f "/usr/local/bin/Slicer" ]; then \
+		/usr/local/bin/Slicer --python-script Testing/Python/debug_dicom_import.py; \
+	else \
+		echo "❌ Slicer not found. Please install Slicer first."; \
+		exit 1; \
+	fi
+
+# Check environment setup
+check-env: find-slicer-python
+	@echo "Checking Slicer and Python environment..."
+	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
+		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script Testing/Python/check_pytest_availability.py; \
+	elif [ -f "/usr/local/bin/Slicer" ]; then \
+		/usr/local/bin/Slicer --python-script Testing/Python/check_pytest_availability.py; \
+	else \
+		echo "❌ Slicer not found. Please install Slicer first."; \
+		exit 1; \
+	fi
+
+# Install dependencies in Slicer's Python environment
+install-deps: find-slicer-python
+	@echo "Installing dependencies in Slicer's Python environment..."
+	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
+		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script Testing/Python/install_deps_in_slicer.py; \
+	elif [ -f "/usr/local/bin/Slicer" ]; then \
+		/usr/local/bin/Slicer --python-script Testing/Python/install_deps_in_slicer.py; \
+	else \
+		echo "❌ Slicer not found. Please install Slicer first."; \
+		exit 1; \
+	fi
+
+# Run all tests using CTest (Slicer-native)
+test: test-slicer
+
+# Run tests with specific pattern
+test-pattern: build-testing
+	@echo "Usage: make test-pattern PATTERN=AnnotateUltrasound"
+	@if [ -z "$(PATTERN)" ]; then echo "Please specify PATTERN parameter"; exit 1; fi
+	cd build && ctest -V -R $(PATTERN)
+
+# Run tests with coverage
+test-cov: build-testing
+	@echo "Running tests with coverage..."
+	cd build && ctest -V --output-on-failure
+
+# Clean up generated files
+clean:
+	find . -type f -name "*.pyc" -delete
+	find . -type d -name "__pycache__" -delete
+	find . -type d -name "*.egg-info" -exec rm -rf {} +
+	rm -rf htmlcov/
+	rm -rf .pytest_cache/
+	rm -rf build/
+
+# Help target
+help:
+	@echo "Available targets:"
+	@echo "  find-slicer-python - Check if Slicer is available"
+	@echo "  debug-python      - Show Python execution details"
+	@echo "  build-testing     - Build with testing enabled"
+	@echo "  test-slicer       - Run Slicer-native tests (recommended for Slicer extensions)"
+	@echo "  test-gui          - Run GUI tests (requires display, simulates user interactions)"
+	@echo "  test-dicom        - Run DICOM loading tests (requires display, uses real DICOM data)"
+	@echo "  test              - Run Slicer-native tests (alias for test-slicer)"
+	@echo "  test-pattern      - Run tests matching pattern (e.g., make test-pattern PATTERN=AnnotateUltrasound)"
+	@echo "  test-cov          - Run tests with coverage"
+	@echo "  clean             - Clean up generated files"
+	@echo "  help              - Show this help message"
+	@echo ""
+	@echo "Note: test-slicer uses Slicer's native test infrastructure with CTest (recommended)"
+	@echo "      test-gui uses Slicer's GUI test harness (requires display)"
+	@echo "      test-dicom tests module with real DICOM data and annotations"
+	@echo "      All tests run in Slicer's Python environment via CTest"
