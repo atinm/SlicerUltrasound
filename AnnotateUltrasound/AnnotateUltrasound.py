@@ -164,6 +164,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Flag to track if this is the first load of DICOM data
         self._isFirstDicomLoad = True
         # Flag to prevent multiple updateCurrentFrame calls during line placement
+
         self._isUpdatingCurrentFrame = False
 
         # Flag to track if the user manually expanded the rater table
