@@ -11,7 +11,8 @@ jobs:
 
     strategy:
       matrix:
-        python-version: [3.9, 3.12]  # Test multiple Python versions
+        # Match the python version in .python-version file.
+        python-version: [3.9]
 
     steps:
     - name: Checkout code
@@ -37,4 +38,4 @@ jobs:
 
     - name: Run tests with pytest
       run: |
-        pytest --cov=. --cov-report=xml --cov-report=term-missing
+        pytest --cov=. --cov-report=term-missing
