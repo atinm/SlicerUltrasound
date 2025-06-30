@@ -44,7 +44,7 @@ if(BUILD_TESTING)
   set_tests_properties(${MODULE_NAME}ModuleTest PROPERTIES
     LABELS "unit;slicer;ultrasound"
     TIMEOUT 300
-    ENVIRONMENT "PYTHONPATH=${CMAKE_BINARY_DIR}/lib/Slicer-4.11/qt-scripted-modules"
+    ENVIRONMENT "PYTHONPATH=${CMAKE_BINARY_DIR}/lib/Slicer-5.8/qt-scripted-modules"
   )
 
   # Additional build-time testing
