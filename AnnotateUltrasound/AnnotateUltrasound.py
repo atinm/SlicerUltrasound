@@ -237,9 +237,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutPageUp.connect('activated()', self._onPageUpPressed)
         self.shortcutPageDown.connect('activated()', self._onPageDownPressed)
 
-        # Shift+Up/Shift+Down for previous/next clip
-        self.shortcutShiftUp.connect('activated()', self._onPreviousClipPressed)
-        self.shortcutShiftDown.connect('activated()', self._onNextClipPressed)
+        # Shift+Up/Shift+Down for next/previous clip
+        self.shortcutShiftUp.connect('activated()', self._onNextClipPressed)
+        self.shortcutShiftDown.connect('activated()', self._onPreviousClipPressed)
 
         self.shortcutL.connect('activated()', lambda: self.onShowHideLines(None))  # "L" to show/hide lines
 
@@ -1712,12 +1712,12 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.onNextButton()
 
     def _onPageUpPressed(self):
-        """Handle Page Up press for previous clip."""
-        self._navigateToClip("previous")
+        """Handle Page Up press for next clip."""
+        self._navigateToClip("next")
 
     def _onPageDownPressed(self):
-        """Handle Page Down press for next clip."""
-        self._navigateToClip("next")
+        """Handle Page Down press for previous clip."""
+        self._navigateToClip("previous")
 
     def _onPreviousClipPressed(self):
         """Handle Shift+Up or Ctrl+Up press for previous clip."""
