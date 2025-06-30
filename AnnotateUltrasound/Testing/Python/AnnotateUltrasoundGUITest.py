@@ -72,15 +72,21 @@ class AnnotateUltrasoundGUITest:
     def test_minimal_rater_persistence(self):
         """Minimal test: set rater name, press Enter, click addPleuraButton, print state before and after."""
         print("Testing minimal rater persistence...")
+
+        # Ensure parameter node is set
+        if self.widget._parameterNode is None and self.widget.logic:
+            self.widget.setParameterNode(self.widget.logic.getParameterNode())
+
         self.widget.ui.raterName.setText("minimal_rater")
         print(f"After setText rater name: '{self.widget.ui.raterName.text}'")
+
         self.widget.ui.raterName.returnPressed.emit()
-        print(f"After returnPressed parameter node rater: '{self.widget._parameterNode.rater}'")
+        print(f"After returnPressed parameter node rater: '{self.widget._parameterNode.rater if self.widget._parameterNode else 'None'}'")
         time.sleep(0.5)
-        print(f"Before addPleuraButton click: UI text='{self.widget.ui.raterName.text}', parameter node rater='{self.widget._parameterNode.rater}'")
+        print(f"Before addPleuraButton click: UI text='{self.widget.ui.raterName.text}', parameter node rater='{self.widget._parameterNode.rater if self.widget._parameterNode else 'None'}'")
         self.widget.ui.addPleuraButton.click()
         time.sleep(0.1)
-        print(f"After addPleuraButton click: UI text='{self.widget.ui.raterName.text}', parameter node rater='{self.widget._parameterNode.rater}'")
+        print(f"After addPleuraButton click: UI text='{self.widget.ui.raterName.text}', parameter node rater='{self.widget._parameterNode.rater if self.widget._parameterNode else 'None'}'")
         print("✅ Minimal rater persistence test complete")
 
     def test_widget_creation(self):

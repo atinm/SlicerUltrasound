@@ -138,33 +138,19 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         """
         ScriptedLoadableModuleWidget.__init__(self, parent)
         VTKObservationMixin.__init__(self)  # needed for parameter node observation
-        # Remove all shortcut and state attribute initializations from __init__
-        self.raterNameDebounceTimer = qt.QTimer()
-        self.raterNameDebounceTimer.setSingleShot(True)
-        self.raterNameDebounceTimer.setInterval(300)  # ms of idle time before triggering
-        self.raterNameDebounceTimer.timeout.connect(self.onRaterNameChanged)
 
-    def setup(self) -> None:
-        """
-        Called when the user opens the module the first time and the widget is initialized.
-        """
-        # Initialize debounce timer for rater name
-        self.raterNameDebounceTimer = qt.QTimer()
-        self.raterNameDebounceTimer.setSingleShot(True)
-        self.raterNameDebounceTimer.setInterval(300)  # ms of idle time before triggering
-        self.raterNameDebounceTimer.timeout.connect(self.onRaterNameChanged)
-        # All attributes needed by setup and its called methods
-        self.logic = AnnotateUltrasoundLogic()
+        # Initialize all attributes needed by setup and its called methods
         self._parameterNode = None
         self._parameterNodeGuiTag = None
         self.notEnteredYet = True
         self._lastFrameIndex = -1
         self.updatingGUI = False
+        self.selectedRaters = set()
+        self.seenRaters = []
 
         # Flag to track if this is the first load of DICOM data
         self._isFirstDicomLoad = True
         # Flag to prevent multiple updateCurrentFrame calls during line placement
-
         self._isUpdatingCurrentFrame = False
 
         # Flag to track if the user manually expanded the rater table
@@ -174,7 +160,62 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Flag to prevent rater table state changes during navigation
         self._isNavigating = False
 
-        # Shortcuts
+        # Initialize debounce timer for rater name
+        self.raterNameDebounceTimer = qt.QTimer()
+        self.raterNameDebounceTimer.setSingleShot(True)
+        self.raterNameDebounceTimer.setInterval(300)  # ms of idle time before triggering
+        self.raterNameDebounceTimer.timeout.connect(self.onRaterNameChanged)
+
+    def setup(self) -> None:
+        """
+        Called when the user opens the module the first time and the widget is initialized.
+        """
+        ScriptedLoadableModuleWidget.setup(self)
+
+        # Initialize logic first
+        self.logic = AnnotateUltrasoundLogic()
+
+        # All attributes needed by setup and its called methods
+        self._parameterNode = None
+        self._parameterNodeGuiTag = None
+        self.notEnteredYet = True
+        self._lastFrameIndex = -1
+        self.updatingGUI = False
+        self.selectedRaters = set()
+        self.seenRaters = []
+
+        # Flag to track if this is the first load of DICOM data
+        self._isFirstDicomLoad = True
+        # Flag to prevent multiple updateCurrentFrame calls during line placement
+        self._isUpdatingCurrentFrame = False
+
+        # Flag to track if the user manually expanded the rater table
+        self._userManuallySetRaterTableState = False
+        self._lastUserManualCollapsedState = None  # Track the last state the user manually set
+
+        # Flag to prevent rater table state changes during navigation
+        self._isNavigating = False
+
+        # Load widget from .ui file (created by Qt Designer).
+        # Additional widgets can be instantiated manually and added to self.layout.
+        uiWidget = slicer.util.loadUI(self.resourcePath('UI/AnnotateUltrasound.ui'))
+        self.layout.addWidget(uiWidget)
+        self.ui = slicer.util.childWidgetVariables(uiWidget)
+        self.ui.currentFileLabel.setTextInteractionFlags(qt.Qt.TextSelectableByMouse)
+
+        # Set scene in MRML widgets. Make sure that in Qt designer the top-level qMRMLWidget's
+        # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
+        # "setMRMLScene(vtkMRMLScene*)" slot.
+        uiWidget.setMRMLScene(slicer.mrmlScene)
+
+        # --- Limit raterColorTable visible rows to about 4 programmatically ---
+        if hasattr(self.ui, "raterColorTable"):
+            vh = self.ui.raterColorTable.verticalHeader()
+            self.ui.raterColorTable.setMaximumHeight(vh.defaultSectionSize * 4 + 2)
+            self.ui.raterColorTable.cellClicked.connect(self.onRaterColorTableClicked)
+            self.ui.raterColorTable.itemChanged.connect(self.onRaterColorSelectionChangedFromUser)
+
+        # Create keyboard shortcuts
         self.shortcutW = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutW.setKey(qt.QKeySequence('W'))
         self.shortcutS = qt.QShortcut(slicer.util.mainWindow())
@@ -202,11 +243,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutEnd = qt.QShortcut(slicer.util.mainWindow())  # "End" for last frame
         self.shortcutEnd.setKey(qt.QKeySequence('End'))
 
-        self.raterNameDebounceTimer = qt.QTimer()
-        self.raterNameDebounceTimer.setSingleShot(True)
-        self.raterNameDebounceTimer.setInterval(300)  # ms of idle time before triggering
-        self.raterNameDebounceTimer.timeout.connect(self.onRaterNameChanged)
-
         # Spacebar for play/pause
         self.shortcutSpace = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutSpace.setKey(qt.QKeySequence('Space'))
@@ -225,84 +261,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         self.shortcutL = qt.QShortcut(slicer.util.mainWindow())  # "L" for show/hide lines
         self.shortcutL.setKey(qt.QKeySequence('L'))
-
-    def connectKeyboardShortcuts(self):
-        # Connect shortcuts to respective actions
-        self.shortcutW.connect('activated()', lambda: self.onAddLine("Pleura", not self.ui.addPleuraButton.isChecked()))
-        self.shortcutS.connect('activated()', lambda: self.onAddLine("Bline", not self.ui.addBlineButton.isChecked()))
-        self.shortcutO.connect('activated()', lambda: self.ui.overlayVisibilityButton.toggle())
-
-        # New shortcuts for removing lines
-        self.shortcutE.connect('activated()', lambda: self.onRemoveLine("Pleura"))  # "E" removes the last pleura line
-        self.shortcutD.connect('activated()', lambda: self.onRemoveLine("Bline"))   # "D" removes the last B-line
-
-        self.shortcutA.connect('activated()', self.onSaveAndLoadNextButton)  # "A" to save and load next scan
-
-        # Arrow keys for next/previous frame (Slicer commands)
-        self.shortcutRightArrow.connect('activated()', self._nextFrameInSequence)
-        self.shortcutLeftArrow.connect('activated()', self._previousFrameInSequence)
-        # Home/End keys for first/last frame
-        self.shortcutHome.connect('activated()', self._firstFrameInSequence)
-        self.shortcutEnd.connect('activated()', self._lastFrameInSequence)
-        # Spacebar for play/pause
-        self.shortcutSpace.connect('activated()', self._togglePlayPauseSequence)
-
-        # Page Up/Page Down for previous/next clip
-        self.shortcutPageUp.connect('activated()', self._onPageUpPressed)
-        self.shortcutPageDown.connect('activated()', self._onPageDownPressed)
-
-        # Shift+Up/Shift+Down for next/previous clip
-        self.shortcutShiftUp.connect('activated()', self._onNextClipPressed)
-        self.shortcutShiftDown.connect('activated()', self._onPreviousClipPressed)
-
-        self.shortcutL.connect('activated()', lambda: self.onShowHideLines(None))  # "L" to show/hide lines
-
-    def disconnectKeyboardShortcuts(self):
-        # Disconnect shortcuts to avoid issues when the user leaves the module
-        self.shortcutW.activated.disconnect()
-        self.shortcutS.activated.disconnect()
-        self.shortcutO.activated.disconnect()
-        self.shortcutE.activated.disconnect()
-        self.shortcutD.activated.disconnect()
-        self.shortcutA.activated.disconnect()
-        self.shortcutRightArrow.activated.disconnect()
-        self.shortcutLeftArrow.activated.disconnect()
-        self.shortcutHome.activated.disconnect()
-        self.shortcutEnd.activated.disconnect()
-        self.shortcutSpace.activated.disconnect()
-        self.shortcutPageUp.activated.disconnect()
-        self.shortcutPageDown.activated.disconnect()
-        self.shortcutShiftUp.activated.disconnect()
-        self.shortcutShiftDown.activated.disconnect()
-        self.shortcutL.activated.disconnect()
-
-    def setup(self) -> None:
-        """
-        Called when the user opens the module the first time and the widget is initialized.
-        """
-        ScriptedLoadableModuleWidget.setup(self)
-
-        # Load widget from .ui file (created by Qt Designer).
-        # Additional widgets can be instantiated manually and added to self.layout.
-        uiWidget = slicer.util.loadUI(self.resourcePath('UI/AnnotateUltrasound.ui'))
-        self.layout.addWidget(uiWidget)
-        self.ui = slicer.util.childWidgetVariables(uiWidget)
-        self.ui.currentFileLabel.setTextInteractionFlags(qt.Qt.TextSelectableByMouse)
-
-        # Set scene in MRML widgets. Make sure that in Qt designer the top-level qMRMLWidget's
-        # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
-        # "setMRMLScene(vtkMRMLScene*)" slot.
-        uiWidget.setMRMLScene(slicer.mrmlScene)
-
-        # Make sure parameter node is initialized (needed for module reload)
-        self.initializeParameterNode()
-
-        # --- Limit raterColorTable visible rows to about 4 programmatically ---
-        if hasattr(self.ui, "raterColorTable"):
-            vh = self.ui.raterColorTable.verticalHeader()
-            self.ui.raterColorTable.setMaximumHeight(vh.defaultSectionSize * 4 + 2)
-            self.ui.raterColorTable.cellClicked.connect(self.onRaterColorTableClicked)
-            self.ui.raterColorTable.itemChanged.connect(self.onRaterColorSelectionChangedFromUser)
 
         # Connect keyboard shortcuts after all UI elements are initialized
         self.connectKeyboardShortcuts()
@@ -409,17 +367,59 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
+
         if self.logic and self._parameterNode:
             self.logic.parameterNode = self._parameterNode
+
+    def connectKeyboardShortcuts(self):
+        # Connect shortcuts to respective actions
+        self.shortcutW.connect('activated()', lambda: self.onAddLine("Pleura", not self.ui.addPleuraButton.isChecked()))
+        self.shortcutS.connect('activated()', lambda: self.onAddLine("Bline", not self.ui.addBlineButton.isChecked()))
+        self.shortcutO.connect('activated()', lambda: self.ui.overlayVisibilityButton.toggle())
+
+        # New shortcuts for removing lines
+        self.shortcutE.connect('activated()', lambda: self.onRemoveLine("Pleura"))  # "E" removes the last pleura line
+        self.shortcutD.connect('activated()', lambda: self.onRemoveLine("Bline"))   # "D" removes the last B-line
+
+        self.shortcutA.connect('activated()', self.onSaveAndLoadNextButton)  # "A" to save and load next scan
+
+        # Arrow keys for next/previous frame (Slicer commands)
+        self.shortcutRightArrow.connect('activated()', self._nextFrameInSequence)
+        self.shortcutLeftArrow.connect('activated()', self._previousFrameInSequence)
+        # Home/End keys for first/last frame
+        self.shortcutHome.connect('activated()', self._firstFrameInSequence)
+        self.shortcutEnd.connect('activated()', self._lastFrameInSequence)
+        # Spacebar for play/pause
+        self.shortcutSpace.connect('activated()', self._togglePlayPauseSequence)
+
+        # Page Up/Page Down for previous/next clip
+        self.shortcutPageUp.connect('activated()', self._onPageUpPressed)
+        self.shortcutPageDown.connect('activated()', self._onPageDownPressed)
+
+        # Shift+Up/Shift+Down for next/previous clip
+        self.shortcutShiftUp.connect('activated()', self._onNextClipPressed)
+        self.shortcutShiftDown.connect('activated()', self._onPreviousClipPressed)
+
+        self.shortcutL.connect('activated()', lambda: self.onShowHideLines(None))  # "L" to show/hide lines
 
     def disconnectKeyboardShortcuts(self):
         # Disconnect shortcuts to avoid issues when the user leaves the module
         self.shortcutW.activated.disconnect()
         self.shortcutS.activated.disconnect()
-        self.shortcutSpace.activated.disconnect()
+        self.shortcutO.activated.disconnect()
         self.shortcutE.activated.disconnect()
         self.shortcutD.activated.disconnect()
         self.shortcutA.activated.disconnect()
+        self.shortcutRightArrow.activated.disconnect()
+        self.shortcutLeftArrow.activated.disconnect()
+        self.shortcutHome.activated.disconnect()
+        self.shortcutEnd.activated.disconnect()
+        self.shortcutSpace.activated.disconnect()
+        self.shortcutPageUp.activated.disconnect()
+        self.shortcutPageDown.activated.disconnect()
+        self.shortcutShiftUp.activated.disconnect()
+        self.shortcutShiftDown.activated.disconnect()
+        self.shortcutL.activated.disconnect()
 
         # Connect rater table collapsed signal to detect user manual changes
         if hasattr(self.ui, 'raterColorsCollapsibleButton'):
@@ -1383,7 +1383,12 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Parameter node stores all user choices in parameter values, node selections, etc.
         # so that when the scene is saved and reloaded, these settings are restored.
 
+        # Ensure the logic's parameter node is created first
+        if self.logic:
+            self.logic._getOrCreateParameterNode()
+
         self.setParameterNode(self.logic.getParameterNode())
+
         if self.logic and self._parameterNode:
             self.logic.parameterNode = self._parameterNode
 
