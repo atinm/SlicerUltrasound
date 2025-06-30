@@ -59,9 +59,9 @@ test-gui: find-slicer-python
 test-dicom: find-slicer-python
 	@echo "Running DICOM loading tests (requires display)..."
 	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
-		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script Testing/Python/test_dicom_loading.py; \
+		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script Testing/Python/test_dicom_loading.py; \
+		/usr/local/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
 		exit 1; \
