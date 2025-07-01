@@ -21,9 +21,9 @@ jobs:
       - name: Install Slicer
         run: |
           # Download and install Slicer
-          wget https://download.slicer.org/bitstream/60add706d691a9c634d9f7c4/Slicer-5.4.0-2024-11-19-linux-amd64.tar.bz2
-          tar -xjf Slicer-5.4.0-2024-11-19-linux-amd64.tar.bz2
-          export SLICER_HOME=$PWD/Slicer-5.4.0-2024-11-19-linux-amd64
+          wget https://download.slicer.org/bitstream/67c52e9629825655577d0353/Slicer-5.8.1-linux-amd64.tar.gz
+          tar xzvf Slicer-5.8.1-linux-amd64.tar.gz2
+          export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
           echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
 
       - name: Install test dependencies in Slicer Python
