@@ -79,8 +79,9 @@ if __name__ == "__main__":
 
     if success:
         check_installed_packages()
-        print("\n✅ Installation complete! You can now run tests with:")
-        print("   make test")
+        print("\n✅ Installation complete! Quitting Slicer...")
+        # Quit Slicer after successful installation
+        slicer.util.quit()
     else:
         print("\n❌ Installation failed. Please check the errors above.")
         print("\nAlternative approaches:")
@@ -89,4 +90,6 @@ if __name__ == "__main__":
         print("   slicer.util.pip_install('pytest-cov')")
         print("   slicer.util.pip_install('pytest-mock')")
         print("2. Use system Python for development: make install-deps-system")
+        # Quit Slicer even on failure
+        slicer.util.quit()
         sys.exit(1)

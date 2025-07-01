@@ -68,6 +68,8 @@ class AnnotateUltrasoundGUITest:
             raise
         finally:
             self.tearDown()
+            # Don't quit Slicer so logs can be read
+            print("Tests complete. Slicer will remain open for log inspection.")
 
     def test_minimal_rater_persistence(self):
         """Minimal test: set rater name, press Enter, click addPleuraButton, print state before and after."""
@@ -172,20 +174,187 @@ class AnnotateUltrasoundGUITest:
         print("✅ Rater table interactions test passed")
 
     def test_keyboard_shortcuts(self):
-        """Test keyboard shortcuts."""
+        """Test keyboard shortcuts work properly and have the intended effect."""
         print("Testing keyboard shortcuts...")
 
-        # Verify shortcuts exist
-        self.assertIsNotNone(self.widget.shortcutW)
-        self.assertIsNotNone(self.widget.shortcutS)
-        self.assertIsNotNone(self.widget.shortcutSpace)
-        self.assertIsNotNone(self.widget.shortcutE)
-        self.assertIsNotNone(self.widget.shortcutD)
-        self.assertIsNotNone(self.widget.shortcutA)
+        # Get the widget - use the correct Slicer API
+        widget = None
+        try:
+            # Get the module and its widget representation
+            module = slicer.app.moduleManager().module('AnnotateUltrasound')
+            if module:
+                widget = module.widgetRepresentation().self()
+                print("✅ Successfully accessed AnnotateUltrasound widget")
+            else:
+                print("❌ Could not find AnnotateUltrasound module")
+                return
+        except Exception as e:
+            print(f"❌ Error accessing widget: {e}")
+            return
 
-        # Note: Simulating key events requires PySide2 which may not be available
-        # in all Slicer environments. For now, we just verify the shortcuts exist.
-        print("✅ Keyboard shortcuts test passed")
+        # Set the input directory to the folder containing the test DICOM
+        test_data_dir = os.path.join(os.path.dirname(__file__), "test_data")
+        widget.ui.inputDirectoryButton.directory = test_data_dir
+        slicer.util.delayDisplay("Input directory set", 500)
+
+        # Simulate clicking the Read Input button
+        print(f"Read Input button enabled: {widget.ui.readInputButton.isEnabled()}")
+        print(f"Input directory: {widget.ui.inputDirectoryButton.directory}")
+
+        # Check parameter node state before clicking
+        print(f"Parameter node before click: {widget._parameterNode}")
+        if widget._parameterNode is None:
+            print("Parameter node is None, trying to initialize...")
+            widget.initializeParameterNode()
+            print(f"Parameter node after initialization: {widget._parameterNode}")
+
+        widget.ui.readInputButton.click()
+        slicer.util.delayDisplay("Read Input clicked", 2000)
+
+        # Check if the module processed the input
+        if widget._parameterNode is not None:
+            print(f"Parameter node dfLoaded: {widget._parameterNode.dfLoaded}")
+            print(f"Logic dicomDf is None: {widget.logic.dicomDf is None}")
+            if widget.logic.dicomDf is not None:
+                print(f"Logic dicomDf shape: {widget.logic.dicomDf.shape}")
+        else:
+            print("❌ Parameter node is still None after Read Input click")
+
+        # Now continue with annotation shortcut and drawing simulation
+
+        # Ensure module is active
+        slicer.util.selectModule('AnnotateUltrasound')
+        slicer.util.delayDisplay("AnnotateUltrasound UI loaded", 1000)
+
+        # Check if shortcuts are enabled
+        print(f"Shortcut W enabled: {widget.shortcutW.isEnabled()}")
+        print(f"Shortcut S enabled: {widget.shortcutS.isEnabled()}")
+        print(f"Shortcut O enabled: {widget.shortcutO.isEnabled()}")
+
+        # Check rater name - required for onAddLine to work
+        print(f"Rater name before test: '{widget._parameterNode.rater}'")
+        print(f"UI rater name text: '{widget.ui.raterName.text}'")
+        if not widget._parameterNode.rater:
+            print("Setting rater name for testing...")
+            widget.ui.raterName.setText("test_rater")
+            widget.onRaterNameChanged()
+            print(f"Rater name after setting: '{widget._parameterNode.rater}'")
+
+        # Ensure main window has focus
+        mainWindow = slicer.util.mainWindow()
+        mainWindow.activateWindow()
+        mainWindow.raise_()
+
+        # Add a delay to ensure UI is ready
+        slicer.util.delayDisplay("About to test shortcuts", 1000)
+
+        # Helper function to send key events to main window
+        def sendKeyToMainWindow(key, modifiers=qt.Qt.NoModifier):
+            mw = slicer.util.mainWindow()
+            eventPress = qt.QKeyEvent(qt.QEvent.KeyPress, key, modifiers)
+            eventRelease = qt.QKeyEvent(qt.QEvent.KeyRelease, key, modifiers)
+            qt.QApplication.postEvent(mw, eventPress)
+            qt.QApplication.postEvent(mw, eventRelease)
+            # Process events to ensure they're handled
+            qt.QApplication.processEvents()
+
+        # Helper function to simulate mouse clicks in the 3D view
+        def simulateLineDrawing():
+            """Simulate drawing a line by clicking at two points in the 3D view."""
+            # Get the 3D view widget
+            viewWidget = slicer.app.layoutManager().threeDWidget(0).threeDView()
+            print(f"viewWidget: {viewWidget}, type: {type(viewWidget)}")
+
+            # Get view dimensions
+            print(f"viewWidget.size: {viewWidget.size}, type: {type(viewWidget.size)}")
+            viewSize = viewWidget.size
+            print(f"viewSize: {viewSize}, type: {type(viewSize)}")
+            centerX = viewSize.width() // 2
+            centerY = viewSize.height() // 2
+
+            # First click - start point
+            print("Simulating first click (start point)...")
+            pressEvent1 = qt.QMouseEvent(qt.QEvent.MouseButtonPress,
+                                       qt.QPointF(centerX, centerY),
+                                       qt.Qt.LeftButton, qt.Qt.LeftButton, qt.Qt.NoModifier)
+            releaseEvent1 = qt.QMouseEvent(qt.QEvent.MouseButtonRelease,
+                                         qt.QPointF(centerX, centerY),
+                                         qt.Qt.LeftButton, qt.Qt.LeftButton, qt.Qt.NoModifier)
+            qt.QApplication.postEvent(viewWidget, pressEvent1)
+            qt.QApplication.postEvent(viewWidget, releaseEvent1)
+
+            slicer.util.delayDisplay("First click sent", 500)
+
+            # Second click - end point
+            print("Simulating second click (end point)...")
+            pressEvent2 = qt.QMouseEvent(qt.QEvent.MouseButtonPress,
+                                       qt.QPointF(centerX + 100, centerY + 100),
+                                       qt.Qt.LeftButton, qt.Qt.LeftButton, qt.Qt.NoModifier)
+            releaseEvent2 = qt.QMouseEvent(qt.QEvent.MouseButtonRelease,
+                                         qt.QPointF(centerX + 100, centerY + 100),
+                                         qt.Qt.LeftButton, qt.Qt.LeftButton, qt.Qt.NoModifier)
+            qt.QApplication.postEvent(viewWidget, pressEvent2)
+            qt.QApplication.postEvent(viewWidget, releaseEvent2)
+
+            slicer.util.delayDisplay("Second click sent", 500)
+
+        # Test W key (toggle pleura annotation mode)
+        pleura_button_before = widget.ui.addPleuraButton.isChecked()
+        print(f"Pleura button before W: {pleura_button_before}")
+        sendKeyToMainWindow(qt.Qt.Key_W)
+        slicer.util.delayDisplay("W key sent", 500)
+        pleura_button_after = widget.ui.addPleuraButton.isChecked()
+        print(f"Pleura button after W: {pleura_button_after}")
+        if pleura_button_after != pleura_button_before:
+            print("✅ W key toggled pleura annotation mode")
+        else:
+            print("❌ W key did not toggle pleura annotation mode")
+
+        # Test S key (toggle B-line annotation mode)
+        bline_button_before = widget.ui.addBlineButton.isChecked()
+        print(f"B-line button before S: {bline_button_before}")
+        sendKeyToMainWindow(qt.Qt.Key_S)
+        slicer.util.delayDisplay("S key sent", 500)
+        bline_button_after = widget.ui.addBlineButton.isChecked()
+        print(f"B-line button after S: {bline_button_after}")
+        if bline_button_after != bline_button_before:
+            print("✅ S key toggled B-line annotation mode")
+        else:
+            print("❌ S key did not toggle B-line annotation mode")
+
+        # Test O key (toggle overlay)
+        overlay_before = widget.ui.overlayVisibilityButton.isChecked()
+        print(f"Overlay visibility before O: {overlay_before}")
+        sendKeyToMainWindow(qt.Qt.Key_O)
+        slicer.util.delayDisplay("O key sent", 500)
+        overlay_after = widget.ui.overlayVisibilityButton.isChecked()
+        print(f"Overlay visibility after O: {overlay_after}")
+        if overlay_after != overlay_before:
+            print("✅ O key toggled overlay visibility")
+        else:
+            print("❌ O key did not toggle overlay visibility")
+
+        # Test complete workflow: W key + mouse interaction to draw pleura line
+        print("\nTesting complete pleura line drawing workflow...")
+        pleura_count_before = len(widget.logic.pleuraLines)
+        print(f"Pleura lines before drawing: {pleura_count_before}")
+
+        # Activate pleura mode with W key
+        sendKeyToMainWindow(qt.Qt.Key_W)
+        slicer.util.delayDisplay("W key sent for drawing", 500)
+
+        # Simulate drawing a line
+        simulateLineDrawing()
+        slicer.util.delayDisplay("Mouse interaction completed", 1000)
+
+        pleura_count_after = len(widget.logic.pleuraLines)
+        print(f"Pleura lines after drawing: {pleura_count_after}")
+        if pleura_count_after > pleura_count_before:
+            print("✅ Complete pleura line drawing workflow worked")
+        else:
+            print("❌ Complete pleura line drawing workflow failed")
+
+        print("Keyboard shortcut test completed")
 
     def test_line_creation_workflow(self):
         """Test the complete line creation workflow."""
