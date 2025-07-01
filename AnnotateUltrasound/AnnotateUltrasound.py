@@ -127,6 +127,16 @@ class AnnotateUltrasoundParameterNode:
 #
 # AnnotateUltrasoundWidget
 #
+# global singleton instance of the widget
+annotateUltrasoundWidgetInstance = None
+def getAnnotateUltrasoundWidget():
+    """
+    Get the singleton instance of the AnnotateUltrasoundWidget.
+    """
+    global annotateUltrasoundWidgetInstance
+    if annotateUltrasoundWidgetInstance is None:
+        raise RuntimeError("AnnotateUltrasoundWidget instance is not initialized")
+    return annotateUltrasoundWidgetInstance
 
 class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     """Uses ScriptedLoadableModuleWidget base class, available at:
@@ -136,15 +146,13 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         """
         Called when the user opens the module the first time and the widget is initialized.
         """
-        ScriptedLoadableModuleWidget.__init__(self, parent)
-        VTKObservationMixin.__init__(self)  # needed for parameter node observation
-        self.logic = None
+        self.updatingGUI = False
         self._parameterNode = None
+
+        self.logic = None
         self._parameterNodeGuiTag = None
         self.notEnteredYet = True
         self._lastFrameIndex = -1
-
-        self.updatingGUI = False
 
         # Flag to track if this is the first load of DICOM data
         self._isFirstDicomLoad = True
@@ -158,58 +166,48 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Flag to prevent rater table state changes during navigation
         self._isNavigating = False
 
-        # Shortcuts
-        self.shortcutW = qt.QShortcut(slicer.util.mainWindow())
-        self.shortcutW.setKey(qt.QKeySequence('W'))
-        self.shortcutS = qt.QShortcut(slicer.util.mainWindow())
-        self.shortcutS.setKey(qt.QKeySequence('S'))
-        self.shortcutO = qt.QShortcut(slicer.util.mainWindow())
-        self.shortcutO.setKey(qt.QKeySequence('O'))
+        ScriptedLoadableModuleWidget.__init__(self, parent)
+        VTKObservationMixin.__init__(self)  # needed for parameter node observation
 
-        # Add shortcuts for removing lines
-        self.shortcutE = qt.QShortcut(slicer.util.mainWindow())  # "E" for removing last pleura line
-        self.shortcutE.setKey(qt.QKeySequence('E'))
-        self.shortcutD = qt.QShortcut(slicer.util.mainWindow())  # "D" for removing last B-line
-        self.shortcutD.setKey(qt.QKeySequence('D'))
-
-        # shortcut for saving and loading next scan
-        self.shortcutA = qt.QShortcut(slicer.util.mainWindow())  # "A" for save and load next scan
-        self.shortcutA.setKey(qt.QKeySequence('A'))
-
-        # Arrow keys for next/previous frame (Slicer commands)
-        self.shortcutRightArrow = qt.QShortcut(slicer.util.mainWindow())  # "Right Arrow" for next frame
-        self.shortcutRightArrow.setKey(qt.QKeySequence('Right'))
-        self.shortcutLeftArrow = qt.QShortcut(slicer.util.mainWindow())  # "Left Arrow" for previous frame
-        self.shortcutLeftArrow.setKey(qt.QKeySequence('Left'))
-
-        # Home/End keys for first/last frame
-        self.shortcutHome = qt.QShortcut(slicer.util.mainWindow())  # "Home" for first frame
-        self.shortcutHome.setKey(qt.QKeySequence('Home'))
-        self.shortcutEnd = qt.QShortcut(slicer.util.mainWindow())  # "End" for last frame
-        self.shortcutEnd.setKey(qt.QKeySequence('End'))
+        # Shortcuts will be initialized in initializeShortcuts()
 
         self.raterNameDebounceTimer = qt.QTimer()
         self.raterNameDebounceTimer.setSingleShot(True)
         self.raterNameDebounceTimer.setInterval(300)  # ms of idle time before triggering
         self.raterNameDebounceTimer.timeout.connect(self.onRaterNameChanged)
 
-        # Spacebar for play/pause
+    def initializeShortcuts(self):
+        self.shortcutW = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutW.setKey(qt.QKeySequence('W'))
+        self.shortcutS = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutS.setKey(qt.QKeySequence('S'))
+        self.shortcutO = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutO.setKey(qt.QKeySequence('O'))
+        self.shortcutE = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutE.setKey(qt.QKeySequence('E'))
+        self.shortcutD = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutD.setKey(qt.QKeySequence('D'))
+        self.shortcutA = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutA.setKey(qt.QKeySequence('A'))
+        self.shortcutRightArrow = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutRightArrow.setKey(qt.QKeySequence('Right'))
+        self.shortcutLeftArrow = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutLeftArrow.setKey(qt.QKeySequence('Left'))
+        self.shortcutHome = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutHome.setKey(qt.QKeySequence('Home'))
+        self.shortcutEnd = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutEnd.setKey(qt.QKeySequence('End'))
         self.shortcutSpace = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutSpace.setKey(qt.QKeySequence('Space'))
-
-        # Page Up/Page Down for previous/next clip
         self.shortcutPageUp = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutPageUp.setKey(qt.QKeySequence('PageUp'))
         self.shortcutPageDown = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutPageDown.setKey(qt.QKeySequence('PageDown'))
-
-        # Shift+Up/Shift+Down for previous/next clip (in case Page Up/Page Down are intercepted by Slicer)
         self.shortcutShiftUp = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutShiftUp.setKey(qt.QKeySequence('Shift+Up'))
         self.shortcutShiftDown = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutShiftDown.setKey(qt.QKeySequence('Shift+Down'))
-
-        self.shortcutL = qt.QShortcut(slicer.util.mainWindow())  # "L" for show/hide lines
+        self.shortcutL = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutL.setKey(qt.QKeySequence('L'))
 
     def connectKeyboardShortcuts(self):
@@ -268,6 +266,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         """
         ScriptedLoadableModuleWidget.setup(self)
 
+        global annotateUltrasoundWidgetInstance
+        annotateUltrasoundWidgetInstance = self
+
         # Load widget from .ui file (created by Qt Designer).
         # Additional widgets can be instantiated manually and added to self.layout.
         uiWidget = slicer.util.loadUI(self.resourcePath('UI/AnnotateUltrasound.ui'))
@@ -280,6 +281,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # "setMRMLScene(vtkMRMLScene*)" slot.
         uiWidget.setMRMLScene(slicer.mrmlScene)
 
+        self.initializeShortcuts()
         self.connectKeyboardShortcuts()
 
         # Set frames table to show 5-6 rows
@@ -509,6 +511,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Copy the seenRaters from logic to widget for UI purposes
         self.seenRaters = self.logic.seenRaters.copy()
 
+    def refocusAndRestoreShortcuts(self, delay: int = 200):
+        qt.QTimer.singleShot(delay, self._delayedSetRedViewFocus)
+        qt.QTimer.singleShot(delay + 100, self._restoreFocusAndShortcuts)
+
     def onReadInputButton(self):
         """
         Read the input directory and update the dicomDf dataframe, using rater-specific annotation files.
@@ -594,6 +600,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.statusLabel.setText(statusText)
 
         self._updateGUIFromParameterNode()
+
+        # Restore focus and shortcuts after loading input
+        self.refocusAndRestoreShortcuts()
 
         # Clear navigation flag after all operations are complete
         self._isNavigating = False
@@ -697,6 +706,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Clear navigation flag after all operations are complete
         self._isNavigating = False
+        self.refocusAndRestoreShortcuts()
 
     def updateGuiFromAnnotations(self):
         # Check checkboxes in the labels scroll area if the labels are present in the logic.annotations
@@ -844,6 +854,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Clear navigation flag after all operations are complete
         self._isNavigating = False
+        self.refocusAndRestoreShortcuts()
 
     def saveAnnotations(self):
         """
@@ -965,6 +976,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         success = self.saveAnnotations()
         if success:
             self.onNextButton()
+            # After loading next, restore focus and shortcuts with a slight delay
+            self.refocusAndRestoreShortcuts()
         else:
             # Error message already shown by saveAnnotations, don't proceed to next
             return
@@ -1038,9 +1051,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         lineType = self._parameterNode.lineBeingPlaced.GetName()
         logging.info(f'onEndPlaceMode -- lineType: {lineType}')
         if lineType == "Pleura":
-            qt.QTimer.singleShot(0, self.delayedOnEndPlaceMode, "Pleura")
+            qt.QTimer.singleShot(0, lambda: self.delayedOnEndPlaceMode("Pleura"))
         elif lineType == "B-line":
-            qt.QTimer.singleShot(0, self.delayedOnEndPlaceMode, "Bline")
+            qt.QTimer.singleShot(0, lambda: self.delayedOnEndPlaceMode("Bline"))
         else:
             logging.error(f"Unknown line type {lineType}")
             return
@@ -1191,6 +1204,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         self.logic.nextDicomDfIndex = nextUnlabeledIndex
         self.onNextButton()
+        self.refocusAndRestoreShortcuts()
 
     def findNextUnlabeledScan(self):
         """
@@ -1257,6 +1271,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.removeObservers()
 
         self.disconnectKeyboardShortcuts()
+        global annotateUltrasoundWidgetInstance
+        annotateUltrasoundWidgetInstance = None
 
     def enter(self) -> None:
         """
@@ -1318,7 +1334,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         Called just after the scene is closed.
         """
         # If this module is shown while the scene is closed then recreate a new parameter node immediately
-        if self.parent.isEntered:
+        widget = slicer.modules.annotateultrasound.widgetRepresentation()
+        if widget and widget.isEntered:
             self.initializeParameterNode()
 
     def initializeParameterNode(self) -> None:
@@ -1696,6 +1713,12 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             mainWindow = slicer.util.mainWindow()
             if mainWindow:
                 mainWindow.setFocus()
+                # After setting main window focus, also set focus to Red slice widget if available
+                layoutManager = slicer.app.layoutManager()
+                if layoutManager:
+                    redWidget = layoutManager.sliceWidget("Red")
+                    if redWidget:
+                        redWidget.setFocus()
 
             # Force shortcuts to be active
             self._forceShortcutsActive()
@@ -1999,7 +2022,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         pleura_saved = 0
         for i, markupNode in enumerate(self.pleuraLines):
             nodeRater = markupNode.GetAttribute("rater") if markupNode else ""
-            is_visible = markupNode.GetDisplayNode().GetVisibility() if markupNode else False
+            displayNode = markupNode.GetDisplayNode() if markupNode else None
+            is_visible = displayNode.GetVisibility() if displayNode else False
             num_points = markupNode.GetNumberOfControlPoints() if markupNode else 0
 
             if nodeRater.strip().lower() != current_rater:
@@ -2027,7 +2051,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         bline_saved = 0
         for i, markupNode in enumerate(self.bLines):
             nodeRater = markupNode.GetAttribute("rater") if markupNode else ""
-            is_visible = markupNode.GetDisplayNode().GetVisibility() if markupNode else False
+            displayNode = markupNode.GetDisplayNode() if markupNode else None
+            is_visible = displayNode.GetVisibility() if displayNode else False
             num_points = markupNode.GetNumberOfControlPoints() if markupNode else 0
 
             if nodeRater.strip().lower() != current_rater:

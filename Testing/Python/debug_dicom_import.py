@@ -28,7 +28,7 @@ def debug_dicom_import():
     logic = AnnotateUltrasoundLogic()
 
     # Set up test data
-    test_data_dir = os.path.join(modulePath, 'Testing', 'Python', 'test_data')
+    test_data_dir = os.path.join(modulePath, 'test_data')
     logic.setRater("andrew")
 
     # Load DICOM directory

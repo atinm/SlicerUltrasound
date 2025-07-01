@@ -43,33 +43,8 @@ test-slicer: build-testing
 	@echo "Running Slicer-native tests..."
 	cd build && ctest -V
 
-# Install dependencies and quit Slicer (only if needed)
-install-deps-and-quit: find-slicer-python
-	@echo "Checking if dependencies are already installed..."
-	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
-		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script Testing/Python/check_deps_installed.py; \
-	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script Testing/Python/check_deps_installed.py; \
-	else \
-		echo "❌ Slicer not found. Please install Slicer first."; \
-		exit 1; \
-	fi
-
-# Force install dependencies (for when packages are missing)
-force-install-deps: find-slicer-python
-	@echo "Installing dependencies in Slicer's Python environment..."
-	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
-		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script Testing/Python/install_deps_in_slicer.py; \
-	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script Testing/Python/install_deps_in_slicer.py; \
-	else \
-		echo "❌ Slicer not found. Please install Slicer first."; \
-		exit 1; \
-	fi
-	@echo "✅ Dependencies installed. Slicer should have quit automatically."
-
 # Run GUI tests (requires display and user interaction simulation)
-test-gui: find-slicer-python install-deps-and-quit
+test-gui: find-slicer-python
 	@echo "Running GUI tests (requires display)..."
 	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
 		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
@@ -84,45 +59,9 @@ test-gui: find-slicer-python install-deps-and-quit
 test-dicom: find-slicer-python
 	@echo "Running DICOM loading tests (requires display)..."
 	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
-		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
+		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script test_dicom_loading.py; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
-	else \
-		echo "❌ Slicer not found. Please install Slicer first."; \
-		exit 1; \
-	fi
-
-# Debug DICOM import (interactive debugging)
-debug-dicom: find-slicer-python
-	@echo "Running DICOM import debug (requires display)..."
-	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
-		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script Testing/Python/debug_dicom_import.py; \
-	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script Testing/Python/debug_dicom_import.py; \
-	else \
-		echo "❌ Slicer not found. Please install Slicer first."; \
-		exit 1; \
-	fi
-
-# Check environment setup
-check-env: find-slicer-python
-	@echo "Checking Slicer and Python environment..."
-	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
-		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script Testing/Python/check_pytest_availability.py; \
-	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script Testing/Python/check_pytest_availability.py; \
-	else \
-		echo "❌ Slicer not found. Please install Slicer first."; \
-		exit 1; \
-	fi
-
-# Install dependencies in Slicer's Python environment
-install-deps: find-slicer-python
-	@echo "Installing dependencies in Slicer's Python environment..."
-	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
-		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script Testing/Python/install_deps_in_slicer.py; \
-	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script Testing/Python/install_deps_in_slicer.py; \
+		/usr/local/bin/Slicer --python-script test_dicom_loading.py; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
 		exit 1; \

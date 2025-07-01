@@ -41,7 +41,7 @@ def check_installed_packages():
     """Check which packages are installed."""
     print("\nChecking installed packages:")
 
-    packages_to_check = ["pytest", "pytest_cov", "pytest_mock"]
+    packages_to_check = ["pytest", "pytest_cov", "pytest_mock", "PySide2"]
 
     for package in packages_to_check:
         try:

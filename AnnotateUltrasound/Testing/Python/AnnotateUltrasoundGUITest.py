@@ -15,7 +15,7 @@ modulePath = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, modulePath)
 
 # Import the module directly
-from AnnotateUltrasound import AnnotateUltrasoundLogic, AnnotateUltrasoundWidget
+from AnnotateUltrasound import AnnotateUltrasoundLogic
 
 
 class AnnotateUltrasoundGUITest:
@@ -32,12 +32,19 @@ class AnnotateUltrasoundGUITest:
         """Set up the test environment."""
         slicer.mrmlScene.Clear(0)
 
-        # Create the widget directly (not through slicer.modules)
-        self.widget = AnnotateUltrasoundWidget()
+        slicer.util.selectModule('AnnotateUltrasound')
+        slicer.util.delayDisplay("Selected AnnotateUltrasound", 1000)
+        from AnnotateUltrasound import getAnnotateUltrasoundWidget
+        self.widget = getAnnotateUltrasoundWidget()
+        if self.widget is None:
+            raise RuntimeError("Failed to get AnnotateUltrasound widget instance")
         self.logic = self.widget.logic
 
         # Wait for UI to be ready
         time.sleep(1)
+
+        # Load test input directory and trigger Read Input
+        self.loadTestInput()
 
     def tearDown(self):
         """Clean up after tests."""
@@ -76,8 +83,8 @@ class AnnotateUltrasoundGUITest:
         print("Testing minimal rater persistence...")
 
         # Ensure parameter node is set
-        if self.widget._parameterNode is None and self.widget.logic:
-            self.widget.setParameterNode(self.widget.logic.getParameterNode())
+        if self.widget._parameterNode is None and self.logic:
+            self.widget.setParameterNode(self.logic.getParameterNode())
 
         self.widget.ui.raterName.setText("minimal_rater")
         print(f"After setText rater name: '{self.widget.ui.raterName.text}'")
@@ -177,46 +184,18 @@ class AnnotateUltrasoundGUITest:
         """Test keyboard shortcuts work properly and have the intended effect."""
         print("Testing keyboard shortcuts...")
 
-        # Get the widget - use the correct Slicer API
-        widget = None
-        try:
-            # Get the module and its widget representation
-            module = slicer.app.moduleManager().module('AnnotateUltrasound')
-            if module:
-                widget = module.widgetRepresentation().self()
-                print("✅ Successfully accessed AnnotateUltrasound widget")
-            else:
-                print("❌ Could not find AnnotateUltrasound module")
-                return
-        except Exception as e:
-            print(f"❌ Error accessing widget: {e}")
-            return
+        widget = self.widget
+        print("✅ Using module-provided AnnotateUltrasound widget")
 
-        # Set the input directory to the folder containing the test DICOM
-        test_data_dir = os.path.join(os.path.dirname(__file__), "test_data")
-        widget.ui.inputDirectoryButton.directory = test_data_dir
-        slicer.util.delayDisplay("Input directory set", 500)
-
-        # Simulate clicking the Read Input button
-        print(f"Read Input button enabled: {widget.ui.readInputButton.isEnabled()}")
-        print(f"Input directory: {widget.ui.inputDirectoryButton.directory}")
-
-        # Check parameter node state before clicking
-        print(f"Parameter node before click: {widget._parameterNode}")
-        if widget._parameterNode is None:
-            print("Parameter node is None, trying to initialize...")
-            widget.initializeParameterNode()
-            print(f"Parameter node after initialization: {widget._parameterNode}")
-
-        widget.ui.readInputButton.click()
-        slicer.util.delayDisplay("Read Input clicked", 2000)
+        # Assert parameter node is not None after Read Input
+        assert widget._parameterNode is not None, "Parameter node should not be None after Read Input"
 
         # Check if the module processed the input
         if widget._parameterNode is not None:
             print(f"Parameter node dfLoaded: {widget._parameterNode.dfLoaded}")
-            print(f"Logic dicomDf is None: {widget.logic.dicomDf is None}")
-            if widget.logic.dicomDf is not None:
-                print(f"Logic dicomDf shape: {widget.logic.dicomDf.shape}")
+            print(f"Logic dicomDf is None: {self.logic.dicomDf is None}")
+            if self.logic.dicomDf is not None:
+                print(f"Logic dicomDf shape: {self.logic.dicomDf.shape}")
         else:
             print("❌ Parameter node is still None after Read Input click")
 
@@ -299,6 +278,7 @@ class AnnotateUltrasoundGUITest:
             slicer.util.delayDisplay("Second click sent", 500)
 
         # Test W key (toggle pleura annotation mode)
+        widget.ui.addPleuraButton.setFocus()
         pleura_button_before = widget.ui.addPleuraButton.isChecked()
         print(f"Pleura button before W: {pleura_button_before}")
         sendKeyToMainWindow(qt.Qt.Key_W)
@@ -311,6 +291,7 @@ class AnnotateUltrasoundGUITest:
             print("❌ W key did not toggle pleura annotation mode")
 
         # Test S key (toggle B-line annotation mode)
+        widget.ui.addBlineButton.setFocus()
         bline_button_before = widget.ui.addBlineButton.isChecked()
         print(f"B-line button before S: {bline_button_before}")
         sendKeyToMainWindow(qt.Qt.Key_S)
@@ -323,6 +304,7 @@ class AnnotateUltrasoundGUITest:
             print("❌ S key did not toggle B-line annotation mode")
 
         # Test O key (toggle overlay)
+        widget.ui.overlayVisibilityButton.setFocus()
         overlay_before = widget.ui.overlayVisibilityButton.isChecked()
         print(f"Overlay visibility before O: {overlay_before}")
         sendKeyToMainWindow(qt.Qt.Key_O)
@@ -336,7 +318,7 @@ class AnnotateUltrasoundGUITest:
 
         # Test complete workflow: W key + mouse interaction to draw pleura line
         print("\nTesting complete pleura line drawing workflow...")
-        pleura_count_before = len(widget.logic.pleuraLines)
+        pleura_count_before = len(self.logic.pleuraLines)
         print(f"Pleura lines before drawing: {pleura_count_before}")
 
         # Activate pleura mode with W key
@@ -347,7 +329,7 @@ class AnnotateUltrasoundGUITest:
         simulateLineDrawing()
         slicer.util.delayDisplay("Mouse interaction completed", 1000)
 
-        pleura_count_after = len(widget.logic.pleuraLines)
+        pleura_count_after = len(self.logic.pleuraLines)
         print(f"Pleura lines after drawing: {pleura_count_after}")
         if pleura_count_after > pleura_count_before:
             print("✅ Complete pleura line drawing workflow worked")
@@ -404,6 +386,14 @@ class AnnotateUltrasoundGUITest:
         if not a >= b:
             raise AssertionError(f"Expected {a} >= {b}")
 
+    def loadTestInput(self):
+        """Set test input directory and trigger Read Input."""
+        test_data_dir = os.path.join(os.path.dirname(__file__), "test_data")
+        self.widget.ui.inputDirectoryButton.directory = test_data_dir
+        print(f"Set input directory to: {test_data_dir}")
+        slicer.util.delayDisplay("Input directory set", 500)
+        self.widget.onReadInputButton()
+        slicer.util.delayDisplay("Read Input triggered", 2000)
 
 def runGUITest():
     """Run the GUI test."""
