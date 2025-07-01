@@ -75,8 +75,9 @@ class AnnotateUltrasoundGUITest:
             raise
         finally:
             self.tearDown()
-            # Don't quit Slicer so logs can be read
-            print("Tests complete. Slicer will remain open for log inspection.")
+            print("Tests complete. Exiting Slicer...")
+            # Exit Slicer to prevent hanging
+            slicer.util.quit()
 
     def test_minimal_rater_persistence(self):
         """Minimal test: set rater name, press Enter, click addPleuraButton, print state before and after."""

@@ -20,11 +20,40 @@ jobs:
 
       - name: Install Slicer
         run: |
-          # Download and install Slicer
+          # Download and install Slicer 5.8.1
           wget https://download.slicer.org/bitstream/67c52e9629825655577d0353/Slicer-5.8.1-linux-amd64.tar.gz
-          tar xzvf Slicer-5.8.1-linux-amd64.tar.gz2
+          tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
           export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
           echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+
+      - name: Install SlicerUltrasound module
+        run: |
+          # Copy module files directly to Slicer's extension directory
+          extension_dir=$SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules
+
+          # Copy the module directories
+          modules=("AnnotateUltrasound" "AnonymizeUltrasound" "MmodeAnalysis" "TimeSeriesAnnotation")
+          for module in "${modules[@]}"; do
+            if [ -d "$module" ]; then
+              target_dir="$extension_dir/$module"
+              echo "Copying $module to $target_dir"
+
+              # Remove existing directory if it exists
+              if [ -d "$target_dir" ]; then
+                rm -rf "$target_dir"
+              fi
+
+              # Copy the module
+              cp -r "$module" "$target_dir"
+            fi
+          done
+
+          echo "✓ Module installed successfully"
 
       - name: Install test dependencies in Slicer Python
         run: |

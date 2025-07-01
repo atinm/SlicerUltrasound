@@ -59,9 +59,9 @@ test-gui: find-slicer-python
 test-dicom: find-slicer-python
 	@echo "Running DICOM loading tests (requires display)..."
 	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
-		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script test_dicom_loading.py; \
+		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script test_dicom_loading.py; \
+		/usr/local/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
 		exit 1; \
@@ -69,6 +69,11 @@ test-dicom: find-slicer-python
 
 # Run all tests using CTest (Slicer-native)
 test: test-slicer
+
+# Build and install the module into Slicer
+install-module: find-slicer-python
+	@echo "Building and installing SlicerUltrasound module..."
+	@python3 install_module.py
 
 # Run pytest-style tests in Slicer Python environment
 test-pytest: find-slicer-python
@@ -101,6 +106,7 @@ help:
 	@echo "  find-slicer-python - Check if Slicer is available"
 	@echo "  debug-python      - Show Python execution details"
 	@echo "  build-testing     - Build with testing enabled"
+	@echo "  install-module    - Build and install module into Slicer"
 	@echo "  test-slicer       - Run Slicer-native tests (recommended for Slicer extensions)"
 	@echo "  test-pytest       - Run pytest-style tests in Slicer Python environment"
 	@echo "  test-gui          - Run GUI tests (requires display, simulates user interactions)"
