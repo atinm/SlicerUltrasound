@@ -1,4 +1,4 @@
-name: Run Pytests
+name: Run Slicer Module Tests
 
 # Trigger the workflow on pull requests to the main branch
 on:
@@ -9,33 +9,36 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        # Match the python version in .python-version file.
-        python-version: [3.9]
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
 
-    - name: Cache pip dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
+      - name: Install Slicer
+        run: |
+          # Download and install Slicer
+          wget https://download.slicer.org/bitstream/60add706d691a9c634d9f7c4/Slicer-5.4.0-2024-11-19-linux-amd64.tar.bz2
+          tar -xjf Slicer-5.4.0-2024-11-19-linux-amd64.tar.bz2
+          export SLICER_HOME=$PWD/Slicer-5.4.0-2024-11-19-linux-amd64
+          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements-test.txt
+      - name: Install test dependencies in Slicer Python
+        run: |
+          $SLICER_HOME/bin/PythonSlicer -m pip install pytest pytest-cov pytest-mock
 
-    - name: Run tests with pytest
-      run: |
-        pytest --cov=. --cov-report=term-missing
+      - name: Run tests in Slicer environment
+        run: |
+          # Run tests using the test runner script
+          python3 run_slicer_tests.py --install-deps
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
