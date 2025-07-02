@@ -90,7 +90,7 @@ test-dicom: find-slicer-python
 	fi
 
 # Run all tests using CTest (Slicer-native)
-test: test-slicer
+test: test-pytest
 
 # Build and install the module into Slicer
 install-module: find-slicer-python
@@ -138,17 +138,16 @@ help:
 	@echo "  debug-python      - Show Python execution details"
 	@echo "  build-testing     - Build with testing enabled"
 	@echo "  install-module    - Build and install module into Slicer"
-	@echo "  test-slicer       - Run Slicer-native tests (recommended for Slicer extensions)"
 	@echo "  test-pytest       - Run pytest-style tests in Slicer Python environment"
 	@echo "  test-gui          - Run GUI tests (requires display, simulates user interactions)"
 	@echo "  test-dicom        - Run DICOM loading tests (requires display, uses real DICOM data)"
-	@echo "  test              - Run Slicer-native tests (alias for test-slicer)"
+	@echo "  test              - Run pytest tests (alias for test-pytest)"
 	@echo "  test-pattern      - Run tests matching pattern (e.g., make test-pattern PATTERN=AnnotateUltrasound)"
 	@echo "  test-cov          - Run tests with coverage"
 	@echo "  clean             - Clean up generated files"
 	@echo "  help              - Show this help message"
 	@echo ""
-	@echo "Note: test-slicer uses Slicer's native test infrastructure with CTest (recommended)"
+	@echo "Note: This project uses Python-only modules, so we focus on Python testing."
 	@echo "      test-pytest uses pytest in Slicer's Python environment"
 	@echo "      test-gui uses Slicer's GUI test harness (requires display)"
 	@echo "      test-dicom tests module with real DICOM data and annotations"

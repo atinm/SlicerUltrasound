@@ -43,36 +43,7 @@ jobs:
           name: codecov-pytest
           fail_ci_if_error: false
 
-  # Job 2: Slicer-native tests (CTest)
-  test-slicer:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.9
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.9
-
-      - name: Install Slicer
-        run: |
-          # Download and install Slicer 5.8.1
-          wget https://download.slicer.org/bitstream/67c51fc129825655577cfee9 -O Slicer-5.8.1-linux-amd64.tar.gz
-          tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
-          export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
-          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential
-
-      - name: Run Slicer-native tests
-        run: |
-          make test-slicer
-
-  # Job 3: Module installation test
+  # Job 2: Module installation test
   test-installation:
     runs-on: ubuntu-latest
     steps:
@@ -155,7 +126,7 @@ jobs:
           # Run the module loading test
           $SLICER_HOME/bin/PythonSlicer test_module_loading.py
 
-  # Job 4: Tests with coverage (most comprehensive)
+  # Job 3: Tests with coverage (most comprehensive)
   test-coverage:
     runs-on: ubuntu-latest
     steps:
@@ -182,7 +153,7 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          make test-cov
+          make test-coverage
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3
@@ -192,7 +163,7 @@ jobs:
           name: codecov-coverage
           fail_ci_if_error: false
 
-  # Job 5: GUI tests with virtual display
+  # Job 4: GUI tests with virtual display
   test-gui:
     runs-on: ubuntu-latest
     steps:
