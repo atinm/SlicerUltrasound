@@ -11,6 +11,9 @@ import argparse
 
 def find_slicer():
     """Find Slicer installation."""
+    print("Searching for Slicer installation...")
+    print(f"SLICER_HOME environment variable: {os.environ.get('SLICER_HOME')}")
+
     # Common Slicer installation paths
     possible_paths = [
         # macOS
@@ -25,20 +28,36 @@ def find_slicer():
     # Check environment variable first
     slicer_home = os.environ.get('SLICER_HOME')
     if slicer_home:
-        slicer_path = os.path.join(slicer_home, 'bin', 'Slicer')
-        if os.path.exists(slicer_path):
-            return slicer_home
+        # Check multiple possible Slicer executable locations
+        possible_slicer_paths = [
+            os.path.join(slicer_home, 'bin', 'Slicer'),
+            os.path.join(slicer_home, 'bin', 'SlicerApp-real'),
+            os.path.join(slicer_home, 'Slicer'),
+            os.path.join(slicer_home, 'bin', 'PythonSlicer'),
+        ]
+
+        for slicer_path in possible_slicer_paths:
+            if os.path.exists(slicer_path):
+                print(f"Found Slicer executable at: {slicer_path}")
+                return slicer_home
 
     # Check possible paths
+    print("Checking fallback paths...")
     for path in possible_paths:
+        print(f"  Checking: {path}")
         if '*' in path:
             import glob
             matches = glob.glob(path)
             if matches:
-                return os.path.dirname(os.path.dirname(matches[0]))
+                result = os.path.dirname(os.path.dirname(matches[0]))
+                print(f"  Found via glob: {result}")
+                return result
         elif os.path.exists(path):
-            return os.path.dirname(os.path.dirname(path))
+            result = os.path.dirname(os.path.dirname(path))
+            print(f"  Found: {result}")
+            return result
 
+    print("No Slicer installation found")
     return None
 
 def build_module(slicer_home, build_dir="build"):
