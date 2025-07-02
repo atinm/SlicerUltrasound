@@ -462,5 +462,13 @@ def runGUITest():
     test.runTest()
 
 
-if __name__ == "__main__":
-    runGUITest()
+
+# Defer test execution with QTimer.singleShot to ensure the Slicer GUI is fully initialized
+import qt
+
+def runGUITest():
+    """Run the GUI test."""
+    test = AnnotateUltrasoundGUITest()
+    test.runTest()
+
+qt.QTimer.singleShot(0, runGUITest)
