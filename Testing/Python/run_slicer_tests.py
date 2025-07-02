@@ -125,12 +125,13 @@ def run_tests(args):
     try:
         import pytest
 
-        # Use absolute path for tests directory
-        tests_dir = os.path.join(SCRIPT_DIR, 'tests')
+        # Use absolute path for tests directory (project root)
+        project_root = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+        tests_dir = os.path.join(project_root, 'tests')
 
-        # Change to the script directory to ensure proper test discovery
+        # Change to the project root to ensure proper test discovery
         original_cwd = os.getcwd()
-        os.chdir(SCRIPT_DIR)
+        os.chdir(project_root)
 
         test_args = [
             '--cov=.',
@@ -208,8 +209,9 @@ def run_tests_subprocess(args):
         print("  /usr/local/bin/Slicer")
         return 1
 
-    # Use absolute path for tests directory
-    tests_dir = os.path.join(SCRIPT_DIR, 'tests')
+    # Use absolute path for tests directory (project root)
+    project_root = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+    tests_dir = os.path.join(project_root, 'tests')
 
     test_args = [
         slicer_python, '-m', 'pytest',
@@ -229,9 +231,9 @@ def run_tests_subprocess(args):
     print(f"Tests directory: {tests_dir}")
 
     try:
-        # Change to the script directory to ensure proper test discovery
+        # Change to the project root to ensure proper test discovery
         original_cwd = os.getcwd()
-        os.chdir(SCRIPT_DIR)
+        os.chdir(project_root)
 
         result = subprocess.run(test_args, check=False)
 
