@@ -78,7 +78,14 @@ install-module: find-slicer-python
 # Run pytest-style tests in Slicer Python environment
 test-pytest: find-slicer-python
 	@echo "Running pytest-style tests in Slicer Python environment..."
-	@python3 run_slicer_tests.py --install-deps
+	@if [ -f "/Applications/Slicer.app/Contents/bin/PythonSlicer" ]; then \
+		/Applications/Slicer.app/Contents/bin/PythonSlicer run_slicer_tests.py --install-deps; \
+	elif [ -f "/usr/local/bin/Slicer" ]; then \
+		/usr/local/bin/Slicer --python-script run_slicer_tests.py --install-deps; \
+	else \
+		echo "❌ Slicer not found. Please install Slicer first."; \
+		exit 1; \
+	fi
 
 # Run tests with specific pattern
 test-pattern: build-testing
