@@ -196,6 +196,12 @@ jobs:
             libfontconfig1 libxext6 libxrender1 \
             libxtst6 libgtk-3-0 || echo "Some packages failed, trying alternatives..."
 
+          # Install Qt and XCB dependencies for Qt platform plugins
+          sudo apt-get install -y \
+            libxcb1 libxcb-xfixes0-dev libxcb-shape0 libxcb-render0 libxcb-render-util0 \
+            libxcb-keysyms1 libxcb-icccm4 libxcb-image0 libxcb-shm0 libxcb-util1 \
+            libxcb-xinerama0 libxcb-xkb1 libxkbcommon-x11-0 || echo "Some XCB packages failed, continuing..."
+
           # Install PulseAudio libraries for audio support
           sudo apt-get install -y \
             pulseaudio libpulse-mainloop-glib0 libpulse0 || echo "PulseAudio packages failed, continuing..."
@@ -267,6 +273,13 @@ jobs:
           echo "Checking for Slicer executable:"
           find $SLICER_HOME -name "Slicer" -type f 2>/dev/null || echo "No Slicer executable found"
 
+          echo "Checking Qt platform plugins:"
+          find $SLICER_HOME -name "*platforms*" -type d 2>/dev/null || echo "No platforms directory found"
+          find $SLICER_HOME -name "libqxcb.so" 2>/dev/null || echo "No xcb platform plugin found"
+
+          echo "Checking XCB libraries:"
+          ldconfig -p | grep xcb || echo "No XCB libraries found"
+
       - name: Start virtual display
         run: |
           # Start Xvfb on display :99
@@ -278,6 +291,11 @@ jobs:
           echo "LIBGL_ALWAYS_SOFTWARE=1" >> $GITHUB_ENV
           echo "MESA_GL_VERSION_OVERRIDE=3.3" >> $GITHUB_ENV
           echo "MESA_GLSL_VERSION_OVERRIDE=330" >> $GITHUB_ENV
+
+          # Set Qt environment variables for headless mode
+          echo "QT_QPA_PLATFORM=xcb" >> $GITHUB_ENV
+          echo "QT_X11_NO_MITSHM=1" >> $GITHUB_ENV
+          echo "QT_DEBUG_PLUGINS=1" >> $GITHUB_ENV  # Enable Qt plugin debugging
 
           # Set audio environment variables to avoid PulseAudio issues
           echo "PULSE_SERVER=unix:/tmp/pulse-socket" >> $GITHUB_ENV
@@ -292,6 +310,15 @@ jobs:
             sleep 2
           else
             echo "PulseAudio not available, using dummy audio setup"
+          fi
+
+          # Set Qt plugin path if platforms directory exists
+          PLATFORMS_DIR=$(find $SLICER_HOME -name "*platforms*" -type d 2>/dev/null | head -1)
+          if [ -n "$PLATFORMS_DIR" ]; then
+            echo "Found Qt platforms directory: $PLATFORMS_DIR"
+            echo "QT_PLUGIN_PATH=$PLATFORMS_DIR" >> $GITHUB_ENV
+          else
+            echo "No Qt platforms directory found in Slicer installation"
           fi
 
       - name: Run GUI tests
