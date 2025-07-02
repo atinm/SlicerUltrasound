@@ -32,6 +32,19 @@ class AnnotateUltrasoundGUITest:
         """Set up the test environment."""
         slicer.mrmlScene.Clear(0)
 
+        # Check if the module was installed
+        print("Checking if AnnotateUltrasound module is available...")
+        try:
+            import AnnotateUltrasound
+            print(f"✓ AnnotateUltrasound module imported successfully from: {AnnotateUltrasound.__file__}")
+        except ImportError as e:
+            print(f"❌ AnnotateUltrasound module not found: {e}")
+            print("Available modules in slicer.modules:")
+            for module_name in dir(slicer.modules):
+                if not module_name.startswith('_'):
+                    print(f"  - {module_name}")
+            raise RuntimeError("AnnotateUltrasound module not installed or not accessible")
+
         # Force-load the module if needed
         slicer.util.selectModule('AnnotateUltrasound')
         slicer.util.delayDisplay("Selected AnnotateUltrasound", 1000)
