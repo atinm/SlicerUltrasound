@@ -121,11 +121,11 @@ test-pattern: build-testing
 test-coverage: find-slicer-python
 	@echo "Running pytest tests with coverage..."
 	@if [ -f "/Applications/Slicer.app/Contents/bin/PythonSlicer" ]; then \
-		/Applications/Slicer.app/Contents/bin/PythonSlicer run_slicer_tests.py --install-deps --pytest-args --cov=. --cov-report=term-missing; \
+		/Applications/Slicer.app/Contents/bin/PythonSlicer run_slicer_tests.py --install-deps; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script run_slicer_tests.py --install-deps --pytest-args --cov=. --cov-report=term-missing; \
+		/usr/local/bin/Slicer --python-script run_slicer_tests.py --install-deps; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/PythonSlicer" ]; then \
-		$$SLICER_HOME/bin/PythonSlicer run_slicer_tests.py --install-deps --pytest-args --cov=. --cov-report=term-missing; \
+		$$SLICER_HOME/bin/PythonSlicer run_slicer_tests.py --install-deps; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
 		exit 1; \
