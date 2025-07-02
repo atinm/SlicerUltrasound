@@ -162,6 +162,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake build-essential
 
+      - name: Install module explicitly
+        run: |
+          echo "=== Installing module explicitly ==="
+          echo "Current directory: $(pwd)"
+          echo "SLICER_HOME: $SLICER_HOME"
+          echo "Checking for install_module.py:"
+          ls -la Testing/Python/install_module.py || echo "install_module.py not found"
+          echo ""
+          echo "Running install_module.py:"
+          $SLICER_HOME/bin/PythonSlicer $(pwd)/Testing/Python/install_module.py
+          echo "=== Module installation complete ==="
+
       - name: Debug module installation
         run: |
           echo "=== Checking if modules were installed ==="
@@ -368,6 +380,18 @@ jobs:
             echo "No Qt platforms directory found in Slicer installation"
           fi
 
+      - name: Install module explicitly
+        run: |
+          echo "=== Installing module explicitly ==="
+          echo "Current directory: $(pwd)"
+          echo "SLICER_HOME: $SLICER_HOME"
+          echo "Checking for install_module.py:"
+          ls -la Testing/Python/install_module.py || echo "install_module.py not found"
+          echo ""
+          echo "Running install_module.py:"
+          $SLICER_HOME/bin/PythonSlicer $(pwd)/Testing/Python/install_module.py
+          echo "=== Module installation complete ==="
+
       - name: Debug module installation
         run: |
           echo "=== Checking if modules were installed ==="
@@ -402,14 +426,3 @@ jobs:
         run: |
           # Run DICOM loading tests with virtual display
           make test-dicom
-
-      - name: Check permissions on module directory
-        run: |
-          echo "Current user and groups:"
-          id
-          echo "qt-scripted-modules directory permissions:"
-          ls -ld $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/
-          echo "AnnotateUltrasound directory permissions:"
-          ls -ld $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound || echo "Not found"
-          echo "AnnotateUltrasound files:"
-          ls -l $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound || echo "Not found"
