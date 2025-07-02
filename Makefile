@@ -95,7 +95,19 @@ test: test-pytest
 # Build and install the module into Slicer
 install-module: find-slicer-python
 	@echo "Building and installing SlicerUltrasound module..."
-	@python3 install_module.py
+	@echo "Current directory: $$(pwd)"
+	@echo "Checking for install_module.py:"
+	@ls -la install_module.py || echo "install_module.py not found in current directory"
+	@if [ -f "/Applications/Slicer.app/Contents/bin/PythonSlicer" ]; then \
+		/Applications/Slicer.app/Contents/bin/PythonSlicer $$(pwd)/install_module.py; \
+	elif [ -f "/usr/local/bin/Slicer" ]; then \
+		/usr/local/bin/Slicer --python-script $$(pwd)/install_module.py; \
+	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/PythonSlicer" ]; then \
+		$$SLICER_HOME/bin/PythonSlicer $$(pwd)/install_module.py; \
+	else \
+		echo "❌ Slicer not found. Please install Slicer first."; \
+		exit 1; \
+	fi
 
 # Run pytest-style tests in Slicer Python environment
 test-pytest: find-slicer-python
