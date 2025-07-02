@@ -43,6 +43,17 @@ jobs:
           name: codecov-pytest
           fail_ci_if_error: false
 
+      - name: Check permissions on module directory
+        run: |
+          echo "Current user and groups:"
+          id
+          echo "qt-scripted-modules directory permissions:"
+          ls -ld $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/
+          echo "AnnotateUltrasound directory permissions:"
+          ls -ld $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound || echo "Not found"
+          echo "AnnotateUltrasound files:"
+          ls -l $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound || echo "Not found"
+
   # Job 2: Module installation test
   test-installation:
     runs-on: ubuntu-latest
@@ -151,6 +162,31 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake build-essential
 
+      - name: Debug module installation
+        run: |
+          echo "=== Checking if modules were installed ==="
+          echo "SLICER_HOME: $SLICER_HOME"
+          echo "Extension directory: $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/"
+          echo ""
+          echo "Contents of qt-scripted-modules directory:"
+          ls -la $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/ | grep -E "(AnnotateUltrasound|AnonymizeUltrasound|MmodeAnalysis|TimeSeriesAnnotation)" || echo "No SlicerUltrasound modules found!"
+          echo ""
+          echo "Checking AnnotateUltrasound directory contents:"
+          if [ -d "$SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound" ]; then
+            ls -la $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound/
+            echo ""
+            echo "Checking if AnnotateUltrasound.py exists:"
+            if [ -f "$SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound/AnnotateUltrasound.py" ]; then
+              echo "✓ AnnotateUltrasound.py found"
+              echo "File size: $(stat -c%s $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound/AnnotateUltrasound.py) bytes"
+            else
+              echo "❌ AnnotateUltrasound.py not found"
+            fi
+          else
+            echo "❌ AnnotateUltrasound directory not found"
+          fi
+          echo "=== End module installation check ==="
+
       - name: Run tests with coverage
         run: |
           make test-coverage
@@ -162,6 +198,17 @@ jobs:
           flags: coverage
           name: codecov-coverage
           fail_ci_if_error: false
+
+      - name: Check permissions on module directory
+        run: |
+          echo "Current user and groups:"
+          id
+          echo "qt-scripted-modules directory permissions:"
+          ls -ld $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/
+          echo "AnnotateUltrasound directory permissions:"
+          ls -ld $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound || echo "Not found"
+          echo "AnnotateUltrasound files:"
+          ls -l $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound || echo "Not found"
 
   # Job 4: GUI tests with virtual display
   test-gui:
@@ -321,6 +368,31 @@ jobs:
             echo "No Qt platforms directory found in Slicer installation"
           fi
 
+      - name: Debug module installation
+        run: |
+          echo "=== Checking if modules were installed ==="
+          echo "SLICER_HOME: $SLICER_HOME"
+          echo "Extension directory: $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/"
+          echo ""
+          echo "Contents of qt-scripted-modules directory:"
+          ls -la $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/ | grep -E "(AnnotateUltrasound|AnonymizeUltrasound|MmodeAnalysis|TimeSeriesAnnotation)" || echo "No SlicerUltrasound modules found!"
+          echo ""
+          echo "Checking AnnotateUltrasound directory contents:"
+          if [ -d "$SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound" ]; then
+            ls -la $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound/
+            echo ""
+            echo "Checking if AnnotateUltrasound.py exists:"
+            if [ -f "$SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound/AnnotateUltrasound.py" ]; then
+              echo "✓ AnnotateUltrasound.py found"
+              echo "File size: $(stat -c%s $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound/AnnotateUltrasound.py) bytes"
+            else
+              echo "❌ AnnotateUltrasound.py not found"
+            fi
+          else
+            echo "❌ AnnotateUltrasound directory not found"
+          fi
+          echo "=== End module installation check ==="
+
       - name: Run GUI tests
         run: |
           # Run GUI tests with virtual display
@@ -330,3 +402,14 @@ jobs:
         run: |
           # Run DICOM loading tests with virtual display
           make test-dicom
+
+      - name: Check permissions on module directory
+        run: |
+          echo "Current user and groups:"
+          id
+          echo "qt-scripted-modules directory permissions:"
+          ls -ld $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/
+          echo "AnnotateUltrasound directory permissions:"
+          ls -ld $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound || echo "Not found"
+          echo "AnnotateUltrasound files:"
+          ls -l $SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules/AnnotateUltrasound || echo "Not found"
