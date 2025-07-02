@@ -32,44 +32,31 @@ class AnnotateUltrasoundGUITest:
         """Set up the test environment."""
         slicer.mrmlScene.Clear(0)
 
+        # Force-load the module if needed
         slicer.util.selectModule('AnnotateUltrasound')
         slicer.util.delayDisplay("Selected AnnotateUltrasound", 1000)
 
-        # Try multiple ways to get the widget
+        # Retry access until module is available
         self.widget = None
-        try:
-            # Method 1: Try to import and use the function
-            from AnnotateUltrasound import getAnnotateUltrasoundWidget
-            self.widget = getAnnotateUltrasoundWidget()
-            print("✓ Got widget via getAnnotateUltrasoundWidget function")
-        except ImportError as e:
-            print(f"⚠ Could not import getAnnotateUltrasoundWidget: {e}")
+        attempts = 5
+        for i in range(attempts):
             try:
-                # Method 2: Try to get widget through Slicer's module system
-                moduleWidget = slicer.modules.annotateultrasound.widgetRepresentation()
-                if moduleWidget and hasattr(moduleWidget, 'self'):
-                    self.widget = moduleWidget.self()
-                    print("✓ Got widget via slicer.modules.annotateultrasound.widgetRepresentation()")
-            except Exception as e2:
-                print(f"⚠ Could not get widget via module system: {e2}")
-                # Method 3: Try to create widget directly
-                try:
-                    from AnnotateUltrasound import AnnotateUltrasoundWidget
-                    self.widget = AnnotateUltrasoundWidget()
-                    print("✓ Created widget directly via AnnotateUltrasoundWidget class")
-                except Exception as e3:
-                    print(f"⚠ Could not create widget directly: {e3}")
-                    raise RuntimeError("Failed to get AnnotateUltrasound widget instance via any method")
+                module = getattr(slicer.modules, 'annotateultrasound', None)
+                if module:
+                    widget = module.widgetRepresentation()
+                    if widget and hasattr(widget, 'self'):
+                        self.widget = widget.self()
+                        print(f"✓ Got widget on attempt {i+1}")
+                        break
+            except Exception as e:
+                print(f"Attempt {i+1} failed to get widget: {e}")
+            slicer.util.delayDisplay(f"Waiting for module load... ({i+1})", 1000)
 
-        if self.widget is None:
-            raise RuntimeError("Failed to get AnnotateUltrasound widget instance")
+        if not self.widget:
+            raise RuntimeError("Failed to get AnnotateUltrasound widget instance after retries")
 
         self.logic = self.widget.logic
-
-        # Wait for UI to be ready
         time.sleep(1)
-
-        # Load test input directory and trigger Read Input
         self.loadTestInput()
 
     def tearDown(self):
