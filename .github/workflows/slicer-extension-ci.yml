@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,42 +22,69 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake build-essential git
 
-      - name: Download Slicer SDK
+      - name: Download Slicer
         run: |
-          # Download Slicer SDK for Linux
+          # Download Slicer for testing (not building)
           SLICER_VERSION="5.8.1"
-          SLICER_SDK_URL="https://download.slicer.org/bitstream/67c51fc129825655577cfee9"
-          wget $SLICER_SDK_URL -O Slicer-$SLICER_VERSION-linux-amd64.tar.gz
+          SLICER_URL="https://download.slicer.org/bitstream/67c51fc129825655577cfee9"
+          wget $SLICER_URL -O Slicer-$SLICER_VERSION-linux-amd64.tar.gz
           tar xzf Slicer-$SLICER_VERSION-linux-amd64.tar.gz
           export SLICER_HOME=$PWD/Slicer-$SLICER_VERSION-linux-amd64
           echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
 
-      - name: Configure and build extension
+      - name: Install SlicerUltrasound module
         run: |
-          # Set up Slicer extension build environment
-          export SLICER_DIR=$SLICER_HOME
-          export PATH=$SLICER_HOME/bin:$PATH
+          # Copy module files directly to Slicer's extension directory
+          extension_dir=$SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules
 
-          # Create build directory
-          mkdir -p build
-          cd build
+          # Copy the module directories
+          modules=("AnnotateUltrasound" "AnonymizeUltrasound" "MmodeAnalysis" "TimeSeriesAnnotation")
+          for module in "${modules[@]}"; do
+            if [ -d "$module" ]; then
+              target_dir="$extension_dir/$module"
+              echo "Installing $module to $target_dir"
 
-          # Configure with CMake
-          cmake .. \
-            -DSlicer_DIR=$SLICER_HOME \
-            -DBUILD_TESTING=ON \
-            -DCMAKE_BUILD_TYPE=Release
+              # Remove existing directory if it exists
+              if [ -d "$target_dir" ]; then
+                rm -rf "$target_dir"
+              fi
 
-          # Build
-          make -j$(nproc)
+              # Copy the module
+              cp -r "$module" "$target_dir"
+            fi
+          done
 
-      - name: Run tests
+          echo "✓ Modules installed successfully"
+
+      - name: Run Python tests
         run: |
-          cd build
-          # Run CTest tests
-          ctest -V --output-on-failure
+          # Run pytest tests in Slicer's Python environment
+          make test-pytest
 
-          # Run Python tests if available
-          if [ -f "run_slicer_tests.py" ]; then
-            $SLICER_HOME/bin/PythonSlicer ../run_slicer_tests.py
-          fi
+      - name: Test module loading
+        run: |
+          # Create a temporary Python script for module loading test
+          cat > test_module_loading.py << 'EOF'
+          import sys
+          import os
+
+          # Add Slicer extension path
+          slicer_home = os.environ.get('SLICER_HOME')
+          if slicer_home:
+              extension_path = os.path.join(slicer_home, 'lib', 'Slicer-5.8', 'qt-scripted-modules')
+              sys.path.append(extension_path)
+
+          # Test importing each module
+          modules = ['AnnotateUltrasound', 'AnonymizeUltrasound', 'MmodeAnalysis', 'TimeSeriesAnnotation']
+          for module in modules:
+              try:
+                  __import__(module)
+                  print(f'✓ {module} imported successfully')
+              except Exception as e:
+                  print(f'✗ Failed to import {module}: {e}')
+                  sys.exit(1)
+          print('✓ All modules imported successfully')
+          EOF
+
+          # Run the module loading test
+          $SLICER_HOME/bin/PythonSlicer test_module_loading.py
