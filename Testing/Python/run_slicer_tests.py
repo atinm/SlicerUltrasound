@@ -20,6 +20,68 @@ def install_dependencies():
         print(f"Slicer module location: {slicer.__file__}")
         print(f"Slicer module attributes: {dir(slicer)}")
 
+        # Debug: Print Slicer module search paths and loaded modules
+        print("\n=== SLICER MODULE DEBUG INFO ===")
+        try:
+            print("Slicer version:", slicer.app.applicationVersion())
+            print("Available modules:", slicer.moduleNames())
+            print("AnnotateUltrasound in modules?", "AnnotateUltrasound" in slicer.moduleNames())
+            print("Hasattr slicer.modules.AnnotateUltrasound?", hasattr(slicer.modules, "AnnotateUltrasound"))
+        except Exception as e:
+            print(f"Error getting module info: {e}")
+
+        # Debug: Check Slicer log for errors
+        print("\n=== SLICER LOG CHECK ===")
+        try:
+            import tempfile
+            log_dir = tempfile.gettempdir()
+            print(f"Checking for Slicer logs in: {log_dir}")
+            import glob
+            log_files = glob.glob(os.path.join(log_dir, "*.log")) + glob.glob(os.path.join(log_dir, "Slicer*.log"))
+            if log_files:
+                print(f"Found log files: {log_files}")
+                for log_file in log_files[:3]:  # Check first 3 log files
+                    try:
+                        with open(log_file, 'r') as f:
+                            content = f.read()
+                            if 'error' in content.lower() or 'fail' in content.lower():
+                                print(f"Log file {log_file} contains errors:")
+                                lines = content.split('\n')
+                                for line in lines[-20:]:  # Last 20 lines
+                                    if 'error' in line.lower() or 'fail' in line.lower():
+                                        print(f"  {line}")
+                    except Exception as e:
+                        print(f"Could not read log file {log_file}: {e}")
+            else:
+                print("No log files found")
+        except Exception as e:
+            print(f"Error checking logs: {e}")
+
+        print("=== END DEBUG INFO ===\n")
+
+        # Debug: Try to find and load AnnotateUltrasound module
+        print("=== ANNOTATEULTRASOUND MODULE CHECK ===")
+        try:
+            import os
+            slicer_root = os.path.dirname(os.path.dirname(slicer.__file__))
+            slicer_version = slicer.app.applicationVersion().split(' ')[0]  # e.g., '5.8.0'
+            major_minor = '.'.join(slicer_version.split('.')[:2])  # '5.8'
+            common_paths = [
+                os.path.join(slicer_root, f"lib/Slicer-{major_minor}/qt-scripted-modules"),
+                os.path.join(slicer_root, f"share/Slicer-{major_minor}/qt-scripted-modules"),
+            ]
+            for path in common_paths:
+                annotate_path = os.path.join(path, 'AnnotateUltrasound')
+                print(f"Checking {annotate_path} ...")
+                if os.path.exists(annotate_path):
+                    print(f"  ✓ Found at: {annotate_path}")
+                    print(f"    Contents: {os.listdir(annotate_path)}")
+                else:
+                    print(f"  ✗ Not found at: {annotate_path}")
+        except Exception as e:
+            print(f"Error checking AnnotateUltrasound module: {e}")
+        print("=== END ANNOTATEULTRASOUND CHECK ===\n")
+
         # Check if slicer.util exists
         if hasattr(slicer, 'util'):
             print("✓ slicer.util exists")
