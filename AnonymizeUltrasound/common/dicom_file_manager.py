@@ -44,7 +44,7 @@ class DicomFileManager:
     PATIENT_ID_HASH_LENGTH = 10
     INSTANCE_ID_HASH_LENGTH = 8
     DEFAULT_CONTENT_DATE = '19000101'
-    DEFAULT_CONTENT_TIME = '000000'
+    DEFAULT_CONTENT_TIME = ''
 
     def __init__(self):
         self.dicom_df = None
@@ -558,19 +558,20 @@ class DicomFileManager:
         ds.Columns = width
         ds.Modality = 'US'
 
-        # Set photometric interpretation
+        # Set photometric interpretation based on the number of channels
         if ds.SamplesPerPixel == 1:
             ds.PhotometricInterpretation = "MONOCHROME2"
         elif ds.SamplesPerPixel == 3:
-            ds.PhotometricInterpretation = "YBR_FULL_422"
+            ds.PhotometricInterpretation = "YBR_FULL_422" # For JPEG compressed images
 
-        # Copy spacing information
         self._copy_spacing_info(ds, current_record)
 
         return ds
 
     def _copy_spacing_info(self, ds: pydicom.Dataset, current_record: dict) -> None:
-        """Copy spacing information from current record to dataset."""
+        """
+        Copy spacing to conventional PixelSpacing tag for DICOM readers that don't support ultrasound regions.
+        """
         source_dataset = current_record.DICOMDataset
 
         # Copy SequenceOfUltrasoundRegions if available
@@ -589,10 +590,20 @@ class DicomFileManager:
         """Copy metadata from source dataset."""
         # Tags to copy directly
         tags_to_copy = [
-            "BitsAllocated", "BitsStored", "HighBit", "ManufacturerModelName",
-            "PatientAge", "PatientSex", "PixelRepresentation", "SeriesNumber",
-            "StationName", "StudyDate", "StudyDescription", "StudyID", "StudyTime",
-            "TransducerType", "Manufacturer"
+            "BitsAllocated",
+            "BitsStored",
+            "HighBit",
+            "ManufacturerModelName",
+            # "PatientAge", # TODO: check why this is not excluded in the original code?
+            # "PatientSex", # TODO: check why this is not excluded in the original code?
+            "PixelRepresentation",
+            "SeriesNumber",
+            "StationName",
+            "StudyDate",
+            "StudyDescription",
+            "StudyID",
+            "StudyTime",
+            "TransducerType"
         ]
 
         for tag in tags_to_copy:
@@ -602,12 +613,11 @@ class DicomFileManager:
         # Handle UIDs
         self._copy_and_generate_uids(ds, source_ds, output_path)
 
-        # Set series description to filename
+        # Make the series desciption the filename, so we can easily identify the file later in the viewer.
         ds.SeriesDescription = os.path.basename(output_path)
 
         # Get series number from dataframe
-        series_number = self._get_series_number_for_current_instance()
-        ds.SeriesNumber = series_number
+        ds.SeriesNumber = self._get_series_number_for_current_instance()
 
     def _copy_and_generate_uids(self, ds: pydicom.Dataset, source_ds: pydicom.Dataset, output_path: str) -> None:
         """Copy or generate required UIDs."""
@@ -625,7 +635,7 @@ class DicomFileManager:
             logging.error(f"SOPInstanceUID not found. Generating new one for {output_path}")
             ds.SOPInstanceUID = pydicom.uid.generate_uid()
 
-        # Always generate unique SeriesInstanceUID
+        # Generate a unique SeriesInstanceUID. This is because ultrasound machines often reuse the same SeriesInstanceUID, which can cause issues in the viewer.
         ds.SeriesInstanceUID = pydicom.uid.generate_uid()
 
         # Copy or generate StudyInstanceUID
@@ -638,9 +648,10 @@ class DicomFileManager:
     def _apply_anonymization(self, ds: pydicom.Dataset, source_ds: pydicom.Dataset,
                             new_patient_name: str = None, new_patient_id: str = None) -> None:
         """Apply anonymization including patient info and date shifting."""
-        # Set patient information
-        ds.PatientName = new_patient_name if new_patient_name else source_ds.PatientName
-        ds.PatientID = new_patient_id if new_patient_id else source_ds.PatientID
+        # Set anonymized patient information
+        # TODO: check if there is a use case for not setting the patient name/ ID to a random value which the original code does
+        ds.PatientName = new_patient_name if new_patient_name else pydicom.uid.generate_uid()
+        ds.PatientID = new_patient_id if new_patient_id else pydicom.uid.generate_uid()
 
         # Apply date shifting for anonymization
         self._apply_date_shifting(ds, source_ds)
@@ -677,14 +688,24 @@ class DicomFileManager:
 
     def _set_conformance_attributes(self, ds: pydicom.Dataset, source_ds: pydicom.Dataset) -> None:
         """Set required DICOM conformance attributes."""
-        # Type 2 elements (must be present, can be empty)
-        ds.PatientBirthDate = getattr(source_ds, 'PatientBirthDate', '')
-        ds.ReferringPhysicianName = getattr(source_ds, 'ReferringPhysicianName', '')
-        ds.AccessionNumber = getattr(source_ds, 'AccessionNumber', '')
-        ds.Laterality = getattr(source_ds, 'Laterality', '')
-        ds.InstanceNumber = getattr(source_ds, 'InstanceNumber', 1)
-        ds.PatientOrientation = getattr(source_ds, 'PatientOrientation', '')
-        ds.ImageType = getattr(source_ds, 'ImageType', r"ORIGINAL\PRIMARY\IMAGE")
+        # Add missing required attributes to satisfy DICOM conformance.
+        # Type 2 elements must be present (they can be empty).
+        # https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.7.2.html
+
+        # TODO: check why original code does not set these attributes to empty strings regardless of the source dataset values
+        ds.PatientBirthDate = ''
+        ds.ReferringPhysicianName = ''
+        ds.AccessionNumber = ''
+
+        # Conditional elements: provide empty defaults if unknown.
+        if not hasattr(ds, 'Laterality'):
+            ds.Laterality = ''
+        if not hasattr(ds, 'InstanceNumber'):
+            ds.InstanceNumber = 1
+        if not hasattr(ds, 'PatientOrientation'):
+            ds.PatientOrientation = ''
+        if not hasattr(ds, "ImageType"):
+            ds.ImageType = r"ORIGINAL\PRIMARY\IMAGE"
 
         # Multi-frame specific attributes
         if hasattr(ds, 'NumberOfFrames') and int(ds.NumberOfFrames) > 1:
@@ -694,8 +715,8 @@ class DicomFileManager:
             else:
                 ds.FrameIncrementPointer = pydicom.tag.Tag(0x0018, 0x1063)
 
-        # Color image specific attributes
-        if ds.SamplesPerPixel > 1:
+        # For color images, set PlanarConfiguration (Type 1C)
+        if hasattr(ds, 'SamplesPerPixel') and ds.SamplesPerPixel == 3:
             ds.PlanarConfiguration = getattr(source_ds, 'PlanarConfiguration', 0)
 
     def _set_compressed_pixel_data(self, ds: pydicom.Dataset, image_array: np.ndarray) -> None:
@@ -766,3 +787,44 @@ class DicomFileManager:
             return str(matching_rows.iloc[0]['SeriesNumber'])
 
         return '1'
+
+    def generate_filename_from_dicom_dataset(self, ds: pydicom.Dataset, hash_patient_id: bool = True) -> tuple[str, str, str]:
+        """
+        Generate a filename from a DICOM header dictionary.
+        Optionally, the name will be a hash of the PatientID and the SOP Instance UID.
+        The name will consist of two parts:
+        X_Y.dcm
+        X is generated by hashing the original patient UID to a 10-digit number.
+        Y is generated from the DICOM instance UID, but limited to 8 digits
+
+        :param ds: DICOM dataset
+        :param hash_patient_id: If True, hash the patient ID
+        :returns: tuple (filename, patientId, instanceId)
+        """
+        patient_id = ds.PatientID
+        instance_id = ds.SOPInstanceUID
+
+        if patient_id is None or patient_id == "":
+            logging.error("PatientID not found in DICOM header dict")
+            return "", "", ""
+
+        if instance_id is None or instance_id == "":
+            logging.error("SOPInstanceUID not found in DICOM header dict")
+            return "", "", ""
+
+        if hash_patient_id:
+            hash_object = hashlib.sha256()
+            hash_object.update(str(patient_id).encode())
+            patient_id = int(hash_object.hexdigest(), 16) % 10**10
+        else:
+            patient_id = patient_id
+
+        hash_object_instance_id = hashlib.sha256()
+        hash_object_instance_id.update(str(instance_id).encode())
+        instance_id = int(hash_object_instance_id.hexdigest(), 16) % 10**8
+
+        # Add trailing zeros
+        patient_id = str(patient_id).zfill(self.PATIENT_ID_HASH_LENGTH)
+        instance_id = str(instance_id).zfill(self.INSTANCE_ID_HASH_LENGTH)
+
+        return f"{patient_id}_{instance_id}.dcm", patient_id, instance_id

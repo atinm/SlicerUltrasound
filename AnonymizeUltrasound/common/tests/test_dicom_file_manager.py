@@ -725,8 +725,8 @@ class TestDicomFileManager:
 
         manager_with_data._apply_anonymization(ds, source_ds)
 
-        assert ds.PatientName == source_ds.PatientName
-        assert ds.PatientID == source_ds.PatientID
+        assert ds.PatientName != source_ds.PatientName # Patient name should be set to a random value
+        assert ds.PatientID != source_ds.PatientID # Patient ID should be set to a random value
 
     def test_apply_date_shifting(self, manager_with_data):
         """Test _apply_date_shifting"""
@@ -835,6 +835,251 @@ class TestDicomFileManager:
 
         assert isinstance(compressed, bytes)
         assert len(compressed) > 0
+
+    def test_copy_source_metadata_excludes_patient_sensitive_data(self, manager_with_data, temp_dir):
+        """Test that PatientAge and PatientSex are no longer copied"""
+        ds = pydicom.Dataset()
+        source_ds = manager_with_data.dicom_df.iloc[0].DICOMDataset
+
+        # Add patient age and sex to source
+        source_ds.PatientAge = "025Y"
+        source_ds.PatientSex = "M"
+
+        output_path = os.path.join(temp_dir, "test.dcm")
+        manager_with_data._copy_source_metadata(ds, source_ds, output_path)
+
+        # These should NOT be copied
+        assert not hasattr(ds, 'PatientAge')
+        assert not hasattr(ds, 'PatientSex')
+
+        # But these should still be copied
+        assert hasattr(ds, 'BitsAllocated')
+        assert hasattr(ds, 'TransducerType')
+
+    def test_apply_anonymization_generates_uids_when_none_provided(self, manager_with_data):
+        """Test that _apply_anonymization generates UIDs when no patient info provided"""
+        ds = pydicom.Dataset()
+        source_ds = manager_with_data.dicom_df.iloc[0].DICOMDataset
+
+        # Don't provide new patient info
+        manager_with_data._apply_anonymization(ds, source_ds)
+
+        # Should have generated UIDs, not original values
+        assert ds.PatientName != source_ds.PatientName
+        assert ds.PatientID != source_ds.PatientID
+        # Should be valid UIDs (contain dots and numbers)
+        assert '.' in ds.PatientName
+        assert '.' in ds.PatientID
+
+    def test_apply_anonymization_uses_provided_patient_info(self, manager_with_data):
+        """Test that _apply_anonymization uses provided patient info when given"""
+        ds = pydicom.Dataset()
+        source_ds = manager_with_data.dicom_df.iloc[0].DICOMDataset
+
+        manager_with_data._apply_anonymization(
+            ds, source_ds,
+            new_patient_name="Anonymous^Patient",
+            new_patient_id="ANON123"
+        )
+
+        assert ds.PatientName == "Anonymous^Patient"
+        assert ds.PatientID == "ANON123"
+
+    def test_set_conformance_attributes_forces_empty_type2_elements(self, manager_with_data):
+        """Test that Type 2 elements are forced to empty strings regardless of source"""
+        ds = pydicom.Dataset()
+        source_ds = pydicom.Dataset()
+
+        source_ds.PatientBirthDate = "19900101"
+        source_ds.ReferringPhysicianName = "Dr. Smith"
+        source_ds.AccessionNumber = "ACC123"
+
+        manager_with_data._set_conformance_attributes(ds, source_ds)
+
+        # Should be empty strings, not copied from source
+        assert ds.PatientBirthDate == ''
+        assert ds.ReferringPhysicianName == ''
+        assert ds.AccessionNumber == ''
+
+    def test_set_conformance_attributes_conditional_elements_only_when_missing(self, manager_with_data):
+        """Test that conditional elements are only set when missing from dataset"""
+        ds = pydicom.Dataset()
+        source_ds = pydicom.Dataset()
+
+        # Pre-set some attributes in the dataset
+        ds.Laterality = "L"
+        ds.InstanceNumber = 5
+        ds.SamplesPerPixel = 1
+
+        manager_with_data._set_conformance_attributes(ds, source_ds)
+
+        # Pre-existing values should be preserved
+        assert ds.Laterality == "L"
+        assert ds.InstanceNumber == 5
+
+        # Missing attributes should get defaults
+        assert ds.PatientOrientation == ''
+        assert ds.ImageType == ['ORIGINAL', 'PRIMARY', 'IMAGE']
+
+    def test_set_conformance_attributes_missing_elements_get_defaults(self, manager_with_data):
+        """Test that missing conditional elements get default values"""
+        ds = pydicom.Dataset()
+        source_ds = pydicom.Dataset()
+
+        manager_with_data._set_conformance_attributes(ds, source_ds)
+
+        # All missing elements should get defaults
+        assert ds.Laterality == ''
+        assert ds.InstanceNumber == 1
+        assert ds.PatientOrientation == ''
+        assert ds.ImageType == ['ORIGINAL', 'PRIMARY', 'IMAGE']
+
+    def test_generate_filename_from_dicom_dataset_with_hashing(self, manager):
+        """Test generate_filename_from_dicom_dataset with patient ID hashing enabled"""
+        ds = self.create_test_dicom_file()
+
+        filename, patient_id, instance_id = manager.generate_filename_from_dicom_dataset(ds, hash_patient_id=True)
+
+        # Should return a properly formatted filename
+        assert filename.endswith('.dcm')
+        assert '_' in filename
+
+        # Patient ID should be hashed (10 digits)
+        assert len(patient_id) == 10
+        assert patient_id.isdigit()
+        assert patient_id != self.PATIENT_ID  # Should be different from original
+
+        # Instance ID should be hashed (8 digits)
+        assert len(instance_id) == 8
+        assert instance_id.isdigit()
+
+    def test_generate_filename_from_dicom_dataset_without_hashing(self, manager):
+        """Test generate_filename_from_dicom_dataset with patient ID hashing disabled"""
+        ds = self.create_test_dicom_file()
+
+        filename, patient_id, instance_id = manager.generate_filename_from_dicom_dataset(ds, hash_patient_id=False)
+
+        # Should return a properly formatted filename
+        assert filename.endswith('.dcm')
+        assert '_' in filename
+
+        # Patient ID should be original (not hashed)
+        assert patient_id == "000" + self.PATIENT_ID # Total length should be 10 digits, so we add 3 zeros to the front
+
+        # Instance ID should still be hashed (8 digits)
+        assert len(instance_id) == 8
+        assert instance_id.isdigit()
+
+    def test_generate_filename_from_dicom_dataset_missing_patient_id(self, manager):
+        """Test generate_filename_from_dicom_dataset with missing PatientID"""
+        ds = self.create_test_dicom_file(PatientID=None)
+
+        filename, patient_id, instance_id = manager.generate_filename_from_dicom_dataset(ds)
+
+        # Should return empty strings when patient ID is missing
+        assert filename == ""
+        assert patient_id == ""
+        assert instance_id == ""
+
+    def test_generate_filename_from_dicom_dataset_empty_patient_id(self, manager):
+        """Test generate_filename_from_dicom_dataset with empty PatientID"""
+        ds = self.create_test_dicom_file(PatientID="")
+
+        filename, patient_id, instance_id = manager.generate_filename_from_dicom_dataset(ds)
+
+        # Should return empty strings when patient ID is empty
+        assert filename == ""
+        assert patient_id == ""
+        assert instance_id == ""
+
+    def test_generate_filename_from_dicom_dataset_missing_instance_uid(self, manager):
+        """Test generate_filename_from_dicom_dataset with missing SOPInstanceUID"""
+        ds = self.create_test_dicom_file(SOPInstanceUID=None)
+
+        filename, patient_id, instance_id = manager.generate_filename_from_dicom_dataset(ds)
+
+        # Should return empty strings when instance UID is missing
+        assert filename == ""
+        assert patient_id == ""
+        assert instance_id == ""
+
+    def test_generate_filename_from_dicom_dataset_empty_instance_uid(self, manager):
+        """Test generate_filename_from_dicom_dataset with empty SOPInstanceUID"""
+        ds = self.create_test_dicom_file(SOPInstanceUID="")
+
+        filename, patient_id, instance_id = manager.generate_filename_from_dicom_dataset(ds)
+
+        # Should return empty strings when instance UID is empty
+        assert filename == ""
+        assert patient_id == ""
+        assert instance_id == ""
+
+    def test_generate_filename_from_dicom_dataset_deterministic_hashing(self, manager):
+        """Test that filename generation is deterministic for same inputs"""
+        ds1 = self.create_test_dicom_file()
+        ds2 = self.create_test_dicom_file()  # Same values
+
+        filename1, patient_id1, instance_id1 = manager.generate_filename_from_dicom_dataset(ds1)
+        filename2, patient_id2, instance_id2 = manager.generate_filename_from_dicom_dataset(ds2)
+
+        # Same inputs should produce same outputs
+        assert filename1 == filename2
+        assert patient_id1 == patient_id2
+        assert instance_id1 == instance_id2
+
+    def test_generate_filename_from_dicom_dataset_different_inputs_different_outputs(self, manager):
+        """Test that different inputs produce different outputs"""
+        ds1 = self.create_test_dicom_file(PatientID="PATIENT1")
+        ds2 = self.create_test_dicom_file(PatientID="PATIENT2")
+
+        filename1, patient_id1, instance_id1 = manager.generate_filename_from_dicom_dataset(ds1)
+        filename2, patient_id2, instance_id2 = manager.generate_filename_from_dicom_dataset(ds2)
+
+        # Different inputs should produce different outputs
+        assert filename1 != filename2
+        assert patient_id1 != patient_id2
+        # Instance IDs should be the same since SOPInstanceUID is the same
+        assert instance_id1 == instance_id2
+
+    def test_generate_filename_from_dicom_dataset_zero_padding(self, manager):
+        """Test that patient and instance IDs are properly zero-padded"""
+        # Create a dataset that would generate small hash values
+        ds = self.create_test_dicom_file(PatientID="A", SOPInstanceUID="B")
+
+        filename, patient_id, instance_id = manager.generate_filename_from_dicom_dataset(ds)
+
+        # Should be zero-padded to correct lengths
+        assert len(patient_id) == manager.PATIENT_ID_HASH_LENGTH
+        assert len(instance_id) == manager.INSTANCE_ID_HASH_LENGTH
+        assert patient_id.isdigit()
+        assert instance_id.isdigit()
+
+    def test_generate_filename_from_dicom_dataset_return_type(self, manager):
+        """Test that generate_filename_from_dicom_dataset returns correct types"""
+        ds = self.create_test_dicom_file()
+
+        result = manager.generate_filename_from_dicom_dataset(ds)
+
+        # Should return a tuple of 3 strings
+        assert isinstance(result, tuple)
+        assert len(result) == 3
+        assert all(isinstance(item, str) for item in result)
+
+    # Test for updated comment in _copy_and_generate_uids (verification that logic still works)
+    def test_copy_and_generate_uids_always_generates_series_uid(self, manager_with_data, temp_dir):
+        """Test that SeriesInstanceUID is always generated (never copied from source)"""
+        ds = pydicom.Dataset()
+        source_ds = manager_with_data.dicom_df.iloc[0].DICOMDataset
+        output_path = os.path.join(temp_dir, "test.dcm")
+
+        original_series_uid = source_ds.SeriesInstanceUID
+
+        manager_with_data._copy_and_generate_uids(ds, source_ds, output_path)
+
+        # SeriesInstanceUID should always be different from source
+        assert ds.SeriesInstanceUID != original_series_uid
+        assert hasattr(ds, 'SeriesInstanceUID')
+        assert ds.SeriesInstanceUID != ""
 
     @patch('pydicom.dataset.FileDataset.save_as')
     def test_create_and_save_dicom_file(self, mock_save_as, manager_with_data, temp_dir):
