@@ -217,6 +217,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake build-essential xvfb x11-utils
 
+      - name: Debug Slicer installation
+        run: |
+          echo "SLICER_HOME: $SLICER_HOME"
+          echo "Slicer installation structure:"
+          ls -la $SLICER_HOME/
+          echo "Slicer bin directory:"
+          ls -la $SLICER_HOME/bin/
+          echo "Checking for Slicer executable:"
+          find $SLICER_HOME -name "Slicer" -type f 2>/dev/null || echo "No Slicer executable found"
+
       - name: Start virtual display
         run: |
           # Start Xvfb on display :99
