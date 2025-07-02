@@ -14,7 +14,14 @@ import time
 modulePath = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, modulePath)
 
-# Add project root to Python path for Slicer 5.8 compatibility
+# Add module directory to Python path for Slicer 5.8 compatibility
+# The module is in AnnotateUltrasound/AnnotateUltrasound.py, so we need the parent directory
+module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # AnnotateUltrasound/
+if module_dir not in sys.path:
+    sys.path.insert(0, module_dir)
+    print(f"Added module directory to Python path: {module_dir}")
+
+# Also add project root for other modules
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
