@@ -10,13 +10,8 @@ import slicer
 import vtk
 import time
 
-# Add the module path to sys.path
-modulePath = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, modulePath)
-
-# Add module directory to Python path for Slicer 5.8 compatibility
-# The module is in AnnotateUltrasound/AnnotateUltrasound.py, so we need the parent directory
-module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # AnnotateUltrasound/
+# Add the module directory to sys.path (the directory containing AnnotateUltrasound.py)
+module_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # AnnotateUltrasound/
 if module_dir not in sys.path:
     sys.path.insert(0, module_dir)
     print(f"Added module directory to Python path: {module_dir}")
@@ -50,7 +45,7 @@ print("  - UI: Edit -> Application Settings -> Modules -> Additional module path
 print("  - Or rely on Python path (current approach)")
 
 print("=== MODULE DEBUG INFO ===")
-print(f"Module path added: {modulePath}")
+print(f"Module directory added: {module_dir}")
 print(f"Current working directory: {os.getcwd()}")
 print(f"Python path includes project root: {project_root in sys.path}")
 print("Slicer additional module paths: Set via UI or environment variables in Slicer 5.8")
