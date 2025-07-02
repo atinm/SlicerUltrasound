@@ -27,6 +27,19 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
     print(f"Added project root to Python path: {project_root}")
 
+# Try to set environment variable for Slicer module discovery
+try:
+    current_paths = os.environ.get('SLICER_ADDITIONAL_MODULE_PATHS', '')
+    if project_root not in current_paths:
+        if current_paths:
+            new_paths = current_paths + os.pathsep + project_root
+        else:
+            new_paths = project_root
+        os.environ['SLICER_ADDITIONAL_MODULE_PATHS'] = new_paths
+        print(f"Set SLICER_ADDITIONAL_MODULE_PATHS: {new_paths}")
+except Exception as e:
+    print(f"Could not set SLICER_ADDITIONAL_MODULE_PATHS: {e}")
+
 # In Slicer 5.8, additional module paths are typically set through:
 # 1. Environment variables (SLICER_ADDITIONAL_MODULE_PATHS)
 # 2. UI settings (Edit -> Application Settings -> Modules -> Additional module paths)
@@ -81,6 +94,22 @@ class AnnotateUltrasoundGUITest:
                 if not module_name.startswith('_'):
                     print(f"  - {module_name}")
             raise RuntimeError("AnnotateUltrasound module not installed or not accessible")
+
+        # Try to force-load the module into Slicer's module system
+        print("Attempting to force-load AnnotateUltrasound into Slicer's module system...")
+        try:
+            # Try to access the module through slicer.modules
+            if hasattr(slicer.modules, 'annotateultrasound'):
+                print("✓ Module found in slicer.modules.annotateultrasound")
+            else:
+                print("⚠ Module not found in slicer.modules, trying to force-load...")
+                # Try to reload the module to trigger Slicer's module discovery
+                import importlib
+                if 'AnnotateUltrasound' in sys.modules:
+                    importlib.reload(sys.modules['AnnotateUltrasound'])
+                    print("✓ Reloaded AnnotateUltrasound module")
+        except Exception as e:
+            print(f"⚠ Could not force-load module: {e}")
 
         # Force-load the module if needed
         print("Available modules in slicer.modules:")

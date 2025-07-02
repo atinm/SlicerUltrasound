@@ -229,6 +229,10 @@ jobs:
       - name: Run GUI tests
         run: |
           # Run GUI tests with virtual display
+          # Set environment variable for Slicer to find our modules
+          echo "Setting SLICER_ADDITIONAL_MODULE_PATHS..."
+          echo "SLICER_ADDITIONAL_MODULE_PATHS=$PWD" >> $GITHUB_ENV
+          echo "SLICER_ADDITIONAL_MODULE_PATHS set to: $PWD"
           make test-gui
 
       - name: Run DICOM loading tests
