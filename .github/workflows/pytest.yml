@@ -6,9 +6,9 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  # Job 1: Basic pytest tests (fastest, runs first)
+  test-pytest:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -31,9 +31,75 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake build-essential
 
-      - name: Install SlicerUltrasound module
+      - name: Run pytest tests
         run: |
-          # Copy module files directly to Slicer's extension directory
+          make test-pytest
+
+      - name: Upload pytest coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: pytest
+          name: codecov-pytest
+          fail_ci_if_error: false
+
+  # Job 2: Slicer-native tests (CTest)
+  test-slicer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+
+      - name: Install Slicer
+        run: |
+          # Download and install Slicer 5.8.1
+          wget https://download.slicer.org/bitstream/67c51fc129825655577cfee9 -O Slicer-5.8.1-linux-amd64.tar.gz
+          tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
+          export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
+          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+
+      - name: Run Slicer-native tests
+        run: |
+          make test-slicer
+
+  # Job 3: Module installation test
+  test-installation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+
+      - name: Install Slicer
+        run: |
+          # Download and install Slicer 5.8.1
+          wget https://download.slicer.org/bitstream/67c51fc129825655577cfee9 -O Slicer-5.8.1-linux-amd64.tar.gz
+          tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
+          export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
+          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+
+      - name: Test module installation
+        run: |
+          # Test that modules can be installed into Slicer
           extension_dir=$SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules
 
           # Copy the module directories
@@ -41,7 +107,7 @@ jobs:
           for module in "${modules[@]}"; do
             if [ -d "$module" ]; then
               target_dir="$extension_dir/$module"
-              echo "Copying $module to $target_dir"
+              echo "Testing installation of $module to $target_dir"
 
               # Remove existing directory if it exists
               if [ -d "$target_dir" ]; then
@@ -50,24 +116,120 @@ jobs:
 
               # Copy the module
               cp -r "$module" "$target_dir"
+
+              # Verify installation
+              if [ -f "$target_dir/${module}.py" ]; then
+                echo "✓ $module installed successfully"
+              else
+                echo "✗ $module installation failed"
+                exit 1
+              fi
             fi
           done
 
-          echo "✓ Module installed successfully"
-
-      - name: Install test dependencies in Slicer Python
+      - name: Test module loading
         run: |
-          $SLICER_HOME/bin/PythonSlicer -m pip install pytest pytest-cov pytest-mock
+          # Create a temporary Python script for module loading test
+          cat > test_module_loading.py << 'EOF'
+          import sys
+          import os
 
-      - name: Run tests in Slicer environment
+          # Add Slicer extension path
+          slicer_home = os.environ.get('SLICER_HOME')
+          if slicer_home:
+              extension_path = os.path.join(slicer_home, 'lib', 'Slicer-5.8', 'qt-scripted-modules')
+              sys.path.append(extension_path)
+
+          # Test importing each module
+          modules = ['AnnotateUltrasound', 'AnonymizeUltrasound', 'MmodeAnalysis', 'TimeSeriesAnnotation']
+          for module in modules:
+              try:
+                  __import__(module)
+                  print(f'✓ {module} imported successfully')
+              except Exception as e:
+                  print(f'✗ Failed to import {module}: {e}')
+                  sys.exit(1)
+          print('✓ All modules imported successfully')
+          EOF
+
+          # Run the module loading test
+          $SLICER_HOME/bin/PythonSlicer test_module_loading.py
+
+  # Job 4: Tests with coverage (most comprehensive)
+  test-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+
+      - name: Install Slicer
         run: |
-          # Run tests using the Makefile to ensure Slicer Python environment
-          make test-pytest
+          # Download and install Slicer 5.8.1
+          wget https://download.slicer.org/bitstream/67c51fc129825655577cfee9 -O Slicer-5.8.1-linux-amd64.tar.gz
+          tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
+          export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
+          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+
+      - name: Run tests with coverage
+        run: |
+          make test-cov
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3
         with:
           file: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
+          flags: coverage
+          name: codecov-coverage
           fail_ci_if_error: false
+
+  # Job 5: GUI tests with virtual display
+  test-gui:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+
+      - name: Install Slicer
+        run: |
+          # Download and install Slicer 5.8.1
+          wget https://download.slicer.org/bitstream/67c51fc129825655577cfee9 -O Slicer-5.8.1-linux-amd64.tar.gz
+          tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
+          export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
+          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
+
+      - name: Install build dependencies and X11
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential xvfb x11-utils
+
+      - name: Start virtual display
+        run: |
+          # Start Xvfb on display :99
+          Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+          sleep 2  # Give Xvfb time to start
+
+      - name: Run GUI tests
+        run: |
+          # Run GUI tests with virtual display
+          make test-gui
+
+      - name: Run DICOM loading tests
+        run: |
+          # Run DICOM loading tests with virtual display
+          make test-dicom

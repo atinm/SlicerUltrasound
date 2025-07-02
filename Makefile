@@ -14,6 +14,8 @@ find-slicer-python:
 		echo "Slicer found at /usr/local/bin/Slicer"; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/PythonSlicer" ]; then \
 		echo "Slicer found at $$SLICER_HOME/bin/PythonSlicer"; \
+	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/Slicer" ]; then \
+		echo "Slicer found at $$SLICER_HOME/bin/Slicer"; \
 	else \
 		echo "ERROR: Slicer not found. Please install Slicer or add it to your PATH."; \
 		exit 1; \
@@ -52,6 +54,8 @@ test-gui: find-slicer-python
 		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
 		/usr/local/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
+	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/Slicer" ]; then \
+		$$SLICER_HOME/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
 		exit 1; \
@@ -64,6 +68,8 @@ test-dicom: find-slicer-python
 		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
 		/usr/local/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
+	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/Slicer" ]; then \
+		$$SLICER_HOME/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
 		exit 1; \
