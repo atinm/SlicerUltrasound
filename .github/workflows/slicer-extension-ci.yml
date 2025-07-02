@@ -12,7 +12,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and test extension (official Slicer CI)
-        uses: Slicer/SlicerExtension-Linux-CI@v1
+      - name: Set up Python
+        uses: actions/setup-python@v4
         with:
-          slicer_version: "5.8.1"
+          python-version: "3.9"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential git
+
+      - name: Download Slicer SDK
+        run: |
+          # Download Slicer SDK for Linux
+          SLICER_VERSION="5.8.1"
+          SLICER_SDK_URL="https://download.slicer.org/bitstream/67c51fc129825655577cfee9"
+          wget $SLICER_SDK_URL -O Slicer-$SLICER_VERSION-linux-amd64.tar.gz
+          tar xzf Slicer-$SLICER_VERSION-linux-amd64.tar.gz
+          export SLICER_HOME=$PWD/Slicer-$SLICER_VERSION-linux-amd64
+          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
+
+      - name: Configure and build extension
+        run: |
+          # Set up Slicer extension build environment
+          export SLICER_DIR=$SLICER_HOME
+          export PATH=$SLICER_HOME/bin:$PATH
+
+          # Create build directory
+          mkdir -p build
+          cd build
+
+          # Configure with CMake
+          cmake .. \
+            -DSlicer_DIR=$SLICER_HOME \
+            -DBUILD_TESTING=ON \
+            -DCMAKE_BUILD_TYPE=Release
+
+          # Build
+          make -j$(nproc)
+
+      - name: Run tests
+        run: |
+          cd build
+          # Run CTest tests
+          ctest -V --output-on-failure
+
+          # Run Python tests if available
+          if [ -f "run_slicer_tests.py" ]; then
+            $SLICER_HOME/bin/PythonSlicer ../run_slicer_tests.py
+          fi

@@ -56,18 +56,46 @@ def install_dependencies_subprocess():
 
     # Find Slicer Python executable
     slicer_python = None
-    possible_paths = [
-        "/Applications/Slicer.app/Contents/bin/PythonSlicer",
-        "/usr/local/bin/Slicer",
-    ]
 
-    for path in possible_paths:
-        if os.path.exists(path):
-            slicer_python = path
-            break
+    # Check environment variable first (for CI environments)
+    slicer_home = os.environ.get('SLICER_HOME')
+    if slicer_home:
+        possible_paths = [
+            os.path.join(slicer_home, 'bin', 'PythonSlicer'),
+            os.path.join(slicer_home, 'bin', 'Slicer'),
+            os.path.join(slicer_home, 'PythonSlicer'),
+            os.path.join(slicer_home, 'Slicer'),
+        ]
+
+        for path in possible_paths:
+            if os.path.exists(path):
+                slicer_python = path
+                print(f"Found Slicer Python at: {slicer_python}")
+                break
+
+    # Fallback to common installation paths
+    if not slicer_python:
+        possible_paths = [
+            "/Applications/Slicer.app/Contents/bin/PythonSlicer",
+            "/usr/local/bin/Slicer",
+        ]
+
+        for path in possible_paths:
+            if os.path.exists(path):
+                slicer_python = path
+                print(f"Found Slicer Python at: {slicer_python}")
+                break
 
     if not slicer_python:
         print("✗ Could not find Slicer Python executable")
+        print("Checked paths:")
+        if slicer_home:
+            print(f"  {slicer_home}/bin/PythonSlicer")
+            print(f"  {slicer_home}/bin/Slicer")
+            print(f"  {slicer_home}/PythonSlicer")
+            print(f"  {slicer_home}/Slicer")
+        print("  /Applications/Slicer.app/Contents/bin/PythonSlicer")
+        print("  /usr/local/bin/Slicer")
         return False
 
     print("Checking test dependencies...")
@@ -138,18 +166,46 @@ def run_tests_subprocess(args):
 
     # Find Slicer Python executable
     slicer_python = None
-    possible_paths = [
-        "/Applications/Slicer.app/Contents/bin/PythonSlicer",
-        "/usr/local/bin/Slicer",
-    ]
 
-    for path in possible_paths:
-        if os.path.exists(path):
-            slicer_python = path
-            break
+    # Check environment variable first (for CI environments)
+    slicer_home = os.environ.get('SLICER_HOME')
+    if slicer_home:
+        possible_paths = [
+            os.path.join(slicer_home, 'bin', 'PythonSlicer'),
+            os.path.join(slicer_home, 'bin', 'Slicer'),
+            os.path.join(slicer_home, 'PythonSlicer'),
+            os.path.join(slicer_home, 'Slicer'),
+        ]
+
+        for path in possible_paths:
+            if os.path.exists(path):
+                slicer_python = path
+                print(f"Found Slicer Python at: {slicer_python}")
+                break
+
+    # Fallback to common installation paths
+    if not slicer_python:
+        possible_paths = [
+            "/Applications/Slicer.app/Contents/bin/PythonSlicer",
+            "/usr/local/bin/Slicer",
+        ]
+
+        for path in possible_paths:
+            if os.path.exists(path):
+                slicer_python = path
+                print(f"Found Slicer Python at: {slicer_python}")
+                break
 
     if not slicer_python:
         print("✗ Could not find Slicer Python executable")
+        print("Checked paths:")
+        if slicer_home:
+            print(f"  {slicer_home}/bin/PythonSlicer")
+            print(f"  {slicer_home}/bin/Slicer")
+            print(f"  {slicer_home}/PythonSlicer")
+            print(f"  {slicer_home}/Slicer")
+        print("  /Applications/Slicer.app/Contents/bin/PythonSlicer")
+        print("  /usr/local/bin/Slicer")
         return 1
 
     # Use absolute path for tests directory
