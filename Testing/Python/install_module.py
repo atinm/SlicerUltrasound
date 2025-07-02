@@ -106,6 +106,10 @@ def install_module(slicer_home, build_dir="build"):
 
         # Fallback: Copy module files directly to Slicer's extension directory
         extension_dir = os.path.join(slicer_home, "lib", "Slicer-5.8", "qt-scripted-modules")
+        print(f"Extension directory: {extension_dir}")
+
+        # Ensure extension directory exists
+        os.makedirs(extension_dir, exist_ok=True)
 
         # Copy the module directories
         modules = ["AnnotateUltrasound", "AnonymizeUltrasound", "MmodeAnalysis", "TimeSeriesAnnotation"]
@@ -122,6 +126,9 @@ def install_module(slicer_home, build_dir="build"):
                 # Copy the module
                 import shutil
                 shutil.copytree(module, target_dir)
+                print(f"✓ Successfully copied {module}")
+            else:
+                print(f"⚠ Module {module} not found in current directory")
 
         print("✓ Module installed successfully via direct copy")
 

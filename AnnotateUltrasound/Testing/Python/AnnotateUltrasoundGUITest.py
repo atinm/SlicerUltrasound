@@ -14,8 +14,8 @@ import time
 modulePath = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, modulePath)
 
-# Import the module directly
-from AnnotateUltrasound import AnnotateUltrasoundLogic
+# Note: We don't need to import AnnotateUltrasoundLogic directly
+# as it will be available through the widget.logic after the module is loaded
 
 
 class AnnotateUltrasoundGUITest:
