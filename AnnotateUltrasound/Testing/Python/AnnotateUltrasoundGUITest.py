@@ -34,10 +34,36 @@ class AnnotateUltrasoundGUITest:
 
         slicer.util.selectModule('AnnotateUltrasound')
         slicer.util.delayDisplay("Selected AnnotateUltrasound", 1000)
-        from AnnotateUltrasound import getAnnotateUltrasoundWidget
-        self.widget = getAnnotateUltrasoundWidget()
+
+        # Try multiple ways to get the widget
+        self.widget = None
+        try:
+            # Method 1: Try to import and use the function
+            from AnnotateUltrasound import getAnnotateUltrasoundWidget
+            self.widget = getAnnotateUltrasoundWidget()
+            print("✓ Got widget via getAnnotateUltrasoundWidget function")
+        except ImportError as e:
+            print(f"⚠ Could not import getAnnotateUltrasoundWidget: {e}")
+            try:
+                # Method 2: Try to get widget through Slicer's module system
+                moduleWidget = slicer.modules.annotateultrasound.widgetRepresentation()
+                if moduleWidget and hasattr(moduleWidget, 'self'):
+                    self.widget = moduleWidget.self()
+                    print("✓ Got widget via slicer.modules.annotateultrasound.widgetRepresentation()")
+            except Exception as e2:
+                print(f"⚠ Could not get widget via module system: {e2}")
+                # Method 3: Try to create widget directly
+                try:
+                    from AnnotateUltrasound import AnnotateUltrasoundWidget
+                    self.widget = AnnotateUltrasoundWidget()
+                    print("✓ Created widget directly via AnnotateUltrasoundWidget class")
+                except Exception as e3:
+                    print(f"⚠ Could not create widget directly: {e3}")
+                    raise RuntimeError("Failed to get AnnotateUltrasound widget instance via any method")
+
         if self.widget is None:
             raise RuntimeError("Failed to get AnnotateUltrasound widget instance")
+
         self.logic = self.widget.logic
 
         # Wait for UI to be ready
