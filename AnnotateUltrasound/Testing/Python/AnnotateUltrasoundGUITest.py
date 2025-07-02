@@ -36,21 +36,33 @@ class AnnotateUltrasoundGUITest:
         slicer.util.selectModule('AnnotateUltrasound')
         slicer.util.delayDisplay("Selected AnnotateUltrasound", 1000)
 
-        # Retry access until module is available
+        # Try to get the widget using getAnnotateUltrasoundWidget function
         self.widget = None
-        attempts = 5
+        attempts = 10
         for i in range(attempts):
             try:
-                module = getattr(slicer.modules, 'annotateultrasound', None)
-                if module:
-                    widget = module.widgetRepresentation()
-                    if widget and hasattr(widget, 'self'):
-                        self.widget = widget.self()
-                        print(f"✓ Got widget on attempt {i+1}")
-                        break
+                # Try to import and use the function directly
+                from AnnotateUltrasound import getAnnotateUltrasoundWidget
+                self.widget = getAnnotateUltrasoundWidget()
+                if self.widget:
+                    print(f"✓ Got widget via getAnnotateUltrasoundWidget on attempt {i+1}")
+                    break
+            except ImportError as e:
+                print(f"Attempt {i+1}: ImportError - {e}")
+                try:
+                    # Alternative: try to access through module system
+                    module = getattr(slicer.modules, 'annotateultrasound', None)
+                    if module and hasattr(module, 'getAnnotateUltrasoundWidget'):
+                        self.widget = module.getAnnotateUltrasoundWidget()
+                        if self.widget:
+                            print(f"✓ Got widget via module.getAnnotateUltrasoundWidget on attempt {i+1}")
+                            break
+                except Exception as e2:
+                    print(f"Attempt {i+1}: Module access failed - {e2}")
             except Exception as e:
-                print(f"Attempt {i+1} failed to get widget: {e}")
-            slicer.util.delayDisplay(f"Waiting for module load... ({i+1})", 1000)
+                print(f"Attempt {i+1}: General error - {e}")
+
+            slicer.util.delayDisplay(f"Waiting for AnnotateUltrasound module to load... ({i+1})", 1000)
 
         if not self.widget:
             raise RuntimeError("Failed to get AnnotateUltrasound widget instance after retries")
