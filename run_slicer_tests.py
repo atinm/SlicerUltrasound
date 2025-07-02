@@ -15,26 +15,39 @@ def install_dependencies():
     """Install test dependencies using Slicer's pip_install utility."""
     try:
         import slicer
-        print("Checking test dependencies...")
-        packages = ['pytest', 'pytest-cov', 'pytest-mock']
+        print("✓ Slicer module imported successfully")
+        print(f"Python executable: {sys.executable}")
+        print(f"Slicer module location: {slicer.__file__}")
+        print(f"Slicer module attributes: {dir(slicer)}")
 
-        for package in packages:
-            try:
-                # Check if package is already installed
-                __import__(package.replace('-', '_'))
-                print(f"✓ {package} already installed")
-            except ImportError:
-                # Try to install if not found
-                print(f"Installing {package}...")
-                slicer.util.pip_install(package)
-                print(f"✓ Installed {package}")
-        return True
-    except ImportError:
-        # Fallback for when not running in Slicer environment (e.g., CI)
-        print("Slicer module not available, using subprocess fallback...")
-        return install_dependencies_subprocess()
+        # Check if slicer.util exists
+        if hasattr(slicer, 'util'):
+            print("✓ slicer.util exists")
+            print(f"slicer.util attributes: {dir(slicer.util)}")
+
+            print("Checking test dependencies...")
+            packages = ['pytest', 'pytest-cov', 'pytest-mock']
+
+            for package in packages:
+                try:
+                    # Check if package is already installed
+                    __import__(package.replace('-', '_'))
+                    print(f"✓ {package} already installed")
+                except ImportError:
+                    # Try to install if not found
+                    print(f"Installing {package}...")
+                    slicer.util.pip_install(package)
+                    print(f"✓ Installed {package}")
+            return True
+        else:
+            print("✗ slicer.util does not exist, using subprocess fallback")
+            return install_dependencies_subprocess()
+
     except Exception as e:
         print(f"✗ Failed to install dependencies: {e}")
+        print(f"Exception type: {type(e)}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def install_dependencies_subprocess():
@@ -184,11 +197,14 @@ def main():
     args = parser.parse_args()
 
     print(f"Script directory: {SCRIPT_DIR}")
+    print(f"Python executable: {sys.executable}")
+    print(f"Python version: {sys.version}")
 
     # Try to run in Slicer's environment first
     try:
         import slicer
         print("✓ Running in Slicer's Python environment")
+        print(f"Slicer module location: {slicer.__file__}")
 
         # Install dependencies if requested
         if args.install_deps:
@@ -198,8 +214,9 @@ def main():
         # Run tests
         return run_tests(args)
 
-    except ImportError:
-        print("⚠️  Slicer module not available, using subprocess fallback...")
+    except ImportError as e:
+        print(f"⚠️  Slicer module not available, using subprocess fallback...")
+        print(f"ImportError: {e}")
 
         # Install dependencies if requested
         if args.install_deps:
