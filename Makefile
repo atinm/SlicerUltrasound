@@ -97,13 +97,13 @@ install-module: find-slicer-python
 	@echo "Building and installing SlicerUltrasound module..."
 	@echo "Current directory: $$(pwd)"
 	@echo "Checking for install_module.py:"
-	@ls -la install_module.py || echo "install_module.py not found in current directory"
+	@ls -la Testing/Python/install_module.py || echo "install_module.py not found in Testing/Python directory"
 	@if [ -f "/Applications/Slicer.app/Contents/bin/PythonSlicer" ]; then \
-		/Applications/Slicer.app/Contents/bin/PythonSlicer $$(pwd)/install_module.py; \
+		/Applications/Slicer.app/Contents/bin/PythonSlicer $$(pwd)/Testing/Python/install_module.py; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script $$(pwd)/install_module.py; \
+		/usr/local/bin/Slicer --python-script $$(pwd)/Testing/Python/install_module.py; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/PythonSlicer" ]; then \
-		$$SLICER_HOME/bin/PythonSlicer $$(pwd)/install_module.py; \
+		$$SLICER_HOME/bin/PythonSlicer $$(pwd)/Testing/Python/install_module.py; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
 		exit 1; \
@@ -113,11 +113,11 @@ install-module: find-slicer-python
 test-pytest: find-slicer-python
 	@echo "Running pytest-style tests in Slicer Python environment..."
 	@if [ -f "/Applications/Slicer.app/Contents/bin/PythonSlicer" ]; then \
-		/Applications/Slicer.app/Contents/bin/PythonSlicer run_slicer_tests.py --install-deps; \
+		/Applications/Slicer.app/Contents/bin/PythonSlicer Testing/Python/run_slicer_tests.py --install-deps; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script run_slicer_tests.py --install-deps; \
+		/usr/local/bin/Slicer --python-script Testing/Python/run_slicer_tests.py --install-deps; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/PythonSlicer" ]; then \
-		$$SLICER_HOME/bin/PythonSlicer run_slicer_tests.py --install-deps; \
+		$$SLICER_HOME/bin/PythonSlicer Testing/Python/run_slicer_tests.py --install-deps; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
 		exit 1; \
@@ -133,11 +133,11 @@ test-pattern: build-testing
 test-coverage: find-slicer-python
 	@echo "Running pytest tests with coverage..."
 	@if [ -f "/Applications/Slicer.app/Contents/bin/PythonSlicer" ]; then \
-		/Applications/Slicer.app/Contents/bin/PythonSlicer run_slicer_tests.py --install-deps; \
+		/Applications/Slicer.app/Contents/bin/PythonSlicer Testing/Python/run_slicer_tests.py --install-deps; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script run_slicer_tests.py --install-deps; \
+		/usr/local/bin/Slicer --python-script Testing/Python/run_slicer_tests.py --install-deps; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/PythonSlicer" ]; then \
-		$$SLICER_HOME/bin/PythonSlicer run_slicer_tests.py --install-deps; \
+		$$SLICER_HOME/bin/PythonSlicer Testing/Python/run_slicer_tests.py --install-deps; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
 		exit 1; \
