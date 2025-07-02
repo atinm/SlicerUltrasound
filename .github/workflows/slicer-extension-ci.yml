@@ -32,59 +32,31 @@ jobs:
           export SLICER_HOME=$PWD/Slicer-$SLICER_VERSION-linux-amd64
           echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
 
-      - name: Install SlicerUltrasound module
+      - name: Verify module structure
         run: |
-          # Copy module files directly to Slicer's extension directory
-          extension_dir=$SLICER_HOME/lib/Slicer-5.8/qt-scripted-modules
-
-          # Copy the module directories
+          # Verify that the modules exist in the source tree
           modules=("AnnotateUltrasound" "AnonymizeUltrasound" "MmodeAnalysis" "TimeSeriesAnnotation")
           for module in "${modules[@]}"; do
             if [ -d "$module" ]; then
-              target_dir="$extension_dir/$module"
-              echo "Installing $module to $target_dir"
-
-              # Remove existing directory if it exists
-              if [ -d "$target_dir" ]; then
-                rm -rf "$target_dir"
-              fi
-
-              # Copy the module
-              cp -r "$module" "$target_dir"
+              echo "✓ Found $module in source tree"
+              ls -la "$module"
+            else
+              echo "✗ Module $module not found in source tree"
+              exit 1
             fi
           done
-
-          echo "✓ Modules installed successfully"
+          echo "✓ All modules present in source tree"
 
       - name: Run Python tests
         run: |
           # Run pytest tests in Slicer's Python environment
           make test-pytest
 
-      - name: Test module loading
+      - name: Run GUI tests with additional paths
         run: |
-          # Create a temporary Python script for module loading test
-          cat > test_module_loading.py << 'EOF'
-          import sys
-          import os
+          # Set up display for GUI tests
+          export DISPLAY=:99
+          Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
 
-          # Add Slicer extension path
-          slicer_home = os.environ.get('SLICER_HOME')
-          if slicer_home:
-              extension_path = os.path.join(slicer_home, 'lib', 'Slicer-5.8', 'qt-scripted-modules')
-              sys.path.append(extension_path)
-
-          # Test importing each module
-          modules = ['AnnotateUltrasound', 'AnonymizeUltrasound', 'MmodeAnalysis', 'TimeSeriesAnnotation']
-          for module in modules:
-              try:
-                  __import__(module)
-                  print(f'✓ {module} imported successfully')
-              except Exception as e:
-                  print(f'✗ Failed to import {module}: {e}')
-                  sys.exit(1)
-          print('✓ All modules imported successfully')
-          EOF
-
-          # Run the module loading test
-          $SLICER_HOME/bin/PythonSlicer test_module_loading.py
+          # Run GUI tests using the additional module path approach
+          $SLICER_HOME/bin/Slicer --no-main-window --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py

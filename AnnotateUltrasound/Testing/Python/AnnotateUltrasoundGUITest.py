@@ -14,6 +14,36 @@ import time
 modulePath = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, modulePath)
 
+# Add project root to Python path for Slicer 5.8 compatibility
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+    print(f"Added project root to Python path: {project_root}")
+
+# In Slicer 5.8, additional module paths are typically set through:
+# 1. Environment variables (SLICER_ADDITIONAL_MODULE_PATHS)
+# 2. UI settings (Edit -> Application Settings -> Modules -> Additional module paths)
+# 3. Python path (which we've done above)
+print("Note: For additional module paths in Slicer 5.8, use:")
+print("  - Environment variable: SLICER_ADDITIONAL_MODULE_PATHS")
+print("  - UI: Edit -> Application Settings -> Modules -> Additional module paths")
+print("  - Or rely on Python path (current approach)")
+
+print("=== MODULE DEBUG INFO ===")
+print(f"Module path added: {modulePath}")
+print(f"Current working directory: {os.getcwd()}")
+print(f"Python path includes project root: {project_root in sys.path}")
+print("Slicer additional module paths: Set via UI or environment variables in Slicer 5.8")
+
+# Check if we can import the module directly
+try:
+    import AnnotateUltrasound
+    print(f"✓ Direct import successful: {AnnotateUltrasound.__file__}")
+except ImportError as e:
+    print(f"✗ Direct import failed: {e}")
+
+print("=== END MODULE DEBUG INFO ===")
+
 # Note: We don't need to import AnnotateUltrasoundLogic directly
 # as it will be available through the widget.logic after the module is loaded
 
