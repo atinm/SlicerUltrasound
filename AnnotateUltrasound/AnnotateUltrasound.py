@@ -179,36 +179,52 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     def initializeShortcuts(self):
         self.shortcutW = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutW.setKey(qt.QKeySequence('W'))
+        self.shortcutW.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutS = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutS.setKey(qt.QKeySequence('S'))
+        self.shortcutS.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutO = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutO.setKey(qt.QKeySequence('O'))
+        self.shortcutO.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutE = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutE.setKey(qt.QKeySequence('E'))
+        self.shortcutE.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutD = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutD.setKey(qt.QKeySequence('D'))
+        self.shortcutD.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutA = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutA.setKey(qt.QKeySequence('A'))
+        self.shortcutA.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutRightArrow = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutRightArrow.setKey(qt.QKeySequence('Right'))
+        self.shortcutRightArrow.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutLeftArrow = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutLeftArrow.setKey(qt.QKeySequence('Left'))
+        self.shortcutLeftArrow.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutHome = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutHome.setKey(qt.QKeySequence('Home'))
+        self.shortcutHome.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutEnd = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutEnd.setKey(qt.QKeySequence('End'))
+        self.shortcutEnd.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutSpace = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutSpace.setKey(qt.QKeySequence('Space'))
+        self.shortcutSpace.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutPageUp = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutPageUp.setKey(qt.QKeySequence('PageUp'))
+        self.shortcutPageUp.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutPageDown = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutPageDown.setKey(qt.QKeySequence('PageDown'))
+        self.shortcutPageDown.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutShiftUp = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutShiftUp.setKey(qt.QKeySequence('Shift+Up'))
+        self.shortcutShiftUp.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutShiftDown = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutShiftDown.setKey(qt.QKeySequence('Shift+Down'))
+        self.shortcutShiftDown.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutL = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutL.setKey(qt.QKeySequence('L'))
+        self.shortcutL.setContext(qt.Qt.ApplicationShortcut)
 
     def connectKeyboardShortcuts(self):
         # Connect shortcuts to respective actions
@@ -500,7 +516,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Update local settings
         slicer.app.settings().setValue("AnnotateUltrasound/InputDirectory", inputDirectory)
 
-    def extractSeenRaters(self):
+    def extractSeenAndSelectedRaters(self):
         """
         Extracts the set of raters that have contributed lines in the current annotations,
         ensuring the current rater is included even if not present in any frame annotations.
@@ -510,6 +526,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.logic.extractAndSetupRaters()
         # Copy the seenRaters from logic to widget for UI purposes
         self.seenRaters = self.logic.seenRaters.copy()
+        self.realRaters = self.logic.realRaters.copy()
+        self.selectedRaters = self.logic.selectedRaters.copy()
 
     def refocusAndRestoreShortcuts(self, delay: int = 200):
         qt.QTimer.singleShot(delay, self._delayedSetRedViewFocus)
@@ -579,8 +597,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.intensitySlider.setValue(0)
 
             # After loading the first sequence, extract seen raters and update checkboxes
-            self.extractSeenRaters()
-            self.selectedRaters = set(self.seenRaters)
+            self.extractSeenAndSelectedRaters()
 
             self._updateRaterColorTableCheckboxes()
             self.updateGuiFromAnnotations()
@@ -663,9 +680,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
 
         # After loading the next sequence, extract seen raters and update checkboxes
-        self.extractSeenRaters()
-        self.selectedRaters = set(self.seenRaters)
-
+        self.extractSeenAndSelectedRaters()
         self.populateRaterColorTable()
 
         # Uncheck all label checkboxes, but prevent them from triggering the onLabelCheckBoxToggled event while we are doing this
@@ -840,9 +855,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.intensitySlider.setValue(0)
 
         # After loading the previous sequence, extract seen raters and update checkboxes
-        self.extractSeenRaters()
-        self.selectedRaters = set(self.seenRaters)
-
+        self.extractSeenAndSelectedRaters()
         self.populateRaterColorTable()
 
         self.updateGuiFromAnnotations()
@@ -1632,6 +1645,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 selectionNode = slicer.app.applicationLogic().GetSelectionNode()
                 if selectionNode:
                     selectionNode.SetActivePlaceNodeID("")
+                self._setRedViewFocus()
             else:
                 slicer.util.mainWindow().statusBar().showMessage(already_at_message, 3000)
 
@@ -1669,6 +1683,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if activeBrowserNode:
             isPlaying = activeBrowserNode.GetPlaybackActive()
             activeBrowserNode.SetPlaybackActive(not isPlaying)
+        self._setRedViewFocus()
 
     def _setRedViewFocus(self):
         """Set focus to the red view to ensure keyboard shortcuts work immediately."""
@@ -1813,6 +1828,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
     # Static variable to track seen raters and their order
     seenRaters = []
+    realRaters = []
+    selectedRaters = []
 
     def _getOrCreateParameterNode(self):
         if not hasattr(self, "parameterNode"):
@@ -2335,9 +2352,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             self.seenRaters.remove(current_rater)
         # put current rater at the top
         self.seenRaters = [current_rater, "__selected_node__"] + sorted(self.seenRaters)
-        self.setSelectedRaters(self.seenRaters)
-
-        #self.highlightedRaters = set(self.seenRaters)
+        self.realRaters = [r for r in self.seenRaters if r != "__selected_node__"]
+        self.setSelectedRaters(self.realRaters)
 
         # Set programmatic update flag to prevent unsavedChanges from being set
         self._updateMarkupsAndOverlayProgrammatically(parameterNode)
@@ -3224,7 +3240,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # we need to add __selected_node__ to the list to ensure that the selected line is always visible and
         # uses a different color than the other lines
         self.seenRaters = [current_rater, "__selected_node__"] + sorted(seenRaters)
-        self.setSelectedRaters(set(self.seenRaters))
+        # Select all real raters by default (exclude __selected_node__)
+        self.realRaters = [r for r in self.seenRaters if r != "__selected_node__"]
+        self.setSelectedRaters(set(self.realRaters))
 
     def cleanupAnnotationDuplicates(self):
         """
