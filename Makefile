@@ -117,10 +117,19 @@ test-pattern: build-testing
 	@if [ -z "$(PATTERN)" ]; then echo "Please specify PATTERN parameter"; exit 1; fi
 	cd build && ctest -V -R $(PATTERN)
 
-# Run tests with coverage
-test-cov: build-testing
-	@echo "Running tests with coverage..."
-	cd build && ctest -V --output-on-failure
+# Run pytest tests with coverage (Python-only)
+test-coverage: find-slicer-python
+	@echo "Running pytest tests with coverage..."
+	@if [ -f "/Applications/Slicer.app/Contents/bin/PythonSlicer" ]; then \
+		/Applications/Slicer.app/Contents/bin/PythonSlicer run_slicer_tests.py --install-deps --pytest-args --cov=. --cov-report=term-missing; \
+	elif [ -f "/usr/local/bin/Slicer" ]; then \
+		/usr/local/bin/Slicer --python-script run_slicer_tests.py --install-deps --pytest-args --cov=. --cov-report=term-missing; \
+	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/PythonSlicer" ]; then \
+		$$SLICER_HOME/bin/PythonSlicer run_slicer_tests.py --install-deps --pytest-args --cov=. --cov-report=term-missing; \
+	else \
+		echo "❌ Slicer not found. Please install Slicer first."; \
+		exit 1; \
+	fi
 
 # Clean up generated files
 clean:
@@ -143,7 +152,7 @@ help:
 	@echo "  test-dicom        - Run DICOM loading tests (requires display, uses real DICOM data)"
 	@echo "  test              - Run pytest tests (alias for test-pytest)"
 	@echo "  test-pattern      - Run tests matching pattern (e.g., make test-pattern PATTERN=AnnotateUltrasound)"
-	@echo "  test-cov          - Run tests with coverage"
+	@echo "  test-coverage     - Run pytest tests with coverage (Python-only)"
 	@echo "  clean             - Clean up generated files"
 	@echo "  help              - Show this help message"
 	@echo ""

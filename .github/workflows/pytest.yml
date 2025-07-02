@@ -196,6 +196,10 @@ jobs:
             libfontconfig1 libxext6 libxrender1 \
             libxtst6 libgtk-3-0 || echo "Some packages failed, trying alternatives..."
 
+          # Install PulseAudio libraries for audio support
+          sudo apt-get install -y \
+            pulseaudio libpulse-mainloop-glib0 libpulse0 || echo "PulseAudio packages failed, continuing..."
+
       - name: Install additional dependencies if needed
         run: |
           # Try alternative package names and install missing libraries
@@ -274,6 +278,21 @@ jobs:
           echo "LIBGL_ALWAYS_SOFTWARE=1" >> $GITHUB_ENV
           echo "MESA_GL_VERSION_OVERRIDE=3.3" >> $GITHUB_ENV
           echo "MESA_GLSL_VERSION_OVERRIDE=330" >> $GITHUB_ENV
+
+          # Set audio environment variables to avoid PulseAudio issues
+          echo "PULSE_SERVER=unix:/tmp/pulse-socket" >> $GITHUB_ENV
+          echo "PULSE_COOKIE=/tmp/pulse-cookie" >> $GITHUB_ENV
+          echo "ALSA_PCM_CARD=-2" >> $GITHUB_ENV  # Disable ALSA
+          echo "ALSA_PCM_DEVICE=-2" >> $GITHUB_ENV  # Disable ALSA
+
+          # Start dummy PulseAudio server if available
+          if command -v pulseaudio >/dev/null 2>&1; then
+            echo "Starting dummy PulseAudio server..."
+            pulseaudio --start --log-level=4 --log-target=stderr --exit-idle-time=-1 --file=/dev/null &
+            sleep 2
+          else
+            echo "PulseAudio not available, using dummy audio setup"
+          fi
 
       - name: Run GUI tests
         run: |
