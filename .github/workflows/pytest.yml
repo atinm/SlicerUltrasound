@@ -61,8 +61,8 @@ jobs:
 
       - name: Run tests in Slicer environment
         run: |
-          # Run tests using the test runner script
-          python3 run_slicer_tests.py --install-deps
+          # Run tests using the Makefile to ensure Slicer Python environment
+          make test-pytest
 
       - name: Upload coverage reports
         uses: codecov/codecov-action@v3

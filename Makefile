@@ -12,6 +12,8 @@ find-slicer-python:
 		echo "Slicer found at /Applications/Slicer.app/Contents/MacOS/Slicer"; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
 		echo "Slicer found at /usr/local/bin/Slicer"; \
+	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/PythonSlicer" ]; then \
+		echo "Slicer found at $$SLICER_HOME/bin/PythonSlicer"; \
 	else \
 		echo "ERROR: Slicer not found. Please install Slicer or add it to your PATH."; \
 		exit 1; \
@@ -82,6 +84,8 @@ test-pytest: find-slicer-python
 		/Applications/Slicer.app/Contents/bin/PythonSlicer run_slicer_tests.py --install-deps; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
 		/usr/local/bin/Slicer --python-script run_slicer_tests.py --install-deps; \
+	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/PythonSlicer" ]; then \
+		$$SLICER_HOME/bin/PythonSlicer run_slicer_tests.py --install-deps; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
 		exit 1; \
