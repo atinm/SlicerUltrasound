@@ -48,7 +48,7 @@ test-slicer: build-testing
 	cd build && ctest -V
 
 # Run GUI tests (requires display and user interaction simulation)
-test-gui: find-slicer-python install-module
+test-gui: find-slicer-python
 	@echo "Running GUI tests (requires display)..."
 	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
 		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
@@ -69,7 +69,7 @@ test-gui: find-slicer-python install-module
 	fi
 
 # Run DICOM loading tests (requires display and real DICOM data)
-test-dicom: find-slicer-python install-module
+test-dicom: find-slicer-python
 	@echo "Running DICOM loading tests (requires display)..."
 	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
 		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \

@@ -46,25 +46,54 @@ class AnnotateUltrasoundGUITest:
             raise RuntimeError("AnnotateUltrasound module not installed or not accessible")
 
         # Force-load the module if needed
+        print("Available modules in slicer.modules:")
+        for module_name in dir(slicer.modules):
+            if not module_name.startswith('_'):
+                print(f"  - {module_name}")
+
+        print("Trying to select AnnotateUltrasound module...")
         slicer.util.selectModule('AnnotateUltrasound')
         slicer.util.delayDisplay("Selected AnnotateUltrasound", 1000)
+
+        # Check if module is now available
+        print("After selectModule, available modules:")
+        for module_name in dir(slicer.modules):
+            if not module_name.startswith('_'):
+                print(f"  - {module_name}")
 
                 # Try to get the widget through Slicer's module system
         self.widget = None
         attempts = 10
         for i in range(attempts):
             try:
-                # Get widget through Slicer's module system - this ensures the widget is properly created
-                moduleWidget = slicer.modules.annotateultrasound.widgetRepresentation()
-                if moduleWidget:
-                    self.widget = moduleWidget.self()
-                    if self.widget and hasattr(self.widget, 'logic'):
-                        print(f"✓ Got widget via slicer.modules.annotateultrasound.widgetRepresentation().self() on attempt {i+1}")
-                        break
+                # Method 1: Try to get widget through Slicer's module system
+                if hasattr(slicer.modules, 'annotateultrasound'):
+                    moduleWidget = slicer.modules.annotateultrasound.widgetRepresentation()
+                    if moduleWidget:
+                        self.widget = moduleWidget.self()
+                        if self.widget and hasattr(self.widget, 'logic'):
+                            print(f"✓ Got widget via slicer.modules.annotateultrasound.widgetRepresentation().self() on attempt {i+1}")
+                            break
+                        else:
+                            print(f"Attempt {i+1}: Widget found but missing logic attribute")
                     else:
-                        print(f"Attempt {i+1}: Widget found but missing logic attribute")
+                        print(f"Attempt {i+1}: No widget representation found")
                 else:
-                    print(f"Attempt {i+1}: No widget representation found")
+                    print(f"Attempt {i+1}: annotateultrasound module not found in slicer.modules")
+
+                    # Method 2: Try to create widget directly
+                    try:
+                        from AnnotateUltrasound import AnnotateUltrasoundWidget
+                        print(f"Attempt {i+1}: Creating widget directly...")
+                        self.widget = AnnotateUltrasoundWidget()
+                        if self.widget and hasattr(self.widget, 'logic'):
+                            print(f"✓ Got widget via direct instantiation on attempt {i+1}")
+                            break
+                        else:
+                            print(f"Attempt {i+1}: Direct widget creation failed - missing logic")
+                    except Exception as e2:
+                        print(f"Attempt {i+1}: Direct widget creation failed - {e2}")
+
             except Exception as e:
                 print(f"Attempt {i+1}: Failed to get widget - {e}")
 
