@@ -146,20 +146,16 @@ clean:
 	rm -rf build/
 
 # Install test dependencies in Slicer's Python
-define SLICER_PYTHON_INSTALL_TEST_DEPS
+install-test-deps:
 	@echo "Installing test dependencies in Slicer's Python..."
 	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
 		/Applications/Slicer.app/Contents/MacOS/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/Slicer" ]; then \
-		$$SLICER_HOME/Slicer --launch pip install pytest pytest-cov pytest-mock hypothesis; \
+		$$SLICER_HOME/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
 	else \
 		echo "Slicer not found!"; \
 		exit 1; \
 	fi
-endef
-
-install-test-deps:
-	$(SLICER_PYTHON_INSTALL_TEST_DEPS)
 
 # Help target
 help:
