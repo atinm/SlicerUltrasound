@@ -145,6 +145,22 @@ clean:
 	rm -rf .pytest_cache/
 	rm -rf build/
 
+# Install test dependencies in Slicer's Python
+define SLICER_PYTHON_INSTALL_TEST_DEPS
+	@echo "Installing test dependencies in Slicer's Python..."
+	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
+		/Applications/Slicer.app/Contents/MacOS/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
+	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/Slicer" ]; then \
+		$$SLICER_HOME/Slicer --launch pip install pytest pytest-cov pytest-mock hypothesis; \
+	else \
+		echo "Slicer not found!"; \
+		exit 1; \
+	fi
+endef
+
+install-test-deps:
+	$(SLICER_PYTHON_INSTALL_TEST_DEPS)
+
 # Help target
 help:
 	@echo "Available targets:"
@@ -158,6 +174,7 @@ help:
 	@echo "  test-pattern      - Run tests matching pattern (e.g., make test-pattern PATTERN=AnnotateUltrasound)"
 	@echo "  test-coverage     - Run pytest tests with coverage (Python-only)"
 	@echo "  clean             - Clean up generated files"
+	@echo "  install-test-deps - Install pytest, pytest-cov, pytest-mock, and hypothesis in Slicer's Python (cross-platform)"
 	@echo "  help              - Show this help message"
 	@echo ""
 	@echo "Note:"

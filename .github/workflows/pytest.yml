@@ -67,10 +67,9 @@ jobs:
           export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
           echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
 
-      - name: Install pytest in Slicer Python
+      - name: Install test dependencies in Slicer Python
         run: |
-          $SLICER_HOME/bin/PythonSlicer -m pip install --upgrade pip
-          $SLICER_HOME/bin/PythonSlicer -m pip install pytest pytest-cov pytest-mock
+          make install-test-deps
 
       - name: Run pure Python tests
         run: |
