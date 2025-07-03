@@ -29,7 +29,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential libgl1 libglu1-mesa xvfb libpulse0 libpulse-mainloop-glib0 libxcb1 libxcb-xfixes0-dev libxcb-shape0 libxcb-render0 libxcb-render-util0 libxcb-keysyms1 libxcb-icccm4 libxcb-image0 libxcb-shm0 libxcb-util1 libxcb-randr0 libxcb-randr0-dev libxcb-xinerama0 libxcb-xinerama0-dev
+          sudo apt-get install -y cmake build-essential libgl1 libglu1-mesa xvfb libpulse0 libpulse-mainloop-glib0 libxcb1 libxcb-xfixes0-dev libxcb-shape0 libxcb-render0 libxcb-render-util0 libxcb-keysyms1 libxcb-icccm4 libxcb-image0 libxcb-shm0 libxcb-util1 libxcb-randr0 libxcb-randr0-dev libxcb-xinerama0 libxcb-xinerama0-dev  libxcb-xkb1
 
       - name: Install module into Slicer
         run: |
@@ -70,7 +70,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1 libglu1-mesa xvfb libpulse0 libpulse-mainloop-glib0 libxcb1 libxcb-xfixes0-dev libxcb-shape0 libxcb-render0 libxcb-render-util0 libxcb-keysyms1 libxcb-icccm4 libxcb-image0 libxcb-shm0 libxcb-util1 libxcb-randr0 libxcb-randr0-dev libxcb-xinerama0 libxcb-xinerama0-dev
+          sudo apt-get install -y libgl1 libglu1-mesa xvfb libpulse0 libpulse-mainloop-glib0 libxcb1 libxcb-xfixes0-dev libxcb-shape0 libxcb-render0 libxcb-render-util0 libxcb-keysyms1 libxcb-icccm4 libxcb-image0 libxcb-shm0 libxcb-util1 libxcb-randr0 libxcb-randr0-dev libxcb-xinerama0 libxcb-xinerama0-dev  libxcb-xkb1
 
       - name: Install test dependencies in Slicer Python
         run: |
@@ -111,7 +111,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential libgl1 libglu1-mesa xvfb libpulse0 libpulse-mainloop-glib0 libxcb1 libxcb-xfixes0-dev libxcb-shape0 libxcb-render0 libxcb-render-util0 libxcb-keysyms1 libxcb-icccm4 libxcb-image0 libxcb-shm0 libxcb-util1 libxcb-randr0 libxcb-randr0-dev libxcb-xinerama0 libxcb-xinerama0-dev
+          sudo apt-get install -y cmake build-essential libgl1 libglu1-mesa xvfb libpulse0 libpulse-mainloop-glib0 libxcb1 libxcb-xfixes0-dev libxcb-shape0 libxcb-render0 libxcb-render-util0 libxcb-keysyms1 libxcb-icccm4 libxcb-image0 libxcb-shm0 libxcb-util1 libxcb-randr0 libxcb-randr0-dev libxcb-xinerama0 libxcb-xinerama0-dev  libxcb-xkb1
 
       - name: Install module into Slicer
         run: |
