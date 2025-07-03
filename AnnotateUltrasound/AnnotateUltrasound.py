@@ -560,6 +560,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self._parameterNode.dfLoaded = False
             return
 
+        # Remove existing sequence browser observer before reloading
+        if self.logic.sequenceBrowserNode:
+            self.removeObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
+
         numFilesFound, numAnnotationsCreated = self.logic.updateInputDf(rater, inputDirectory)
         logging.info(f"Found {numFilesFound} DICOM files")
         statusText = f"Found {numFilesFound} DICOM files"
@@ -577,6 +581,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
             # Set navigation flag to prevent rater table state changes
             self._isNavigating = True
+
+            # Reset the DICOM index to start from the beginning when reloading
+            self.logic.nextDicomDfIndex = 0
 
             self.currentDicomDfIndex = self.logic.loadNextSequence()
 
@@ -2122,6 +2129,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.pleuraLines = []
         self.bLines = []
         self.sequenceBrowserNode = None
+        # Reset overlay volume reference in parameter node
+        if self.parameterNode:
+            self.parameterNode.overlayVolume = None
 
     def convert_lps_to_ras(self, annotations: list):
         for frame in annotations:
@@ -2217,6 +2227,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Delete all files in the temporary folder
         for file in os.listdir(tempDicomDir):
             os.remove(os.path.join(tempDicomDir, file))
+
+        # Clear markup cache to force update on reload
+        self._lastMarkupFrameIndex = None
+        self._lastMarkupFrameHash = None
 
         # Copy DICOM file to temporary folder
         shutil.copy(nextDicomFilepath, tempDicomDir)
@@ -3378,5 +3392,24 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if (abs(current_pleura - max_pleura_lines) > 2 or
             abs(current_blines - max_blines) > 2):
             self.initializeMarkupNodesFromAnnotations()
+
+
+#
+# Register the module
+#
+
+if __name__ == "__main__":
+    import sys
+    import os
+    import slicer
+
+    # Add the module path to sys.path
+    modulePath = os.path.dirname(os.path.abspath(__file__))
+    if modulePath not in sys.path:
+        sys.path.insert(0, modulePath)
+
+    # Register the module
+    import AnnotateUltrasound
+    slicer.modules.annotateultrasound = AnnotateUltrasound.AnnotateUltrasound(slicer.qSlicerApplication().moduleManager())
 
 

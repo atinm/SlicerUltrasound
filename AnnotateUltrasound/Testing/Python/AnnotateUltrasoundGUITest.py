@@ -10,58 +10,6 @@ import slicer
 import vtk
 import time
 
-# Add the module directory to sys.path (the directory containing AnnotateUltrasound.py)
-module_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # AnnotateUltrasound/
-if module_dir not in sys.path:
-    sys.path.insert(0, module_dir)
-    print(f"Added module directory to Python path: {module_dir}")
-
-# Also add project root for other modules
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-    print(f"Added project root to Python path: {project_root}")
-
-# Try to set environment variable for Slicer module discovery
-try:
-    current_paths = os.environ.get('SLICER_ADDITIONAL_MODULE_PATHS', '')
-    if project_root not in current_paths:
-        if current_paths:
-            new_paths = current_paths + os.pathsep + project_root
-        else:
-            new_paths = project_root
-        os.environ['SLICER_ADDITIONAL_MODULE_PATHS'] = new_paths
-        print(f"Set SLICER_ADDITIONAL_MODULE_PATHS: {new_paths}")
-except Exception as e:
-    print(f"Could not set SLICER_ADDITIONAL_MODULE_PATHS: {e}")
-
-# In Slicer 5.8, additional module paths are typically set through:
-# 1. Environment variables (SLICER_ADDITIONAL_MODULE_PATHS)
-# 2. UI settings (Edit -> Application Settings -> Modules -> Additional module paths)
-# 3. Python path (which we've done above)
-print("Note: For additional module paths in Slicer 5.8, use:")
-print("  - Environment variable: SLICER_ADDITIONAL_MODULE_PATHS")
-print("  - UI: Edit -> Application Settings -> Modules -> Additional module paths")
-print("  - Or rely on Python path (current approach)")
-
-print("=== MODULE DEBUG INFO ===")
-print(f"Module directory added: {module_dir}")
-print(f"Current working directory: {os.getcwd()}")
-print(f"Python path includes project root: {project_root in sys.path}")
-print("Slicer additional module paths: Set via UI or environment variables in Slicer 5.8")
-
-# Check if we can import the module directly
-try:
-    import AnnotateUltrasound
-    print(f"✓ Direct import successful: {AnnotateUltrasound.__file__}")
-except ImportError as e:
-    print(f"✗ Direct import failed: {e}")
-
-print("=== END MODULE DEBUG INFO ===")
-
-# Note: We don't need to import AnnotateUltrasoundLogic directly
-# as it will be available through the widget.logic after the module is loaded
-
 
 class AnnotateUltrasoundGUITest:
     """
@@ -90,23 +38,6 @@ class AnnotateUltrasoundGUITest:
                     print(f"  - {module_name}")
             raise RuntimeError("AnnotateUltrasound module not installed or not accessible")
 
-        # Try to force-load the module into Slicer's module system
-        print("Attempting to force-load AnnotateUltrasound into Slicer's module system...")
-        try:
-            # Try to access the module through slicer.modules
-            if hasattr(slicer.modules, 'annotateultrasound'):
-                print("✓ Module found in slicer.modules.annotateultrasound")
-            else:
-                print("⚠ Module not found in slicer.modules, trying to force-load...")
-                # Try to reload the module to trigger Slicer's module discovery
-                import importlib
-                if 'AnnotateUltrasound' in sys.modules:
-                    importlib.reload(sys.modules['AnnotateUltrasound'])
-                    print("✓ Reloaded AnnotateUltrasound module")
-        except Exception as e:
-            print(f"⚠ Could not force-load module: {e}")
-
-        # Force-load the module if needed
         print("Available modules in slicer.modules:")
         for module_name in dir(slicer.modules):
             if not module_name.startswith('_'):
@@ -122,46 +53,39 @@ class AnnotateUltrasoundGUITest:
             if not module_name.startswith('_'):
                 print(f"  - {module_name}")
 
-                # Try to get the widget through Slicer's module system
-        self.widget = None
-        attempts = 10
-        for i in range(attempts):
+        # Try to get the widget through Slicer's module system
+        try:
+            self.widget = AnnotateUltrasound.getAnnotateUltrasoundWidget()
+            print("✓ Got widget via getAnnotateUltrasoundWidget()")
+        except Exception as e:
+            print(f"Failed to get widget via getAnnotateUltrasoundWidget(): {e}")
+
+            # Fallback: Try to create widget directly
             try:
-                # Method 1: Try to get widget through Slicer's module system
-                if hasattr(slicer.modules, 'annotateultrasound'):
-                    moduleWidget = slicer.modules.annotateultrasound.widgetRepresentation()
-                    if moduleWidget:
-                        self.widget = moduleWidget.self()
-                        if self.widget and hasattr(self.widget, 'logic'):
-                            print(f"✓ Got widget via slicer.modules.annotateultrasound.widgetRepresentation().self() on attempt {i+1}")
-                            break
+                print("Trying to create widget directly...")
+                from AnnotateUltrasound import AnnotateUltrasoundWidget
+                self.widget = AnnotateUltrasoundWidget()
+                print("✓ Created widget directly")
+            except Exception as e2:
+                print(f"Failed to create widget directly: {e2}")
+
+                # Last resort: Try to access via slicer.modules
+                try:
+                    print("Trying to access via slicer.modules...")
+                    if hasattr(slicer.modules, 'annotateultrasound'):
+                        moduleWidget = slicer.modules.annotateultrasound.widgetRepresentation()
+                        if moduleWidget:
+                            self.widget = moduleWidget.self()
+                            print("✓ Got widget via slicer.modules")
                         else:
-                            print(f"Attempt {i+1}: Widget found but missing logic attribute")
+                            print("No widget representation found in slicer.modules")
                     else:
-                        print(f"Attempt {i+1}: No widget representation found")
-                else:
-                    print(f"Attempt {i+1}: annotateultrasound module not found in slicer.modules")
-
-                    # Method 2: Try to create widget directly
-                    try:
-                        from AnnotateUltrasound import AnnotateUltrasoundWidget
-                        print(f"Attempt {i+1}: Creating widget directly...")
-                        self.widget = AnnotateUltrasoundWidget()
-                        if self.widget and hasattr(self.widget, 'logic'):
-                            print(f"✓ Got widget via direct instantiation on attempt {i+1}")
-                            break
-                        else:
-                            print(f"Attempt {i+1}: Direct widget creation failed - missing logic")
-                    except Exception as e2:
-                        print(f"Attempt {i+1}: Direct widget creation failed - {e2}")
-
-            except Exception as e:
-                print(f"Attempt {i+1}: Failed to get widget - {e}")
-
-            slicer.util.delayDisplay(f"Waiting for AnnotateUltrasound module to load... ({i+1})", 1000)
+                        print("annotateultrasound not found in slicer.modules")
+                except Exception as e3:
+                    print(f"Failed to access via slicer.modules: {e3}")
 
         if not self.widget:
-            raise RuntimeError("Failed to get AnnotateUltrasound widget instance after retries")
+            raise RuntimeError("Failed to get AnnotateUltrasound widget instance")
 
         self.logic = self.widget.logic
         time.sleep(1)

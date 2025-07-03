@@ -47,26 +47,30 @@ test-slicer: build-testing
 	@echo "Running Slicer-native tests..."
 	cd build && ctest -V
 
-# Run GUI tests (requires display and user interaction simulation)
+
+
+# Run GUI tests locally (requires display and user interaction simulation)
 test-gui: find-slicer-python
-	@echo "Running GUI tests (requires display)..."
-	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
-		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
+	@echo "Running GUI tests locally (requires display)..."
+	@SLICER_EXE=""; \
+	if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
+		SLICER_EXE="/Applications/Slicer.app/Contents/MacOS/Slicer"; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
-		/usr/local/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
+		SLICER_EXE="/usr/local/bin/Slicer"; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/Slicer" ]; then \
-		$$SLICER_HOME/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
+		SLICER_EXE="$$SLICER_HOME/bin/Slicer"; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/Slicer" ]; then \
-		$$SLICER_HOME/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
+		SLICER_EXE="$$SLICER_HOME/Slicer"; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
-		echo "Checked paths:"; \
-		echo "  /Applications/Slicer.app/Contents/MacOS/Slicer"; \
-		echo "  /usr/local/bin/Slicer"; \
-		echo "  $$SLICER_HOME/bin/Slicer"; \
-		echo "  $$SLICER_HOME/Slicer"; \
 		exit 1; \
-	fi
+	fi; \
+	echo "Using Slicer: $$SLICER_EXE"; \
+	"$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py
+
+# Run tests for CI (skips GUI tests)
+test-ci: test
+	@echo "CI tests completed (GUI tests skipped)"
 
 # Run DICOM loading tests (requires display and real DICOM data)
 test-dicom: find-slicer-python
