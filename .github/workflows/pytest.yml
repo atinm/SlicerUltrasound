@@ -1,4 +1,4 @@
-name: Run Slicer Module Tests
+name: Run Pytests
 
 # Trigger the workflow on pull requests to the main branch
 on:
@@ -7,20 +7,34 @@ on:
 
 jobs:
   # Job 1: Pure Python tests (fastest, no Slicer modules required)
-  test-py-system:
+  test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Match the python version in .python-version file.
+        python-version: [3.9]
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.9
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
         with:
-          python-version: 3.9
+          python-version: ${{ matrix.python-version }}
 
-      - name: Install test dependencies in system Python
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
         run: |
-          pip install pytest pytest-cov pytest-mock hypothesis
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt
 
       - name: Run pure Python tests
         run: |
