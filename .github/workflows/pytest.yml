@@ -25,6 +25,7 @@ jobs:
           tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
           export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
           echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
+          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_PATH
 
       - name: Install build dependencies
         run: |
@@ -66,6 +67,7 @@ jobs:
           tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
           export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
           echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
+          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_PATH
 
       - name: Install system dependencies
         run: |
@@ -74,7 +76,7 @@ jobs:
 
       - name: Install test dependencies in Slicer Python
         run: |
-          make install-test-deps
+          make SLICER_HOME=$SLICER_HOME install-test-deps
 
       - name: Run pure Python tests
         run: |
@@ -107,6 +109,7 @@ jobs:
           tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
           export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
           echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
+          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_PATH
 
       - name: Install build dependencies
         run: |
