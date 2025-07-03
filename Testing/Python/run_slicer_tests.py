@@ -182,14 +182,82 @@ def install_dependencies_subprocess():
 
     return True
 
+def run_basic_validation():
+    """Run basic validation tests first to ensure environment is working."""
+    print("=== Running Basic Validation Tests ===")
+
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+
+    # List of basic test files to run
+    basic_test_files = [
+        os.path.join(project_root, 'AnnotateUltrasound', 'Testing', 'Python', 'test_basic.py'),
+    ]
+
+    # Only include files that actually exist
+    basic_test_files = [f for f in basic_test_files if os.path.exists(f)]
+
+    if not basic_test_files:
+        print("⚠️  No basic test files found, skipping basic validation")
+        return True
+
+    print(f"Running basic validation tests: {basic_test_files}")
+
+    try:
+        import pytest
+
+        # Change to the project root to ensure proper test discovery
+        original_cwd = os.getcwd()
+        os.chdir(project_root)
+
+        # Run basic tests with minimal output
+        basic_args = [
+            '--tb=short',
+            '--quiet',
+        ] + basic_test_files
+
+        print(f"Running basic tests with: pytest {' '.join(basic_args)}")
+        result = pytest.main(basic_args)
+
+        # Restore original working directory
+        os.chdir(original_cwd)
+
+        if result == 0:
+            print("✅ Basic validation tests passed")
+            return True
+        else:
+            print("❌ Basic validation tests failed")
+            return False
+
+    except Exception as e:
+        print(f"❌ Error running basic validation tests: {e}")
+        return False
+
 def run_tests(args):
     """Run tests using Slicer's Python environment."""
     try:
         import pytest
 
-        # Use absolute path for tests directory (project root)
+        # Run basic validation first
+        if not run_basic_validation():
+            print("❌ Basic validation failed, stopping test execution")
+            return 1
+
+        print("\n=== Running Main Test Suite ===")
+
+        # Use absolute path for all Slicer-dependent test directories only
+        SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
         project_root = os.path.dirname(os.path.dirname(SCRIPT_DIR))
-        tests_dir = os.path.join(project_root, 'tests')
+        test_dirs = [
+            os.path.join(project_root, 'AnnotateUltrasound', 'Testing', 'Python'),
+            os.path.join(project_root, 'AnonymizeUltrasound', 'Testing', 'Python'),
+            os.path.join(project_root, 'MmodeAnalysis', 'Testing', 'Python'),
+            os.path.join(project_root, 'SceneCleaner', 'Testing', 'Python'),
+            os.path.join(project_root, 'TimeSeriesAnnotation', 'Testing', 'Python'),
+            os.path.join(project_root, 'Testing', 'Python'),  # top-level Slicer tests
+        ]
+        # Only include directories that actually exist
+        test_dirs = [d for d in test_dirs if os.path.isdir(d)]
 
         # Change to the project root to ensure proper test discovery
         original_cwd = os.getcwd()
@@ -199,17 +267,15 @@ def run_tests(args):
             '--cov=.',
             '--cov-report=term-missing',
             '--tb=short',
-            '--ignore=AnnotateUltrasound/Testing/Python/',
-            '--ignore=Testing/Python/',
-            tests_dir
-        ]
+            '--ignore=AnnotateUltrasound/Testing/Python/test_dicom_loading.py',  # Exclude GUI test
+        ] + test_dirs
 
         # Add any additional pytest arguments
         if args.pytest_args:
             test_args.extend(args.pytest_args)
 
-        print(f"Running tests with: pytest {' '.join(test_args)}")
-        print(f"Tests directory: {tests_dir}")
+        print(f"Running main tests with: pytest {' '.join(test_args)}")
+        print(f"Test directories: {test_dirs}")
         print(f"Working directory: {os.getcwd()}")
 
         # Run pytest
@@ -223,9 +289,101 @@ def run_tests(args):
         print(f"Error running tests: {e}")
         return 1
 
+def run_basic_validation_subprocess():
+    """Run basic validation tests using subprocess calls to Slicer Python."""
+    print("=== Running Basic Validation Tests ===")
+
+    import subprocess
+
+    # Find Slicer Python executable
+    slicer_python = None
+
+    # Check environment variable first (for CI environments)
+    slicer_home = os.environ.get('SLICER_HOME')
+    if slicer_home:
+        possible_paths = [
+            os.path.join(slicer_home, 'bin', 'PythonSlicer'),
+            os.path.join(slicer_home, 'bin', 'Slicer'),
+            os.path.join(slicer_home, 'PythonSlicer'),
+            os.path.join(slicer_home, 'Slicer'),
+        ]
+
+        for path in possible_paths:
+            if os.path.exists(path):
+                slicer_python = path
+                break
+
+    # Fallback to common installation paths
+    if not slicer_python:
+        possible_paths = [
+            "/Applications/Slicer.app/Contents/bin/PythonSlicer",
+            "/usr/local/bin/Slicer",
+        ]
+
+        for path in possible_paths:
+            if os.path.exists(path):
+                slicer_python = path
+                break
+
+    if not slicer_python:
+        print("✗ Could not find Slicer Python executable for basic validation")
+        return False
+
+    project_root = os.path.dirname(os.path.dirname(SCRIPT_DIR))
+
+    # List of basic test files to run
+    basic_test_files = [
+        os.path.join(project_root, 'AnnotateUltrasound', 'Testing', 'Python', 'test_basic.py'),
+    ]
+
+    # Only include files that actually exist
+    basic_test_files = [f for f in basic_test_files if os.path.exists(f)]
+
+    if not basic_test_files:
+        print("⚠️  No basic test files found, skipping basic validation")
+        return True
+
+    print(f"Running basic validation tests: {basic_test_files}")
+
+    try:
+        # Change to the project root to ensure proper test discovery
+        original_cwd = os.getcwd()
+        os.chdir(project_root)
+
+        # Run basic tests with minimal output
+        basic_args = [
+            slicer_python, '-m', 'pytest',
+            '--tb=short',
+            '--quiet',
+        ] + basic_test_files
+
+        print(f"Running basic tests with: {' '.join(basic_args)}")
+        result = subprocess.run(basic_args, check=False)
+
+        # Restore original working directory
+        os.chdir(original_cwd)
+
+        if result.returncode == 0:
+            print("✅ Basic validation tests passed")
+            return True
+        else:
+            print("❌ Basic validation tests failed")
+            return False
+
+    except Exception as e:
+        print(f"❌ Error running basic validation tests: {e}")
+        return False
+
 def run_tests_subprocess(args):
     """Run tests using subprocess calls to Slicer Python."""
     import subprocess
+
+    # Run basic validation first
+    if not run_basic_validation_subprocess():
+        print("❌ Basic validation failed, stopping test execution")
+        return 1
+
+    print("\n=== Running Main Test Suite ===")
 
     # Find Slicer Python executable
     slicer_python = None
@@ -271,26 +429,33 @@ def run_tests_subprocess(args):
         print("  /usr/local/bin/Slicer")
         return 1
 
-    # Use absolute path for tests directory (project root)
+    # Use absolute path for all Slicer-dependent test directories only (same as run_tests)
     project_root = os.path.dirname(os.path.dirname(SCRIPT_DIR))
-    tests_dir = os.path.join(project_root, 'tests')
+    test_dirs = [
+        os.path.join(project_root, 'AnnotateUltrasound', 'Testing', 'Python'),
+        os.path.join(project_root, 'AnonymizeUltrasound', 'Testing', 'Python'),
+        os.path.join(project_root, 'MmodeAnalysis', 'Testing', 'Python'),
+        os.path.join(project_root, 'SceneCleaner', 'Testing', 'Python'),
+        os.path.join(project_root, 'TimeSeriesAnnotation', 'Testing', 'Python'),
+        os.path.join(project_root, 'Testing', 'Python'),  # top-level Slicer tests
+    ]
+    # Only include directories that actually exist
+    test_dirs = [d for d in test_dirs if os.path.isdir(d)]
 
     test_args = [
         slicer_python, '-m', 'pytest',
         '--cov=.',
         '--cov-report=term-missing',
         '--tb=short',
-        '--ignore=AnnotateUltrasound/Testing/Python/',
-        '--ignore=Testing/Python/',
-        tests_dir
-    ]
+        '--ignore=AnnotateUltrasound/Testing/Python/test_dicom_loading.py',  # Exclude GUI test
+    ] + test_dirs
 
     # Add any additional pytest arguments
     if args.pytest_args:
         test_args.extend(args.pytest_args)
 
-    print(f"Running tests with: {' '.join(test_args)}")
-    print(f"Tests directory: {tests_dir}")
+    print(f"Running main tests with: {' '.join(test_args)}")
+    print(f"Test directories: {test_dirs}")
 
     try:
         # Change to the project root to ensure proper test discovery

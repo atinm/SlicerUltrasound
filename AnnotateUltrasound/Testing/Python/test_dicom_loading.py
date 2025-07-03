@@ -7,17 +7,17 @@ This script loads DICOM files and tests the module's functionality.
 import sys
 import os
 import slicer
-import vtk
 import json
 import time
 
-# Add the module path to sys.path
-modulePath = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.join(modulePath, 'AnnotateUltrasound'))
-
-# Import the module
-from AnnotateUltrasound import AnnotateUltrasoundLogic, AnnotateUltrasoundWidget
-
+# Only import if we're in a proper Slicer environment
+try:
+    # Import directly from the module file for Slicer extensions
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+    from AnnotateUltrasound import AnnotateUltrasoundLogic, AnnotateUltrasoundWidget
+except ImportError:
+    # Skip import if not in proper Slicer environment
+    pass
 
 class DicomLoadingTest:
     """
@@ -27,7 +27,7 @@ class DicomLoadingTest:
     def __init__(self):
         self.widget = None
         self.logic = None
-        self.test_data_dir = os.path.join(modulePath, 'test_data')
+        self.test_data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'test_data'))
 
     def setUp(self):
         """Set up the test environment."""
@@ -35,7 +35,7 @@ class DicomLoadingTest:
         slicer.mrmlScene.Clear(0)
 
         # Create the widget
-        self.widget = AnnotateUltrasoundWidget()
+        self.widget = slicer.modules.annotateultrasound.widgetRepresentation().self()
         self.logic = self.widget.logic
 
         # Wait for UI to be ready
@@ -77,11 +77,11 @@ class DicomLoadingTest:
         """Test loading DICOM files from the test directory."""
         print("Testing DICOM directory loading...")
 
-        # Set a rater first (required for updateInputDf) - use "andrew" since we have annotation files for that rater
-        self.logic.setRater("andrew")
+        # Set a rater first (required for updateInputDf) - use "tom" since we have annotation files for that rater
+        self.logic.setRater("tom")
 
         # Test loading the DICOM directory
-        num_files, num_annotations = self.logic.updateInputDf("andrew", self.test_data_dir)
+        num_files, num_annotations = self.logic.updateInputDf("tom", self.test_data_dir)
 
         print(f"Found {num_files} DICOM files")
         print(f"Created {num_annotations} annotation files")
@@ -92,8 +92,8 @@ class DicomLoadingTest:
 
         # Check that we have the expected files
         expected_files = [
-            '0561119268_08109698.dcm',
-            '0561119268_32202817.dcm'
+            '3038953328_70622118.dcm',
+            '9938886735_88815303.dcm'
         ]
 
         for expected_file in expected_files:
@@ -117,10 +117,9 @@ class DicomLoadingTest:
         print(f"Loaded sequence at index {current_index}")
 
         # Check if annotations were loaded
+        self.assertIsNotNone(self.logic.annotations)
         if self.logic.annotations is not None:
             print(f"Loaded annotations with {len(self.logic.annotations.get('frame_annotations', []))} frames")
-        else:
-            print("No annotations loaded (this is normal for new files)")
 
         print("✅ Annotation loading test passed")
 
@@ -129,7 +128,7 @@ class DicomLoadingTest:
         print("Testing rater management with data...")
 
         # Set up test raters - use the raters we have annotation files for
-        test_raters = {"andrew", "sandra", "test_rater"}
+        test_raters = {"tom", "test_rater"}
         self.logic.setSelectedRaters(test_raters)
 
         # Verify raters are set
@@ -149,20 +148,20 @@ class DicomLoadingTest:
         """Test creating lines with loaded data."""
         print("Testing line creation with data...")
 
-        # Set a rater - use "andrew" since we have annotation files for that rater
-        self.logic.setRater("andrew")
+        # Set a rater - use "tom" since we have annotation files for that rater
+        self.logic.setRater("tom")
 
         # Create test coordinates (in image space)
         coordinates = [[100, 100, 0], [200, 150, 0]]
 
         # Create a pleura line
-        pleura_line = self.logic.createMarkupLine("test_pleura", "andrew", coordinates)
+        pleura_line = self.logic.createMarkupLine("test_pleura", "tom", coordinates)
         self.assertIsNotNone(pleura_line)
         print(f"Created pleura line: {pleura_line.GetName()}")
 
         # Create a B-line
         bline_coordinates = [[150, 120, 0], [180, 180, 0]]
-        bline = self.logic.createMarkupLine("test_bline", "andrew", bline_coordinates)
+        bline = self.logic.createMarkupLine("test_bline", "tom", bline_coordinates)
         self.assertIsNotNone(bline)
         print(f"Created B-line: {bline.GetName()}")
 

@@ -5,7 +5,9 @@ These tests can run in Slicer's Python environment.
 
 import sys
 import os
+import pytest
 
+@pytest.mark.skipif("slicer" not in globals() and __import__("importlib.util").util.find_spec("slicer") is None, reason="Not running in Slicer environment")
 def test_slicer_environment():
     """Test that we're running in Slicer's Python environment."""
     # Check if we can import slicer
