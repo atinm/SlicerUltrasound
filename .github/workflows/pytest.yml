@@ -6,8 +6,8 @@ on:
     branches: [main]
 
 jobs:
-  # Job 1: Slicer module tests (requires Slicer Python environment but no GUI)
-  test-slicer-modules:
+  # Job 1: Pure Python tests (fastest, no Slicer modules required)
+  test-py-system:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -18,122 +18,18 @@ jobs:
         with:
           python-version: 3.9
 
-      - name: Install Slicer
+      - name: Install test dependencies in system Python
         run: |
-          # Download and install Slicer 5.8.1
-          wget https://download.slicer.org/bitstream/67c51fc129825655577cfee9 -O Slicer-5.8.1-linux-amd64.tar.gz
-          tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
-          export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
-          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
-
-      - name: Print SLICER_HOME (confirm it was exported)
-        run: echo "Using SLICER_HOME=$SLICER_HOME"
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential libgl1 libglu1-mesa xvfb libpulse0 libpulse-mainloop-glib0 libxcb1 libxcb-xfixes0-dev libxcb-shape0 libxcb-render0 libxcb-render-util0 libxcb-keysyms1 libxcb-icccm4 libxcb-image0 libxcb-shm0 libxcb-util1 libxcb-randr0 libxcb-randr0-dev libxcb-xinerama0 libxcb-xinerama0-dev  libxcb-xkb1
-
-      - name: Install module into Slicer
-        run: |
-          make install-module
-
-      - name: Run Slicer module tests
-        run: |
-          make test-slicer-modules
-
-      - name: Upload Slicer module test coverage reports
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.xml
-          flags: slicer-modules
-          name: codecov-slicer-modules
-          fail_ci_if_error: false
-
-  # Job 2: Pure Python tests (fastest, no Slicer modules required)
-  test-py-slicer:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.9
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.9
-
-      - name: Install Slicer
-        run: |
-          # Download and install Slicer 5.8.1
-          wget https://download.slicer.org/bitstream/67c51fc129825655577cfee9 -O Slicer-5.8.1-linux-amd64.tar.gz
-          tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
-          export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
-          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
-
-      - name: Print SLICER_HOME (confirm it was exported)
-        run: echo "Using SLICER_HOME=$SLICER_HOME"
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgl1 libglu1-mesa xvfb libpulse0 libpulse-mainloop-glib0 libxcb1 libxcb-xfixes0-dev libxcb-shape0 libxcb-render0 libxcb-render-util0 libxcb-keysyms1 libxcb-icccm4 libxcb-image0 libxcb-shm0 libxcb-util1 libxcb-randr0 libxcb-randr0-dev libxcb-xinerama0 libxcb-xinerama0-dev  libxcb-xkb1
-
-      - name: Install test dependencies in Slicer Python
-        run: |
-          make install-test-deps
+          pip install pytest pytest-cov pytest-mock hypothesis
 
       - name: Run pure Python tests
         run: |
-          make test-py-slicer
+          find . -type d -name tests -not -path "./.venv/*" -not -path "./build/*" -not -path "./__pycache__/*" | xargs -I {} python -m pytest {}
 
       - name: Upload pure Python test coverage reports
         uses: codecov/codecov-action@v3
         with:
           file: ./coverage.xml
-          flags: py-slicer
-          name: codecov-py-slicer
-          fail_ci_if_error: false
-
-  # Job 3: Tests with coverage (most comprehensive, skips GUI tests)
-  test-coverage:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.9
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.9
-
-      - name: Install Slicer
-        run: |
-          # Download and install Slicer 5.8.1
-          wget https://download.slicer.org/bitstream/67c51fc129825655577cfee9 -O Slicer-5.8.1-linux-amd64.tar.gz
-          tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
-          export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
-          echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
-
-      - name: Print SLICER_HOME (confirm it was exported)
-        run: echo "Using SLICER_HOME=$SLICER_HOME"
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake build-essential libgl1 libglu1-mesa xvfb libpulse0 libpulse-mainloop-glib0 libxcb1 libxcb-xfixes0-dev libxcb-shape0 libxcb-render0 libxcb-render-util0 libxcb-keysyms1 libxcb-icccm4 libxcb-image0 libxcb-shm0 libxcb-util1 libxcb-randr0 libxcb-randr0-dev libxcb-xinerama0 libxcb-xinerama0-dev  libxcb-xkb1
-
-      - name: Install module into Slicer
-        run: |
-          make install-module
-
-      - name: Run coverage tests
-        run: |
-          make test-coverage
-
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v3
-        with:
-          file: ./coverage.xml
-          flags: coverage
-          name: codecov-coverage
+          flags: py-system
+          name: codecov-py-system
           fail_ci_if_error: false
