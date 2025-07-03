@@ -41,6 +41,32 @@ class DicomFileManager:
     # Define allowed DICOM file extensions (case-insensitive)
     DICOM_EXTENSIONS = {'.dcm', '.dicom'}
 
+    # DICOM tags to copy directly
+    DICOM_TAGS_TO_COPY = [
+        "BitsAllocated",
+        "BitsStored",
+        "HighBit",
+        "ManufacturerModelName",
+        "PatientAge",
+        "PatientSex",
+        "PixelRepresentation",
+        "SeriesNumber",
+        "StationName",
+        "StudyDate",
+        "StudyDescription",
+        "StudyID",
+        "StudyTime",
+        "TransducerType",
+        "Manufacturer"
+    ]
+
+    # Expected columns in the DICOM files dataframe
+    DICOM_DATAFRAME_COLUMNS = [
+        'Filepath', 'AnonFilename', 'PatientUID', 'StudyUID', 'SeriesUID',
+        'InstanceUID', 'PhysicalDeltaX', 'PhysicalDeltaY', 'ContentDate',
+        'ContentTime', 'Patch', 'TransducerModel', 'DICOMDataset'
+    ]
+
     PATIENT_ID_HASH_LENGTH = 10
     INSTANCE_ID_HASH_LENGTH = 8
     DEFAULT_CONTENT_DATE = '19000101'
@@ -302,13 +328,7 @@ class DicomFileManager:
             return
 
         # Create DataFrame with proper column order
-        expected_columns = [
-            'Filepath', 'AnonFilename', 'PatientUID', 'StudyUID', 'SeriesUID',
-            'InstanceUID', 'PhysicalDeltaX', 'PhysicalDeltaY', 'ContentDate',
-            'ContentTime', 'Patch', 'TransducerModel', 'DICOMDataset'
-        ]
-
-        self.dicom_df = pd.DataFrame(dicom_data, columns=expected_columns)
+        self.dicom_df = pd.DataFrame(dicom_data, columns=self.DICOM_DATAFRAME_COLUMNS)
 
         # Sort and reset index
         self.dicom_df = (self.dicom_df
@@ -588,25 +608,7 @@ class DicomFileManager:
 
     def _copy_source_metadata(self, ds: pydicom.Dataset, source_ds: pydicom.Dataset, output_path: str) -> None:
         """Copy metadata from source dataset."""
-        # Tags to copy directly
-        tags_to_copy = [
-            "BitsAllocated",
-            "BitsStored",
-            "HighBit",
-            "ManufacturerModelName",
-            # "PatientAge", # TODO: check why this is not excluded in the original code?
-            # "PatientSex", # TODO: check why this is not excluded in the original code?
-            "PixelRepresentation",
-            "SeriesNumber",
-            "StationName",
-            "StudyDate",
-            "StudyDescription",
-            "StudyID",
-            "StudyTime",
-            "TransducerType"
-        ]
-
-        for tag in tags_to_copy:
+        for tag in self.DICOM_TAGS_TO_COPY:
             if hasattr(source_ds, tag):
                 setattr(ds, tag, getattr(source_ds, tag))
 
@@ -649,9 +651,8 @@ class DicomFileManager:
                             new_patient_name: str = None, new_patient_id: str = None) -> None:
         """Apply anonymization including patient info and date shifting."""
         # Set anonymized patient information
-        # TODO: check if there is a use case for not setting the patient name/ ID to a random value which the original code does
-        ds.PatientName = new_patient_name if new_patient_name else pydicom.uid.generate_uid()
-        ds.PatientID = new_patient_id if new_patient_id else pydicom.uid.generate_uid()
+        ds.PatientName = new_patient_name if new_patient_name else ""
+        ds.PatientID = new_patient_id if new_patient_id else ""
 
         # Apply date shifting for anonymization
         self._apply_date_shifting(ds, source_ds)
@@ -691,8 +692,6 @@ class DicomFileManager:
         # Add missing required attributes to satisfy DICOM conformance.
         # Type 2 elements must be present (they can be empty).
         # https://dicom.nema.org/medical/dicom/current/output/chtml/part03/sect_C.7.2.html
-
-        # TODO: check why original code does not set these attributes to empty strings regardless of the source dataset values
         ds.PatientBirthDate = ''
         ds.ReferringPhysicianName = ''
         ds.AccessionNumber = ''

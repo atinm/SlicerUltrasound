@@ -10,6 +10,7 @@ from pydicom.dataset import Dataset, FileDataset, FileMetaDataset
 from pydicom import Sequence
 from unittest.mock import Mock, patch
 from pathlib import Path
+import logging
 
 # Mock slicer module for testing
 sys.modules['slicer'] = Mock()
@@ -849,8 +850,8 @@ class TestDicomFileManager:
         manager_with_data._copy_source_metadata(ds, source_ds, output_path)
 
         # These should NOT be copied
-        assert not hasattr(ds, 'PatientAge')
-        assert not hasattr(ds, 'PatientSex')
+        assert not hasattr(ds, 'PatientID')
+        assert not hasattr(ds, 'PatientBirthDate')
 
         # But these should still be copied
         assert hasattr(ds, 'BitsAllocated')
@@ -864,12 +865,9 @@ class TestDicomFileManager:
         # Don't provide new patient info
         manager_with_data._apply_anonymization(ds, source_ds)
 
-        # Should have generated UIDs, not original values
-        assert ds.PatientName != source_ds.PatientName
-        assert ds.PatientID != source_ds.PatientID
-        # Should be valid UIDs (contain dots and numbers)
-        assert '.' in ds.PatientName
-        assert '.' in ds.PatientID
+        # Should be blank strings
+        assert ds.PatientName == ""
+        assert ds.PatientID == ""
 
     def test_apply_anonymization_uses_provided_patient_info(self, manager_with_data):
         """Test that _apply_anonymization uses provided patient info when given"""
