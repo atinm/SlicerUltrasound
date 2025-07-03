@@ -151,13 +151,9 @@ install-test-deps:
 	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
 		/Applications/Slicer.app/Contents/MacOS/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/Slicer" ]; then \
-		if command -v xvfb-run >/dev/null 2>&1; then \
-			export DISPLAY=:99; \
-			xvfb-run -a -s "-screen 0 1024x768x24" $$SLICER_HOME/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
-		else \
-			export DISPLAY=:99; \
-			$$SLICER_HOME/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
-		fi; \
+		export QT_QPA_PLATFORM=offscreen; \
+		export DISPLAY=:99; \
+		$$SLICER_HOME/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
 	else \
 		echo "Slicer not found!"; \
 		exit 1; \
