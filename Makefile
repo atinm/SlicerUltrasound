@@ -105,6 +105,9 @@ test-py-slicer:
 	@if [ -f "/Applications/Slicer.app/Contents/bin/PythonSlicer" ]; then \
 		find . -type d -name tests -not -path "./.venv/*" -not -path "./build/*" -not -path "./__pycache__/*" | \
 		xargs -I {} /Applications/Slicer.app/Contents/bin/PythonSlicer -m pytest {}; \
+	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/PythonSlicer" ]; then \
+		find . -type d -name tests -not -path "./.venv/*" -not -path "./build/*" -not -path "./__pycache__/*" | \
+		xargs -I {} $$SLICER_HOME/bin/PythonSlicer -m pytest {}; \
 	else \
 		echo "Slicer Python not found!"; \
 		exit 1; \
