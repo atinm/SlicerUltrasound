@@ -151,7 +151,7 @@ install-test-deps:
 	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
 		/Applications/Slicer.app/Contents/MacOS/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/Slicer" ]; then \
-		xvfb-run -a -s "-screen 0 1024x768x24" $$SLICER_HOME/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
+		bash -c 'xvfb-run -a -s "-screen 0 1024x768x24" "$$SLICER_HOME/Slicer" --no-main-window --python-code "import slicer; slicer.util.pip_install(\"pytest\"); slicer.util.pip_install(\"pytest-cov\"); slicer.util.pip_install(\"pytest-mock\"); slicer.util.pip_install(\"hypothesis\")"' ; \
 	else \
 		echo "Slicer not found!"; \
 		exit 1; \
