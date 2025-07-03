@@ -39,9 +39,9 @@ test-gui: find-slicer-python
 	fi; \
 	echo "Using Slicer: $$SLICER_EXE"; \
 	echo "Running AnnotateUltrasound GUI test..."; \
-	"$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
+	xvfb-run -a -s "-screen 0 1024x768x24" "$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
 	echo "Running DICOM loading test..."; \
-	"$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py
+	xvfb-run -a -s "-screen 0 1024x768x24" "$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py
 
 # Run tests for CI (skips GUI tests)
 test-ci: test-py-slicer test-slicer-modules
@@ -55,9 +55,9 @@ test-dicom: find-slicer-python
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
 		/usr/local/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/Slicer" ]; then \
-		$$SLICER_HOME/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
+		xvfb-run -a -s "-screen 0 1024x768x24" $$SLICER_HOME/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/Slicer" ]; then \
-		$$SLICER_HOME/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
+		xvfb-run -a -s "-screen 0 1024x768x24" $$SLICER_HOME/Slicer --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
 		echo "Checked paths:"; \
@@ -153,7 +153,7 @@ install-test-deps:
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/Slicer" ]; then \
 		export QT_QPA_PLATFORM=offscreen; \
 		export DISPLAY=:99; \
-		$$SLICER_HOME/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
+		xvfb-run -a -s "-screen 0 1024x768x24" $$SLICER_HOME/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
 	else \
 		echo "Slicer not found!"; \
 		exit 1; \
