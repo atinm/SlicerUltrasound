@@ -36,9 +36,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-test.txt
 
-      - name: Run pure Python tests
+      - name: Run pure Python tests with coverage
         run: |
-          find . -type d -name tests -not -path "./.venv/*" -not -path "./build/*" -not -path "./__pycache__/*" | xargs -I {} python -m pytest {}
+          find . -type d -name tests -not -path "./.venv/*" -not -path "./build/*" -not -path "./__pycache__/*" | xargs -I {} python -m pytest {} --cov=. --cov-report=xml --cov-report=html --cov-report=term-missing
 
       - name: Upload pure Python test coverage reports
         uses: codecov/codecov-action@v3
