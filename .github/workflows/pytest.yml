@@ -11,7 +11,7 @@ jobs:
 
     strategy:
       matrix:
-        # Match the python version in .python-version file.
+        # Match the version in .python-version file.
         python-version: [3.9]
 
     steps:
