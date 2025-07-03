@@ -151,7 +151,11 @@ install-test-deps:
 	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
 		/Applications/Slicer.app/Contents/MacOS/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
 	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/Slicer" ]; then \
-		$$SLICER_HOME/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
+		if command -v xvfb-run >/dev/null 2>&1; then \
+			xvfb-run -a $$SLICER_HOME/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
+		else \
+			$$SLICER_HOME/Slicer --no-main-window --python-code "import slicer; slicer.util.pip_install('pytest'); slicer.util.pip_install('pytest-cov'); slicer.util.pip_install('pytest-mock'); slicer.util.pip_install('hypothesis')"; \
+		fi; \
 	else \
 		echo "Slicer not found!"; \
 		exit 1; \

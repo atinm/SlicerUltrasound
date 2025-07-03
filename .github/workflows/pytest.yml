@@ -29,7 +29,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential
+          sudo apt-get install -y cmake build-essential libgl1-mesa-glx libglu1-mesa xvfb
 
       - name: Install module into Slicer
         run: |
@@ -66,6 +66,11 @@ jobs:
           tar xzvf Slicer-5.8.1-linux-amd64.tar.gz
           export SLICER_HOME=$PWD/Slicer-5.8.1-linux-amd64
           echo "SLICER_HOME=$SLICER_HOME" >> $GITHUB_ENV
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-glx libglu1-mesa xvfb
 
       - name: Install test dependencies in Slicer Python
         run: |
@@ -106,7 +111,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake build-essential
+          sudo apt-get install -y cmake build-essential libgl1-mesa-glx libglu1-mesa xvfb
 
       - name: Install module into Slicer
         run: |
