@@ -44,7 +44,7 @@ test-gui: find-slicer-python
 	"$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py
 
 # Run tests for CI (skips GUI tests)
-test-ci: test
+test-ci: test-py-slicer test-slicer-modules
 	@echo "CI tests completed (GUI tests skipped)"
 
 # Run DICOM loading tests (requires display and real DICOM data)
