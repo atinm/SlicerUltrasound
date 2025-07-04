@@ -38,9 +38,38 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-test.txt
 
+      - name: Debug environment
+        run: |
+          echo "=== Python Environment Debug ==="
+          python --version
+          pip list | grep pytest
+          echo "=== Directory Structure ==="
+          find . -name "test_*.py" -type f | head -10
+          echo "=== Test directories ==="
+          ls -la AnnotateUltrasound/tests/ || echo "AnnotateUltrasound/tests/ not found"
+          ls -la AnonymizeUltrasound/tests/ || echo "AnonymizeUltrasound/tests/ not found"
+          ls -la tests/ || echo "tests/ not found"
+          echo "=== Run all tests script ==="
+          ls -la run_all_tests.py || echo "run_all_tests.py not found"
+
       - name: Run unit tests with automated test runner
         run: |
           python run_all_tests.py
+
+      - name: Fallback - Run tests individually if test runner fails
+        if: failure()
+        run: |
+          echo "=== Test runner failed, trying individual test execution ==="
+          echo "Running AnnotateUltrasound tests..."
+          cd AnnotateUltrasound && python -m pytest tests/ -v || echo "AnnotateUltrasound tests failed"
+          cd ..
+          echo "Running AnonymizeUltrasound tests..."
+          cd AnonymizeUltrasound && python -m pytest tests/ -v || echo "AnonymizeUltrasound tests failed"
+          cd ..
+          echo "Running core tests..."
+          python -m pytest tests/ -v || echo "Core tests failed"
+          echo "Running common tests..."
+          python -m pytest AnonymizeUltrasound/common/tests/ -v || echo "Common tests failed"
 
       - name: Run unit tests with coverage (detailed)
         run: |
