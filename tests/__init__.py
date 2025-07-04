@@ -1,4 +1,6 @@
 """
-Test package for SlicerUltrasound.
-Contains unit tests for core functionality that don't require Slicer.
+Core/shared tests package for SlicerUltrasound.
+
+This package contains unit tests for functionality that spans multiple modules
+or provides core utilities used across the project.
 """
