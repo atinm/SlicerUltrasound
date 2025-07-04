@@ -1,11 +1,10 @@
 name: Run Pytests
 
-# Trigger the workflow on pull requests to the main branch and pushes to any branch
+# Trigger the workflow on pull requests and pushes to any branch for comprehensive testing
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main, "atinm/*"] # Run on main and atinm/* branches for testing
+  push: # Run on all branch pushes for testing
   workflow_dispatch: # Allow manual triggering
 
 jobs:
