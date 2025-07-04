@@ -1,11 +1,12 @@
 name: Run Pytests
 
-# Trigger the workflow on pull requests to the main branch
+# Trigger the workflow on pull requests to the main branch and pushes to any branch
 on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, "atinm/*"] # Run on main and atinm/* branches
+  workflow_dispatch: # Allow manual triggering
 
 jobs:
   # Job 1: Pure Python unit tests (fastest, no Slicer modules required)
