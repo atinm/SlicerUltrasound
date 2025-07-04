@@ -5,7 +5,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main, "atinm/*"] # Run on main and atinm/* branches
+    branches: [main] # Run on main branch
   workflow_dispatch: # Allow manual triggering
 
 jobs:
