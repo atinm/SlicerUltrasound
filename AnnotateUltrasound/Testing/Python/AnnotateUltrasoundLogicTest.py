@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Slicer test for AnnotateUltrasound module.
+Slicer test for AnnotateUltrasound module's Logic class.
 This test runs within Slicer's Python environment.
 """
 
@@ -16,7 +16,7 @@ modulePath = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, modulePath)
 
 # Import the module
-from AnnotateUltrasound import AnnotateUltrasoundLogic, AnnotateUltrasoundWidget
+from AnnotateUltrasound import AnnotateUltrasoundLogic
 
 # Import Slicer test base class
 try:
@@ -26,20 +26,19 @@ except ImportError:
     ScriptedLoadableModuleTest = unittest.TestCase
 
 
-class AnnotateUltrasoundModuleTest(ScriptedLoadableModuleTest):
+class AnnotateUltrasoundLogicTest(ScriptedLoadableModuleTest):
     """
-    This is the test case for your scripted module.
     Uses ScriptedLoadableModuleTest base class, available at:
     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
     """
 
     def setUp(self):
-        """ Do whatever is needed to reset the state - typically a scene clear will be enough.
+        """ Reset the state - typically a scene clear will be enough.
         """
         slicer.mrmlScene.Clear(0)
 
     def runTest(self):
-        """Run as few or as many tests as needed here.
+        """Run the tests. Add calls to additional tests as we add them here.
         """
         self.setUp()
         self.test_AnnotateUltrasoundLogic()
@@ -321,7 +320,7 @@ def runTest():
     """
     Run the tests.
     """
-    test = AnnotateUltrasoundModuleTest()
+    test = AnnotateUltrasoundLogicTest()
     test.runTest()
 
 if __name__ == '__main__':

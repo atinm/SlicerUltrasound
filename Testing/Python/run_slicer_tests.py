@@ -60,7 +60,7 @@ def install_dependencies():
         print("=== END DEBUG INFO ===\n")
 
         # Debug: Try to find and load AnnotateUltrasound module
-        print("=== ANNOTATEULTRASOUND MODULE CHECK ===")
+        print("=== AnnotateUltrasound Module Check ===")
         try:
             import os
             slicer_root = os.path.dirname(os.path.dirname(slicer.__file__))
@@ -80,7 +80,7 @@ def install_dependencies():
                     print(f"  ✗ Not found at: {annotate_path}")
         except Exception as e:
             print(f"Error checking AnnotateUltrasound module: {e}")
-        print("=== END ANNOTATEULTRASOUND CHECK ===\n")
+        print("=== END AnnotateUltrasound Module Check ===\n")
 
         # Check if slicer.util exists
         if hasattr(slicer, 'util'):

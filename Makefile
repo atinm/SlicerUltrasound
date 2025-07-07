@@ -21,9 +21,9 @@ find-slicer-python:
 		exit 1; \
 	fi
 
-# Run GUI tests locally (requires display and user interaction simulation)
+# Run Widget tests locally (requires display and user interaction simulation)
 test-gui: find-slicer-python
-	@echo "Running GUI tests locally (requires display)..."
+	@echo "Running Widget GUI tests locally (requires display)..."
 	@SLICER_EXE=""; \
 	if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
 		SLICER_EXE="/Applications/Slicer.app/Contents/MacOS/Slicer"; \
@@ -38,8 +38,8 @@ test-gui: find-slicer-python
 		exit 1; \
 	fi; \
 	echo "Using Slicer: $$SLICER_EXE"; \
-	echo "Running AnnotateUltrasound GUI test..."; \
-	"$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py; \
+	echo "Running AnnotateUltrasound Widget Tests..."; \
+	"$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundWidgetTest.py; \
 	echo "Running DICOM loading test..."; \
 	"$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py
 
@@ -114,12 +114,12 @@ test-pattern: build-testing
 # Run pytest tests with coverage (Python-only)
 test-coverage: find-slicer-python
 	@echo "Running pytest tests with coverage..."
-	@if [ -f "/Applications/Slicer.app/Contents/bin/PythonSlicer" ]; then \
-		/Applications/Slicer.app/Contents/bin/PythonSlicer Testing/Python/run_slicer_tests.py --install-deps; \
+	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
+		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script Testing/Python/run_slicer_tests.py --install-deps; \
 	elif [ -f "/usr/local/bin/Slicer" ]; then \
 		/usr/local/bin/Slicer --python-script Testing/Python/run_slicer_tests.py --install-deps; \
-	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/PythonSlicer" ]; then \
-		$$SLICER_HOME/bin/PythonSlicer Testing/Python/run_slicer_tests.py --install-deps; \
+	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/Slicer" ]; then \
+		$$SLICER_HOME/bin/Slicer --python-script Testing/Python/run_slicer_tests.py --install-deps; \
 	else \
 		echo "❌ Slicer not found. Please install Slicer first."; \
 		exit 1; \

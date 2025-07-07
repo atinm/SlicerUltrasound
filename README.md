@@ -102,8 +102,8 @@ ctest -V --output-on-failure
 
 ### Test Files
 
-- `AnnotateUltrasound/Testing/Python/AnnotateUltrasoundModuleTest.py` - Unit tests for AnnotateUltrasound
-- `AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py` - GUI tests for AnnotateUltrasound
+- `AnnotateUltrasound/Testing/Python/AnnotateUltrasoundLogicTest.py` - Unit tests for AnnotateUltrasound
+- `AnnotateUltrasound/Testing/Python/AnnotateUltrasoundWidgetTest.py` - GUI tests for AnnotateUltrasound
 - `AnonymizeUltrasound/Testing/Python/AnonymizeUltrasoundModuleTest.py` - Unit tests for AnonymizeUltrasound
 
 ### Test Configuration
@@ -141,10 +141,10 @@ ctest -V
 
 # Run specific test with debug output
 cd build
-./bin/AnnotateUltrasoundModuleTest
+./bin/AnnotateUltrasoundLogicTest
 
 # Run GUI tests manually
-/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundGUITest.py
+/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundWidgetTest.py
 ```
 
 ## Contributing
@@ -228,4 +228,5 @@ This module facilitates the process of creating segmentations for time-series 2D
 ![TimeSeriesAnnotation_2024-06-27.png](https://raw.githubusercontent.com/ungi/SlicerUltrasound/b4c3fdea3025d2891f849a9061a89ca8cbb30b99/Screenshots/TimeSeriesAnnotation_2024-06-27.png)
 
 ## Additional Documentation
+
 Refer to the docs/ directory for more information about development, debugging, and testing.
