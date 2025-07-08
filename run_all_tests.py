@@ -129,7 +129,6 @@ def main():
     print(f"Passed: {passed}")
     print(f"Failed: {failed}")
     print(f"Total Duration: {total_duration:.2f} seconds")
-    print(f"Total Tests: {passed + failed} unit tests")
 
     if failed == 0:
         print(f"\n🎉 ALL TESTS PASSED! 🎉")
