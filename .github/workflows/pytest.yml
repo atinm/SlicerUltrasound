@@ -52,9 +52,13 @@ jobs:
           echo "=== Run all tests script ==="
           ls -la run_all_tests.py || echo "run_all_tests.py not found"
 
-      - name: Run unit tests with automated test runner and time the run
+      - name: Run unit tests with coverage
         run: |
-          time python run_all_tests.py --cov=. --cov-report=xml --cov-report=term-missing --cov-report=html
+          # Run modular tests with coverage for each module
+          cd AnnotateUltrasound && python -m pytest tests/ --cov=../AnnotateUltrasound --cov-append --cov-report=xml --cov-report=term-missing
+          cd ../AnonymizeUltrasound && python -m pytest tests/ --cov=../AnonymizeUltrasound --cov-append --cov-report=xml --cov-report=term-missing
+          cd .. && python -m pytest tests/ --cov=. --cov-append --cov-report=xml --cov-report=term-missing --cov-report=html
+          python -m pytest AnonymizeUltrasound/common/tests/ --cov=AnonymizeUltrasound --cov-append --cov-report=xml --cov-report=term-missing
 
       - name: Fallback - Run tests individually if test runner fails
         if: failure()

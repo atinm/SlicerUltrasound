@@ -33,8 +33,8 @@ def run_tests_in_directory(directory, description, pytest_args):
     pytest_cmd = [sys.executable, "-m", "pytest", "-v"] + pytest_args
 
     if directory == "tests":
-        # Run from root directory
-        pytest_cmd.append("tests/")
+        # Run from root directory, but be specific about which tests to run
+        pytest_cmd.extend(["--ignore=*/Testing/*", "tests/"])
         result = subprocess.run(pytest_cmd, capture_output=False)
     else:
         # Change to module directory and run tests
@@ -42,7 +42,7 @@ def run_tests_in_directory(directory, description, pytest_args):
         try:
             module_dir = directory.split('/')[0]
             os.chdir(module_dir)
-            pytest_cmd.append("tests/")
+            pytest_cmd.extend(["--ignore=*/Testing/*", "tests/"])
             result = subprocess.run(pytest_cmd, capture_output=False)
         finally:
             os.chdir(original_dir)
@@ -65,7 +65,7 @@ def run_common_tests(pytest_args):
     print(f"{'='*60}")
 
     start_time = time.time()
-    pytest_cmd = [sys.executable, "-m", "pytest", "-v"] + pytest_args + ["AnonymizeUltrasound/common/tests/"]
+    pytest_cmd = [sys.executable, "-m", "pytest", "-v"] + pytest_args + ["--ignore=*/Testing/*", "AnonymizeUltrasound/common/tests/"]
     result = subprocess.run(pytest_cmd, capture_output=False)
     end_time = time.time()
     duration = end_time - start_time
@@ -79,15 +79,13 @@ def run_common_tests(pytest_args):
 
 def main():
     """Run all unit tests."""
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Run all unit tests for SlicerUltrasound project")
-    parser.add_argument("pytest_args", nargs="*", help="Arguments to pass to pytest")
-    args = parser.parse_args()
+    # Parse command line arguments - pass everything after the script name to pytest
+    pytest_args = sys.argv[1:] if len(sys.argv) > 1 else []
 
     print("SlicerUltrasound Unit Test Runner")
     print("=" * 60)
-    if args.pytest_args:
-        print(f"Pytest arguments: {' '.join(args.pytest_args)}")
+    if pytest_args:
+        print(f"Pytest arguments: {' '.join(pytest_args)}")
 
     overall_start = time.time()
     results = []
@@ -101,11 +99,11 @@ def main():
 
     # Run each test suite
     for directory, description in test_suites:
-        success = run_tests_in_directory(directory, description, args.pytest_args)
+        success = run_tests_in_directory(directory, description, pytest_args)
         results.append((description, success))
 
     # Run common tests separately
-    success = run_common_tests(args.pytest_args)
+    success = run_common_tests(pytest_args)
     results.append(("AnonymizeUltrasound Common Tests", success))
 
     # Summary
