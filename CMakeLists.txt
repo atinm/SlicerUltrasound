@@ -51,6 +51,7 @@ endif()
 
 #-----------------------------------------------------------------------------
 # Extension modules
+add_subdirectory(AdjudicateUltrasound)
 add_subdirectory(AnonymizeUltrasound)
 add_subdirectory(AnnotateUltrasound)
 add_subdirectory(MmodeAnalysis)

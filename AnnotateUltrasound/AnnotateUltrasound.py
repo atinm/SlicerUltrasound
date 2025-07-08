@@ -138,7 +138,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.updatingGUI = False
         self._parameterNode = None
 
-        self.logic = None
         self._parameterNodeGuiTag = None
         self.notEnteredYet = True
         self._lastFrameIndex = -1
@@ -307,8 +306,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.labelAnnotationsCollapsibleButton.collapsed = False
 
         # Create logic class. Logic implements all computations that should be possible to run
-        # in batch mode, without a graphical user interface.
-        self.logic = AnnotateUltrasoundLogic()
+        # in batch mode, without a graphical user interface. We check for None because
+        # a subclass might have set it already.
+        if self.logic is None:
+            self.logic = AnnotateUltrasoundLogic()
 
         # Update directory button directory from settings
         self.ui.inputDirectoryButton.directory = slicer.app.settings().value("AnnotateUltrasound/InputDirectory", "")
@@ -1168,7 +1169,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     def onLabelCheckBoxToggled(self, checkBox, checked):
         logging.info(f"onLabelCheckBoxToggled -- checked: {checked}")
         if self.logic.annotations is None:
-            logging.error("No annotations loaded")
+            logging.error("onLabelCheckBoxToggled: No annotations loaded")
             return
         if "labels" not in self.logic.annotations:
             self.logic.annotations["labels"] = []
@@ -2092,7 +2093,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
     def removeFrame(self, frameIndex):
         logging.info(f"removeFrame -- frameIndex: {frameIndex}")
         if self.annotations is None:
-            logging.warning("No annotations loaded")
+            logging.warning("removeFrame: No annotations loaded")
             return
 
         # Remove the frame index from the list of frame annotations
@@ -2738,7 +2739,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             self._lastMarkupFrameHash = None
 
         if self.annotations is None:
-            logging.warning("No annotations loaded")
+            # this is legit when we are loading a new sequence as we change selections when loading a new sequence
+            # which causes updateLineMarkups to be called before the annotations are loaded
+            logging.debug("updateLineMarkups: No annotations loaded")
             return
 
         if self.sequenceBrowserNode is None:
