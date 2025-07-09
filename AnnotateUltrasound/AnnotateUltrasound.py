@@ -409,7 +409,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Connect rater table collapsed signal to detect user manual changes
         if hasattr(self.ui, 'raterColorsCollapsibleButton'):
-            self.ui.raterColorsCollapsibleButton.connect('collapsedChanged(bool)', self.onRaterColorTableCollapsedChanged)
+            self.ui.raterColorsCollapsibleButton.toggled.connect(self.onRaterColorTableCollapsedChanged)
             # Set rater color table to expanded by default
             self.ui.raterColorsCollapsibleButton.collapsed = False
 
@@ -664,6 +664,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             slicer.util.mainWindow().statusBar().showMessage('⚠️ No more DICOM files', 5000)
             return
 
+        # Reset user rater table collapse state for new clip
+        self._userManuallySetRaterTableState = False
+        self._lastUserManualCollapsedState = None
+
         # Create a dialog to ask the user to wait while the next sequence is loaded.
 
         waitDialog = self.createWaitDialog("Loading next sequence", "Loading next sequence...")
@@ -823,6 +827,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if self.logic.dicomDf is None:
             self.ui.statusLabel.setText("Please read input directory first")
             return
+
+        # Reset user rater table collapse state for new clip
+        self._userManuallySetRaterTableState = False
+        self._lastUserManualCollapsedState = None
 
         # Create a dialog to ask the user to wait while the next sequence is loaded.
         waitDialog = self.createWaitDialog("Loading previous sequence", "Loading previous sequence...")
@@ -1360,8 +1368,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # so that when the scene is saved and reloaded, these settings are restored.
 
         self.setParameterNode(self.logic.getParameterNode())
-        if self.logic and self._parameterNode:
-            self.logic.parameterNode = self._parameterNode
 
         # Select default input nodes if nothing is selected yet to save a few clicks for the user
         if not self._parameterNode.inputVolume:
@@ -1519,8 +1525,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.raterColorTable.clearContents()
         colors = list(self.logic.getAllRaterColors())
 
-        # Filter out __selected_node__ before setting row count, we don't want to show it in the UI
-        visible_colors = [(r, (pleura_color, bline_color)) for r, (pleura_color, bline_color) in colors if r != "__selected_node__"]
+        # Filter out __selected_node__ and __adjudicated_node__ before setting row count, we don't want to show it in the UI
+        visible_colors = [(r, (pleura_color, bline_color)) for r, (pleura_color, bline_color) in colors if r != "__selected_node__" and r != "__adjudicated_node__"]
 
         self.ui.raterColorTable.setRowCount(len(visible_colors))
         self.ui.raterColorTable.setColumnCount(3)
@@ -1592,6 +1598,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         if self.updatingGUI:
             return
         self.updateRatersFromCheckboxes()
+
+        if getattr(self, "_userManuallySetRaterTableState", False):
+            if hasattr(self.ui, "raterColorsCollapsibleButton") and hasattr(self, "_lastUserManualCollapsedState"):
+                self.ui.raterColorsCollapsibleButton.collapsed = self._lastUserManualCollapsedState
 
     def updateRatersFromCheckboxes(self):
         self.selectedRaters = self.getSelectedRatersFromTable()
@@ -2220,7 +2230,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.nextDicomDfIndex += 1
 
         # Make sure a temporary folder for the DICOM files exists
-        tempDicomDir = slicer.app.temporaryPath + '/AnonymizeUltrasound'
+        tempDicomDir = slicer.app.temporaryPath + '/AnnotateUltrasound'
         if not os.path.exists(tempDicomDir):
             os.makedirs(tempDicomDir)
 

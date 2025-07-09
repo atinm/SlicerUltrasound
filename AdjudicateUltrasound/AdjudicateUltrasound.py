@@ -131,6 +131,13 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
 
         super().__init__(parent)
 
+        self.updatingGUI = False
+        self._parameterNode = None
+
+        self._parameterNodeGuiTag = None
+        self.notEnteredYet = True
+        self._lastFrameIndex = -1
+
         # Flag to track if the user manually expanded the rater table
         self._userManuallySetRaterTableState = False
         self._lastUserManualCollapsedState = None  # Track the last state the user manually set
@@ -284,9 +291,9 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
         if not hasattr(self, 'selectionObserverTag') or self.selectionObserverTag is None:
             self.selectionObserverTag = selectionNode.AddObserver(vtk.vtkCommand.ModifiedEvent, self.onSelectionChanged)
 
-        # Connect rater table collapsed signal to detect user manual changes
+        # Collapse raterColorsCollapsibleButton every time the setup runs
         if hasattr(self.ui, 'raterColorsCollapsibleButton'):
-            self.ui.raterColorsCollapsibleButton.connect('collapsedChanged(bool)', self.onRaterColorTableCollapsedChanged)
+            self.ui.raterColorsCollapsibleButton.collapsed = True
 
         # Ensure parameter node is initialized after setup is complete
         self.initializeParameterNode()
@@ -917,8 +924,6 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
         # so that when the scene is saved and reloaded, these settings are restored.
 
         self.setParameterNode(self.logic.getParameterNode())
-        if self.logic and self._parameterNode:
-            self.logic.parameterNode = self._parameterNode
 
         # Select default input nodes if nothing is selected yet to save a few clicks for the user
         if not self._parameterNode.inputVolume:
@@ -937,7 +942,6 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
             self.logic.setRater(self._parameterNode.rater)
             self.logic.getColorsForRater(self._parameterNode.rater)
         self.ui.depthGuideCheckBox.setChecked(showDepthGuide)
-
 
     def setParameterNode(self, inputParameterNode: AdjudicateUltrasoundParameterNode) -> None:
         """
@@ -1036,305 +1040,6 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
         finally:
             self.updatingGUI = False
 
-    def _setRaterColorTableCollapsedState(self, collapsed):
-        """
-        Set the collapsed state of the rater color table.
-
-        Args:
-            collapsed: True to collapse, False to expand
-        """
-        if not hasattr(self.ui, 'raterColorsCollapsibleButton'):
-            return
-
-        self.ui.raterColorsCollapsibleButton.collapsed = collapsed
-
-    def onRaterColorTableCollapsedChanged(self, collapsed):
-        """
-        Called when the user manually expands/collapses the rater table.
-        Sets the flag to respect user's manual state.
-        """
-        self._userManuallySetRaterTableState = True
-        self._lastUserManualCollapsedState = collapsed
-
-    def populateRaterColorTable(self):
-        if not hasattr(self.ui, 'raterColorTable'):
-            return
-        self.ui.raterColorTable.blockSignals(True)
-        self.ui.raterColorTable.clearContents()
-        colors = list(self.logic.getAllRaterColors())
-
-        # Filter out __selected_node__, __adjudicated_node__ before setting row count, we don't want to show it in the UI
-        visible_colors = [(r, (pleura_color, bline_color)) for r, (pleura_color, bline_color) in colors if r != "__selected_node__" and r != "__adjudicated_node__"]
-
-        self.ui.raterColorTable.setRowCount(len(visible_colors))
-        self.ui.raterColorTable.setColumnCount(3)
-        self.ui.raterColorTable.setHorizontalHeaderLabels(["Rater", "Pleura", "B-line"])
-        header = self.ui.raterColorTable.horizontalHeader()
-        header.setSectionResizeMode(0, qt.QHeaderView.Stretch)
-        # Columns 1 & 2: Color indicators — just enough to show the color
-        header.setSectionResizeMode(1, qt.QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, qt.QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, qt.QHeaderView.ResizeToContents)
-
-        self.ui.raterColorTable.setColumnWidth(1, 30)
-        self.ui.raterColorTable.setColumnWidth(2, 30)
-        for row, (r, (pleura_color, bline_color)) in enumerate(visible_colors):
-            rater_item = qt.QTableWidgetItem(r)
-            rater_item.setFlags(qt.Qt.ItemIsUserCheckable | qt.Qt.ItemIsEnabled | qt.Qt.ItemIsSelectable)
-            if not hasattr(self, "selectedRaters") or r in self.selectedRaters:
-                rater_item.setCheckState(qt.Qt.Checked)
-            else:
-                rater_item.setCheckState(qt.Qt.Unchecked)
-
-            pleura_item = qt.QTableWidgetItem()
-            pleura_item.setFlags(qt.Qt.ItemIsEnabled)
-            pleura_item.setBackground(qt.QColor(*(int(c * 255) for c in pleura_color)))
-
-            bline_item = qt.QTableWidgetItem()
-            bline_item.setFlags(qt.Qt.ItemIsEnabled)
-            bline_item.setBackground(qt.QColor(*(int(c * 255) for c in bline_color)))
-
-            self.ui.raterColorTable.setItem(row, 0, rater_item)
-            self.ui.raterColorTable.setItem(row, 1, pleura_item)
-            self.ui.raterColorTable.setItem(row, 2, bline_item)
-        self.ui.raterColorTable.blockSignals(False)
-
-    def getSelectedRatersFromTable(self):
-        selected = []
-        table = self.ui.raterColorTable
-        for row in range(table.rowCount):
-            item = table.item(row, 0)
-            if item is not None and item.checkState() == qt.Qt.Checked:
-                selected.append(item.text())
-        return selected
-
-    def _updateRaterColorTableCheckboxes(self):
-        """
-        Helper function to update all checkboxes in the rater color table based on the selectedRaters.
-
-        """
-
-        if not hasattr(self.ui, 'raterColorTable'):
-            return
-
-        table = self.ui.raterColorTable
-        table.blockSignals(True)
-        try:
-            for row in range(table.rowCount):
-                item = table.item(row, 0)
-                if item:
-                    if item.text().strip().lower() in self.selectedRaters:
-                        item.setCheckState(qt.Qt.Checked)
-                    else:
-                        item.setCheckState(qt.Qt.Unchecked)
-        finally:
-            table.blockSignals(False)
-        self.ui.raterColorTable.repaint()
-        self.ui.raterColorTable.update()
-
-    def onRaterColorSelectionChangedFromUser(self):
-        if self.updatingGUI:
-            return
-        self.updateRatersFromCheckboxes()
-
-    def updateRatersFromCheckboxes(self):
-        self.selectedRaters = self.getSelectedRatersFromTable()
-        self.logic.setSelectedRaters(self.selectedRaters)
-        self._updateMarkupsAndOverlayProgrammatically()
-        self._updateGUIFromParameterNode()
-        self.ui.raterColorTable.repaint()
-        self.ui.raterColorTable.update()
-
-    def onRaterColorTableClicked(self, row, column):
-        item = self.ui.raterColorTable.item(row, 0)  # Assume checkbox is in column 0
-        if item is not None:
-            current_state = item.checkState()
-            item.setCheckState(qt.Qt.Unchecked if current_state == qt.Qt.Checked else qt.Qt.Checked)
-        self.onRaterColorSelectionChangedFromUser()
-
-    def _getActiveSequenceBrowserNode(self):
-        """Return the active sequence browser node, even if the toolbar is focused on a sequence node."""
-        node = slicer.modules.sequences.toolBar().activeBrowserNode()
-        if node is None:
-            return None
-        # If it's already a browser node, return it
-        if isinstance(node, slicer.vtkMRMLSequenceBrowserNode):
-            return node
-        # Otherwise, find the browser node that references this sequence node
-        sequenceBrowsers = slicer.util.getNodesByClass("vtkMRMLSequenceBrowserNode")
-        for browser in sequenceBrowsers:
-            collection = vtk.vtkCollection()
-            browser.GetSynchronizedSequenceNodes(collection, True)
-            if collection.IsItemPresent(node):
-                return browser
-        return None
-
-    def _navigateToFrameInSequence(self, target_frame_calculator, already_at_message):
-        """
-        Generic frame navigation method that eliminates code duplication.
-
-        Args:
-            target_frame_calculator: Function that takes (current_index, max_index) and returns target_index
-            already_at_message: Status message to show when already at the target position
-        """
-        activeBrowserNode = self._getActiveSequenceBrowserNode()
-        if activeBrowserNode:
-            currentIndex = activeBrowserNode.GetSelectedItemNumber()
-            maxIndex = activeBrowserNode.GetNumberOfItems() - 1
-
-            targetIndex = target_frame_calculator(currentIndex, maxIndex)
-
-            if targetIndex != currentIndex:
-                activeBrowserNode.SetSelectedItemNumber(targetIndex)
-                # Reset selected node ID when changing frames
-                selectionNode = slicer.app.applicationLogic().GetSelectionNode()
-                if selectionNode:
-                    selectionNode.SetActivePlaceNodeID("")
-                self._setRedViewFocus()
-            else:
-                slicer.util.mainWindow().statusBar().showMessage(already_at_message, 3000)
-
-    def _nextFrameInSequence(self):
-        """Go to next frame in the current sequence using Slicer's built-in sequence browser."""
-        def next_target(current, max_index):
-            return current + 1 if current < max_index else current
-
-        self._navigateToFrameInSequence(next_target, '⚠️ Already at last frame')
-
-    def _previousFrameInSequence(self):
-        """Go to previous frame in the current sequence using Slicer's built-in sequence browser."""
-        def previous_target(current, max_index):
-            return current - 1 if current > 0 else current
-
-        self._navigateToFrameInSequence(previous_target, '⚠️ Already at first frame')
-
-    def _firstFrameInSequence(self):
-        """Go to the first frame in the current sequence."""
-        def first_target(current, max_index):
-            return 0 if current > 0 else current
-
-        self._navigateToFrameInSequence(first_target, '⚠️ Already at first frame')
-
-    def _lastFrameInSequence(self):
-        """Go to the last frame in the current sequence."""
-        def last_target(current, max_index):
-            return max_index if current < max_index else current
-
-        self._navigateToFrameInSequence(last_target, '⚠️ Already at last frame')
-
-    def _togglePlayPauseSequence(self):
-        """Toggle play/pause for the current sequence browser."""
-        activeBrowserNode = self._getActiveSequenceBrowserNode()
-        if activeBrowserNode:
-            isPlaying = activeBrowserNode.GetPlaybackActive()
-            activeBrowserNode.SetPlaybackActive(not isPlaying)
-        self._setRedViewFocus()
-
-    def _setRedViewFocus(self):
-        """Set focus to the red view to ensure keyboard shortcuts work immediately."""
-        # Use a timer to delay focus setting to ensure all UI updates are complete
-        qt.QTimer.singleShot(200, self._delayedSetRedViewFocus)
-
-    def _delayedSetRedViewFocus(self):
-        """Delayed focus setting to ensure all UI updates are complete."""
-        try:
-            # Since shortcuts are connected to main window, focus on that
-            mainWindow = slicer.util.mainWindow()
-            if mainWindow:
-                mainWindow.activateWindow()
-                mainWindow.setFocus()
-                mainWindow.raise_()
-
-            # Also try setting focus to the module widget itself
-            if hasattr(self, 'parent') and self.parent:
-                self.parent.setFocus()
-
-        except Exception as e:
-            logging.warning(f"Could not set focus: {e}")
-
-    def _forceShortcutsActive(self):
-        """Force keyboard shortcuts to be active by temporarily disconnecting and reconnecting them."""
-        try:
-            # Temporarily disconnect and reconnect shortcuts to force them to be active
-            self.disconnectKeyboardShortcuts()
-            qt.QTimer.singleShot(50, self.connectKeyboardShortcuts)
-        except Exception as e:
-            logging.warning(f"Could not force shortcuts active: {e}")
-
-    def _restoreFocusAndShortcuts(self):
-        """Restore focus to main window and ensure shortcuts are active."""
-        try:
-            # Reset interaction mode to ensure keyboard shortcuts work
-            interactionNode = slicer.mrmlScene.GetNodeByID("vtkMRMLInteractionNodeSingleton")
-            if interactionNode:
-                interactionNode.SetCurrentInteractionMode(interactionNode.ViewTransform)
-
-            # Set focus back to main window
-            mainWindow = slicer.util.mainWindow()
-            if mainWindow:
-                mainWindow.setFocus()
-                # After setting main window focus, also set focus to Red slice widget if available
-                layoutManager = slicer.app.layoutManager()
-                if layoutManager:
-                    redWidget = layoutManager.sliceWidget("Red")
-                    if redWidget:
-                        redWidget.setFocus()
-
-            # Force shortcuts to be active
-            self._forceShortcutsActive()
-        except Exception as e:
-            logging.warning(f"Could not restore focus and shortcuts: {e}")
-
-    def _navigateToClip(self, direction):
-        """Helper method to navigate to previous or next clip."""
-        direction_text = "previous" if direction == "previous" else "next"
-        slicer.util.mainWindow().statusBar().showMessage(f'Loading {direction_text} clip...', 2000)
-        if direction == "previous":
-            self.onPreviousButton()
-        else:
-            self.onNextButton()
-
-    def _onPageUpPressed(self):
-        """Handle Page Up press for next clip."""
-        self._navigateToClip("next")
-
-    def _onPageDownPressed(self):
-        """Handle Page Down press for previous clip."""
-        self._navigateToClip("previous")
-
-    def _onPreviousClipPressed(self):
-        """Handle Shift+Up or Ctrl+Up press for previous clip."""
-        self._navigateToClip("previous")
-
-    def _onNextClipPressed(self):
-        """Handle Shift+Down or Ctrl+Down press for next clip."""
-        self._navigateToClip("next")
-
-    def onSequenceBrowserModified(self, caller, event):
-        """Handle sequence browser modifications (e.g., frame navigation via Slicer UI)."""
-        # Reset selected node ID when sequence browser changes (UI state management)
-        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
-        if selectionNode:
-            selectionNode.SetActivePlaceNodeID("")
-
-        # Call Logic class to update markups (data processing)
-        if self.logic:
-            self.logic._updateMarkupsAndOverlayProgrammatically(None)
-
-    def onShowHideLines(self, checked=None):
-        """Toggle visibility of all lines and overlays."""
-        if checked is None:
-            # Toggle button state
-            self.ui.showHideLinesButton.setChecked(not self.ui.showHideLinesButton.isChecked())
-            checked = self.ui.showHideLinesButton.isChecked()
-        # Set visibility of all lines
-        for node in self.logic.pleuraLines + self.logic.bLines:
-            displayNode = node.GetDisplayNode()
-            if displayNode:
-                displayNode.SetVisibility(checked)
-        # Also toggle overlay visibility
-        self.ui.overlayVisibilityButton.setChecked(checked)
-
 #
 # AdjudicateUltrasoundLogic
 #
@@ -1383,81 +1088,6 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
 
     def getCurrentRater(self):
         return self.getParameterNode().rater.strip().lower()
-
-    def getColorsForRater(self, rater: str):
-        """
-        Assign unique, visually distinct colors for pleura and b-lines per rater.
-        Each rater gets completely unique colors that are distinct both within the rater and between raters.
-        Uses golden ratio distribution starting from green (pleura) and blue (b-lines).
-        """
-
-        rater = rater.strip().lower()
-        current_rater = self.getCurrentRater()
-
-        if rater not in self.seenRaters and rater != '':
-            self.seenRaters.append(rater)
-            self.seenRaters.sort()
-
-        if current_rater not in self.seenRaters:
-            self.seenRaters.append(current_rater)
-            self.seenRaters.sort()
-
-        raters = self.seenRaters
-
-        if rater not in raters:
-            return [1.0, 0.0, 0.0], [1.0, 0.5, 0.0]  # fallback red/orange
-
-        N = len(raters)
-
-        if N == 0:
-            return [1.0, 0.0, 0.0], [1.0, 0.5, 0.0]  # fallback red/orange
-
-        # Find the index of this rater among all non-current raters
-        rater_index = raters.index(rater)
-
-        # Use golden ratio for non-repeating distribution
-        # φ = (1 + √5) / 2 ≈ 1.618033988749895
-        golden_ratio = (1 + 5**0.5) / 2
-
-        # Start from positions after green and blue to avoid conflicts with current rater
-        pleura_start = 0.66 # Start at blue
-        bline_start = 0.33  # Start at green
-
-        # Generate hues by adding golden ratio steps from the starting points
-        pleura_hue = (pleura_start + rater_index * golden_ratio) % 1.0
-        bline_hue = (bline_start + rater_index * golden_ratio) % 1.0
-
-        # Ensure pleura and b-line colors are distinct by adjusting saturation and value
-        pleura_rgb = colorsys.hsv_to_rgb(pleura_hue, 0.95, 1.0)  # bright colors
-        bline_rgb = colorsys.hsv_to_rgb(bline_hue, 0.95, 1.0)   # bright colors
-        return list(pleura_rgb), list(bline_rgb)
-
-    def getAllRaterColors(self):
-        """
-        Returns a list of (rater, (pleura_color, bline_color)) for all seen raters.
-        """
-        colors = []
-        for r in self.seenRaters:
-            pleura_color, bline_color = self.getColorsForRater(r)
-            colors.append((r, (pleura_color, bline_color)))
-        return colors
-
-    def setSelectedRaters(self, raters: set):
-        """
-        Store the selected raters and filter visuals accordingly.
-        """
-        self.selectedRaters = set(raters)
-
-    def getSelectedRaters(self):
-        if hasattr(self, "selectedRaters"):
-            return self.selectedRaters
-        return None
-
-    def setRater(self, value):
-        node = self.getParameterNode()
-        wasModifying = node.StartModify()
-        node.rater = value.strip().lower()
-        node.EndModify(wasModifying)
 
     def updateInputDf(self, rater, input_folder):
         """
@@ -1627,83 +1257,6 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
         # At the end of updateCurrentFrame, always update overlays
         self.updateOverlayVolume()
 
-
-    def removeFrame(self, frameIndex):
-        logging.info(f"removeFrame -- frameIndex: {frameIndex}")
-        if self.annotations is None:
-            logging.warning("removeFrame (adjudicate): No annotations loaded")
-            return
-
-        # Remove the frame index from the list of frame annotations
-        self.annotations["frame_annotations"] = [
-            fa for fa in self.annotations.get("frame_annotations", [])
-            if int(fa.get("frame_number", -1)) != frameIndex
-        ]
-
-
-    def loadPreviousSequence(self):
-        if self.dicomDf is None:
-            return None
-
-        if self.nextDicomDfIndex <= 1:
-            return None
-        else:
-            self.nextDicomDfIndex -= 2
-            return self.loadNextSequence()
-
-    def clearScene(self):
-        slicer.mrmlScene.Clear(0)
-        self.annotations = None
-        self.pleuraLines = []
-        self.bLines = []
-        self.sequenceBrowserNode = None
-        # Reset overlay volume reference in parameter node
-        if self.parameterNode:
-            self.parameterNode.overlayVolume = None
-
-    def convert_lps_to_ras(self, annotations: list):
-        for frame in annotations:
-            if frame.get("coordinate_space", "RAS") == "LPS":
-                for line_group in ["pleura_lines", "b_lines"]:
-                    for entry in frame.get(line_group, []):
-                        points = entry["line"]["points"]
-                        for point in points:
-                            point[0] = -point[0]  # Negate X (Left → Right)
-                            point[1] = -point[1]  # Negate Y (Posterior → Anterior)
-                frame["coordinate_space"] = "RAS"  # Update coordinate_space
-
-    # Use deepcopy because in-memory data should not be changed to LPS
-    def convert_ras_to_lps(self, annotated_frames: list):
-        # deepcopy so that modifications do not affect self.annotations
-        save_data = copy.deepcopy(self.annotations)
-        # deepcopy so that changes to the annotated frames don't actually affect the frames passed in
-        copied_frames = copy.deepcopy(annotated_frames)
-        for frame in copied_frames:
-            if frame.get("coordinate_space", "RAS") == "RAS":
-                for line_group in ["pleura_lines", "b_lines"]:
-                    for entry in frame.get(line_group, []):
-                        points = entry["line"]["points"]
-                        for point in points:
-                            point[0] = -point[0]  # Negate X (Right → Left)
-                            point[1] = -point[1]  # Negate Y (Anterior → Posterior)
-                frame["coordinate_space"] = "LPS"  # Update coordinate_space
-        save_data['frame_annotations'] = copied_frames
-        return save_data # a copy of the data, so caller has to save
-
-    def _updateMarkupsAndOverlayProgrammatically(self, parameterNode=None):
-        if parameterNode is None:
-            parameterNode = self.getParameterNode()
-        self._isProgrammaticUpdate = True
-        try:
-            self.updateLineMarkups()
-            ratio = self.updateOverlayVolume()
-            if ratio is not None:
-                parameterNode.pleuraPercentage = ratio * 100
-            else:
-                parameterNode.pleuraPercentage = 0.0
-        finally:
-            self._isProgrammaticUpdate = False
-
     def loadNextSequence(self):
         """
         Load the next sequence in the dataframe.
@@ -1735,7 +1288,7 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
         base_name = os.path.splitext(os.path.basename(nextDicomFilepath))[0]
 
         # Make sure a temporary folder for the DICOM files exists
-        tempDicomDir = slicer.app.temporaryPath + '/AnonymizeUltrasound'
+        tempDicomDir = slicer.app.temporaryPath + '/AdjudicateUltrasound'
         if not os.path.exists(tempDicomDir):
             os.makedirs(tempDicomDir)
 
@@ -1902,9 +1455,6 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
 
         # Return the index of the loaded sequence in the dataframe
         return self.nextDicomDfIndex
-
-    def onSequenceBrowserModified(self, caller, event):
-        self._updateMarkupsAndOverlayProgrammatically(None)
 
     def createMarkupLine(self, name, rater, coordinates, color=[1, 1, 0], validation=None):
         markupNode = super().createMarkupLine(name, rater, coordinates, color)
