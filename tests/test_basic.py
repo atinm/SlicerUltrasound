@@ -53,23 +53,6 @@ class TestBasicFunctionality:
         finally:
             os.unlink(temp_file)
 
-    def test_coordinate_calculations(self):
-        """Test coordinate calculation utilities."""
-        # Test distance calculation
-        point1 = [0, 0, 0]
-        point2 = [3, 4, 0]
-        distance = self.calculate_distance(point1, point2)
-        assert distance == 5.0  # 3-4-5 triangle
-
-        # Test midpoint calculation
-        midpoint = self.calculate_midpoint(point1, point2)
-        assert midpoint == [1.5, 2.0, 0.0]
-
-        # Test line length calculation
-        line_points = [[0, 0, 0], [3, 4, 0]]
-        length = self.calculate_line_length(line_points)
-        assert length == 5.0
-
     def test_data_validation(self):
         """Test data validation functions."""
         # Test valid coordinate validation
@@ -163,26 +146,6 @@ class TestBasicFunctionality:
         assert self.validate_rgb_color([]) == False
 
     # Helper utility methods for testing
-    def calculate_distance(self, point1, point2):
-        """Calculate Euclidean distance between two points."""
-        import math
-        return math.sqrt(sum((a - b) ** 2 for a, b in zip(point1, point2)))
-
-    def calculate_midpoint(self, point1, point2):
-        """Calculate midpoint between two points."""
-        return [(a + b) / 2 for a, b in zip(point1, point2)]
-
-    def calculate_line_length(self, points):
-        """Calculate total length of a line defined by points."""
-        if len(points) < 2:
-            return 0.0
-
-        total_length = 0.0
-        for i in range(len(points) - 1):
-            total_length += self.calculate_distance(points[i], points[i + 1])
-
-        return total_length
-
     def validate_coordinates(self, coordinates):
         """Validate coordinate format."""
         try:
@@ -320,7 +283,6 @@ if __name__ == '__main__':
     # Run the main test class
     test_instance = TestBasicFunctionality()
     test_instance.test_json_handling()
-    test_instance.test_coordinate_calculations()
     test_instance.test_data_validation()
     test_instance.test_color_utilities()
     test_instance.test_file_utilities()

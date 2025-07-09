@@ -157,7 +157,7 @@ cd build
 
 ## License
 
-[Add your license information here]
+(MIT License)[https://github.com/SlicerUltrasound/SlicerUltrasound?tab=MIT-1-ov-file#readme]
 
 ## Support
 

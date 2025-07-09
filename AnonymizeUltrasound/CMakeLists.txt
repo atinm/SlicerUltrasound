@@ -4,6 +4,8 @@ set(MODULE_NAME AnonymizeUltrasound)
 #-----------------------------------------------------------------------------
 set(MODULE_PYTHON_SCRIPTS
   ${MODULE_NAME}.py
+  common/__init__.py
+  common/dicom_file_manager.py
   )
 
 set(MODULE_PYTHON_RESOURCES

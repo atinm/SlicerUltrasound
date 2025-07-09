@@ -110,28 +110,9 @@ python -m pytest AnnotateUltrasound/Testing/Python/ AnonymizeUltrasound/Testing/
 ### 2. **Integration Tests** (Slow, Requires Slicer)
 
 - **Location**: `*/Testing/Python/`
-- **Execution Time**: Several minutes
+- **Execution Time**: Could take several minutes
 - **Dependencies**: Slicer environment
 - **Purpose**: Test complete workflows and UI interactions
-
-### 3. **Legacy Debug Scripts** (Converted)
-
-- **Original Location**: `*/Testing/Python/test_*.py`
-- **New Location**: `*/tests/test_*.py`
-- **Status**: Converted to proper unit tests
-
-## Original Testing Scripts (Converted to Unit Tests)
-
-The following debug/testing scripts have been converted to proper unit tests:
-
-### From AnnotateUltrasound/Testing/Python/
-
-- `test_cache_clearing.py` → `AnnotateUltrasound/tests/test_cache_management.py`
-- `test_reload_fix.py` → `AnnotateUltrasound/tests/test_reload_functionality.py`
-- `test_overlays.py` → `AnnotateUltrasound/tests/test_overlay_management.py`
-- `test_basic.py` → `tests/test_module_integration.py`
-
-These original scripts were debugging tools that required Slicer to be running. The new unit tests capture the same functionality but run independently and much faster.
 
 ## Writing New Tests
 
@@ -161,21 +142,3 @@ class TestFeatureName:
         # Act
         # Assert
 ```
-
-## Benefits of This Test Structure
-
-1. **Modular Organization**: Tests are organized by module, making them easy to find and maintain
-2. **Fast Feedback**: Unit tests run in under 1 second
-3. **CI/CD Ready**: No external dependencies for core tests
-4. **Comprehensive Coverage**: Tests cover all major functionality
-5. **Easy Debugging**: Isolated tests make issues easy to identify
-6. **Clear Separation**: Module-specific vs shared functionality is clearly separated
-
-## Test Statistics
-
-- **Total Unit Tests**: 90 tests across 9 files
-- **AnnotateUltrasound Tests**: 45 tests (annotation, cache, reload, overlay)
-- **AnonymizeUltrasound Tests**: 13 tests (anonymization, sample functions)
-- **Core/Shared Tests**: 32 tests (utilities, validation, configuration, integration)
-- **Execution Time**: ~0.5 seconds for all tests
-- **Dependencies**: Python standard library only
