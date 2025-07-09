@@ -142,6 +142,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.notEnteredYet = True
         self._lastFrameIndex = -1
 
+        # Safeguard to preserve logic if set by subclass before super().__init__()
+        if not hasattr(self, 'logic'):
+            self.logic = None
+
         # Flag to track if this is the first load of DICOM data
         self._isFirstDicomLoad = True
         # Flag to prevent multiple updateCurrentFrame calls during line placement
@@ -2089,6 +2093,12 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 }
                 existing['b_lines'].append(line_data)
                 bline_saved += 1
+
+        # Update the markups in the scene to match the annotation data
+        self.updateLineMarkups()
+
+        # At the end of updateCurrentFrame, always update overlays
+        self.updateOverlayVolume()
 
     def removeFrame(self, frameIndex):
         logging.info(f"removeFrame -- frameIndex: {frameIndex}")

@@ -1819,7 +1819,8 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
                 with open(adjudication_path, 'r') as f:
                     adjudication = json.load(f)
                     self.convert_lps_to_ras(adjudication.get("frame_annotations", []))
-                    merged_data["frame_annotations"] = adjudication.get("frame_annotations", [])
+                    # just use the data we read as it has all the lines and other data we need
+                    merged_data = adjudication
             except Exception as e:
                 logging.warning(f"Failed to load adjudication file {adjudication_path}: {e}")
         else:
