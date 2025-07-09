@@ -410,8 +410,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Connect rater table collapsed signal to detect user manual changes
         if hasattr(self.ui, 'raterColorsCollapsibleButton'):
             self.ui.raterColorsCollapsibleButton.toggled.connect(self.onRaterColorTableCollapsedChanged)
-            # Set rater color table to expanded by default
-            self.ui.raterColorsCollapsibleButton.collapsed = False
+            # Do not set collapsed state here; let subclass or user decide.
+        # Guard flag for programmatic collapse/expand of raterColorsCollapsibleButton
+        self._ignoreCollapsedChangedSignal = False
 
     def saveUserSettings(self):
         settings = qt.QSettings()
@@ -1481,12 +1482,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                         # Skip collapse/expand logic during navigation, but still populate content
                         pass
                     else:
-                        # If user manually set state, always restore it
-                        if self._userManuallySetRaterTableState:
-                            if self._lastUserManualCollapsedState is not None:
-                                self._setRaterColorTableCollapsedState(self._lastUserManualCollapsedState)
-                        else:
-                            self._setRaterColorTableCollapsedState(False)
+                        if self._userManuallySetRaterTableState and self._lastUserManualCollapsedState is not None:
+                            self._setRaterColorTableCollapsedState(self._lastUserManualCollapsedState)
 
             # Save rater name to settings
             settings = qt.QSettings()
@@ -1507,16 +1504,23 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         """
         if not hasattr(self.ui, 'raterColorsCollapsibleButton'):
             return
-
+        self._ignoreCollapsedChangedSignal = True
         self.ui.raterColorsCollapsibleButton.collapsed = collapsed
+        self._ignoreCollapsedChangedSignal = False
 
-    def onRaterColorTableCollapsedChanged(self, collapsed):
+    def onRaterColorTableCollapsedChanged(self, _):
         """
         Called when the user manually expands/collapses the rater table.
         Sets the flag to respect user's manual state.
         """
+        if getattr(self, "_ignoreCollapsedChangedSignal", False):
+            return
+
+        # Use actual state, not signal value
+        actual = self.ui.raterColorsCollapsibleButton.collapsed
+
         self._userManuallySetRaterTableState = True
-        self._lastUserManualCollapsedState = collapsed
+        self._lastUserManualCollapsedState = actual
 
     def populateRaterColorTable(self):
         if not hasattr(self.ui, 'raterColorTable'):
@@ -1601,7 +1605,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         if getattr(self, "_userManuallySetRaterTableState", False):
             if hasattr(self.ui, "raterColorsCollapsibleButton") and hasattr(self, "_lastUserManualCollapsedState"):
+                self._ignoreCollapsedChangedSignal = True
                 self.ui.raterColorsCollapsibleButton.collapsed = self._lastUserManualCollapsedState
+                self._ignoreCollapsedChangedSignal = False
 
     def updateRatersFromCheckboxes(self):
         self.selectedRaters = self.getSelectedRatersFromTable()

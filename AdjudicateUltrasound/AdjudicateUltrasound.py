@@ -195,6 +195,16 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
         """
         super().setup()
 
+        # Set up state tracking for rater table collapse handling
+        self._userManuallySetRaterTableState = False
+        self._lastUserManualCollapsedState = True
+        # Ensure programmatic collapse is not interpreted as manual
+        self._ignoreCollapsedChangedSignal = False
+        if hasattr(self.ui, 'raterColorsCollapsibleButton'):
+            self.ui.raterColorsCollapsibleButton.blockSignals(True)
+            self.ui.raterColorsCollapsibleButton.collapsed = True
+            self.ui.raterColorsCollapsibleButton.blockSignals(False)
+
         # Update directory button directory from settings
         self.ui.inputDirectoryButton.directory = slicer.app.settings().value("AdjudicateUltrasound/InputDirectory", "")
 
@@ -223,65 +233,65 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
                 else:
                     btn.clicked.connect(method)
 
-        # Create a new group box for adjudication tools and place it after raterColorsCollapsibleButton
-        from slicer.util import findChildren
+        # Move adjudication-related widgets out of raterColorsCollapsibleButton and into their own layout
+        # Find the parent layout containing raterColorsCollapsibleButton
         parentLayout = self.ui.raterColorsCollapsibleButton.parent().layout()
-        if not hasattr(self, "_adjudicationToolsGroupBox") or self._adjudicationToolsGroupBox is None:
+        # Only create if not already present
+        if not hasattr(self, "_adjudicationToolsWidget") or self._adjudicationToolsWidget is None:
             self._adjudicationShortcuts = []
-            self._adjudicationToolsGroupBox = qt.QGroupBox("Adjudication Tools")
-            self._adjudicationToolsGroupBox.setObjectName("adjudicationToolsGroupBox")
-            mainLayout = qt.QVBoxLayout()
-            mainLayout.setSpacing(4)
-            mainLayout.setContentsMargins(4, 4, 4, 4)
+            # Create a widget and layout for adjudication controls
+            self._adjudicationToolsWidget = qt.QWidget()
+            self._adjudicationToolsWidget.setObjectName("adjudicationToolsWidget")
+            adjudicationToolsLayout = qt.QVBoxLayout()
+            adjudicationToolsLayout.setSpacing(4)
+            adjudicationToolsLayout.setContentsMargins(4, 4, 4, 4)
 
             def make_button(label, tooltip, shortcutKey, slot):
                 btn = qt.QPushButton(label)
                 btn.setToolTip(tooltip)
-                # Remove shortcut creation from here, handled globally now
                 btn.clicked.connect(slot)
                 return btn
 
-            # Row 1
+            # Row 1: Validate/Invalidate
             row1 = qt.QHBoxLayout()
             row1.addWidget(make_button("Validate Line [V]", "Mark the selected line as validated (Shortcut V key)", "V", self.onValidateLine))
             row1.addWidget(make_button("Invalidate Line [I]", "Mark the selected line as invalidated (Shortcut I key)", "I", self.onInvalidateLine))
-            row1.addWidget(make_button("Duplicate Line [U]", "Mark the selected line as duplicate (Shortcut U key)", "U", self.onDuplicateLine))
-            mainLayout.addLayout(row1)
+            adjudicationToolsLayout.addLayout(row1)
 
-            # Row 2
+            # Row 2: Next/Prev
             row2 = qt.QHBoxLayout()
             row2.addWidget(make_button("Next Line [N]", "Navigate to next line (Shortcut N key)", "N", self.selectNextUnadjudicatedLine))
             row2.addWidget(make_button("Prev Line [P]", "Navigate to previous line (Shortcut P key)", "P", self.selectPreviousUnadjudicatedLine))
-            mainLayout.addLayout(row2)
+            adjudicationToolsLayout.addLayout(row2)
 
-            # Row 3
+            # Row 3: Next/Prev visible
             row3 = qt.QHBoxLayout()
             row3.addWidget(make_button("Next Visible [Shift+N]", "Navigate to next visible annotation line (Shortcut Shift+N)", "Shift+N", self.selectNextVisibleLine))
             row3.addWidget(make_button("Prev Visible [Shift+P]", "Navigate to previous visible annotation line (Shortcut Shift+P)", "Shift+P", self.selectPreviousVisibleLine))
-            mainLayout.addLayout(row3)
+            adjudicationToolsLayout.addLayout(row3)
 
-            # Row 4
+            # Row 4: Validate/Invalidate rest
             row4 = qt.QHBoxLayout()
             row4.addWidget(make_button("Validate Rest", "Mark all visible unadjudicated lines as validated", "", self.onValidateAllUnadjudicated))
             row4.addWidget(make_button("Invalidate Rest", "Mark all visible unadjudicated lines as invalidated", "", self.onInvalidateAllUnadjudicated))
-            row4.addWidget(make_button("Duplicate Rest", "Mark all visible unadjudicated lines as duplicated", "", self.onDuplicateAllUnadjudicated))
-            mainLayout.addLayout(row4)
+            adjudicationToolsLayout.addLayout(row4)
 
-            # Reset row
+            # Reset all row
             resetRow = qt.QHBoxLayout()
             resetRow.addWidget(make_button("Reset All [R]", "Reset all lines to unadjudicated (Shortcut R key)", "R", self.onResetAllAdjudication))
-            mainLayout.addLayout(resetRow)
+            adjudicationToolsLayout.addLayout(resetRow)
 
-            # Checkbox
-            self.showInvalidatedCheckBox = qt.QCheckBox("Show Invalidated or Duplicated Lines")
-            self.showInvalidatedCheckBox.setToolTip("Show Invalidated or Duplicated Lines")
+            # Checkbox for show invalidated
+            self.showInvalidatedCheckBox = qt.QCheckBox("Show Invalidated Lines")
+            self.showInvalidatedCheckBox.setToolTip("Show Invalidated Lines")
             self.showInvalidatedCheckBox.stateChanged.connect(self.onShowInvalidOrDuplicateToggled)
             self.showInvalidatedCheckBox.setChecked(True)
-            mainLayout.addWidget(self.showInvalidatedCheckBox)
+            adjudicationToolsLayout.addWidget(self.showInvalidatedCheckBox)
 
-            self._adjudicationToolsGroupBox.setLayout(mainLayout)
+            self._adjudicationToolsWidget.setLayout(adjudicationToolsLayout)
+            # Insert below raterColorsCollapsibleButton
             index = parentLayout.indexOf(self.ui.raterColorsCollapsibleButton)
-            parentLayout.insertWidget(index + 1, self._adjudicationToolsGroupBox)
+            parentLayout.insertWidget(index + 1, self._adjudicationToolsWidget)
 
         # After UI and logic setup, create adjudication shortcuts
         self.connectKeyboardShortcuts()
@@ -291,15 +301,10 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
         if not hasattr(self, 'selectionObserverTag') or self.selectionObserverTag is None:
             self.selectionObserverTag = selectionNode.AddObserver(vtk.vtkCommand.ModifiedEvent, self.onSelectionChanged)
 
-        # Collapse raterColorsCollapsibleButton every time the setup runs
-        if hasattr(self.ui, 'raterColorsCollapsibleButton'):
-            self.ui.raterColorsCollapsibleButton.collapsed = True
-
         # Ensure parameter node is initialized after setup is complete
         self.initializeParameterNode()
         # Load fixed labels file
         self.onLabelsFileSelected()
-
 
     # These functions are used to handle clicks on the red view when selecting lines by clicking on the red view
     # near the line to be selected.
@@ -376,6 +381,7 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
                     selectionNode.SetActivePlaceNodeID("")  # Clear selection
         # Update line markups to refresh visual appearance (highlighting, etc.)
         self.logic.updateLineMarkups()
+
 
     def saveUserSettings(self):
         settings = qt.QSettings()
@@ -555,7 +561,9 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
                         displayNode.SetOpacity(0.3)
                     else:
                         displayNode.SetVisibility(False)
-        slicer.util.showStatusMessage(f"{'Showing' if checked else 'Hiding'} invalidated/duplicated lines.", 3000)
+
+        #slicer.util.showStatusMessage(f"{'Showing' if checked else 'Hiding'} invalidated/duplicated lines.", 3000)
+        slicer.util.showStatusMessage(f"{'Showing' if checked else 'Hiding'} invalidated lines.", 3000)
 
     def getCurrentRater(self):
         # Return the current rater name from parameter node or UI
@@ -1023,12 +1031,8 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
                         # Skip collapse/expand logic during navigation, but still populate content
                         pass
                     else:
-                        # If user manually set state, always restore it
-                        if self._userManuallySetRaterTableState:
-                            if self._lastUserManualCollapsedState is not None:
-                                self._setRaterColorTableCollapsedState(self._lastUserManualCollapsedState)
-                        else:
-                            self._setRaterColorTableCollapsedState(True)
+                        if self._userManuallySetRaterTableState and self._lastUserManualCollapsedState is not None:
+                            self._setRaterColorTableCollapsedState(self._lastUserManualCollapsedState)
 
             # Save rater name to settings
             settings = qt.QSettings()
