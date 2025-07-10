@@ -41,7 +41,9 @@ test-gui: find-slicer-python
 	echo "Running AnnotateUltrasound Widget Tests..."; \
 	"$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/AnnotateUltrasoundWidgetTest.py; \
 	echo "Running DICOM loading test..."; \
-	"$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py
+	"$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/test_dicom_loading.py; \
+	echo "Running Update Current Frame test..."; \
+	"$$SLICER_EXE" --python-script AnnotateUltrasound/Testing/Python/test_update_current_frame_bug.py
 
 # Run tests for CI (pure Python tests only)
 test-ci: test-py-system
@@ -68,6 +70,27 @@ test-dicom: find-slicer-python
 		exit 1; \
 	fi
 
+
+# Run Update current frame bug test (requires display and real DICOM data)
+test-update-current-frame-bug: find-slicer-python
+	@echo "Running Update current frame bug test (requires display)..."
+	@if [ -f "/Applications/Slicer.app/Contents/MacOS/Slicer" ]; then \
+		/Applications/Slicer.app/Contents/MacOS/Slicer --python-script AnnotateUltrasound/Testing/Python/test_update_current_frame_bug.py; \
+	elif [ -f "/usr/local/bin/Slicer" ]; then \
+		/usr/local/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/test_update_current_frame_bug.py; \
+	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/bin/Slicer" ]; then \
+		$$SLICER_HOME/bin/Slicer --python-script AnnotateUltrasound/Testing/Python/test_update_current_frame_bug.py; \
+	elif [ -n "$$SLICER_HOME" ] && [ -f "$$SLICER_HOME/Slicer" ]; then \
+		$$SLICER_HOME/Slicer --python-script AnnotateUltrasound/Testing/Python/test_update_current_frame_bug.py; \
+	else \
+		echo "❌ Slicer not found. Please install Slicer first."; \
+		echo "Checked paths:"; \
+		echo "  /Applications/Slicer.app/Contents/MacOS/Slicer"; \
+		echo "  /usr/local/bin/Slicer"; \
+		echo "  $$SLICER_HOME/bin/Slicer"; \
+		echo "  $$SLICER_HOME/Slicer"; \
+		exit 1; \
+	fi
 # Build and install the module into Slicer
 install-module: find-slicer-python
 	@echo "Building and installing SlicerUltrasound module..."
