@@ -2217,10 +2217,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         for file in os.listdir(tempDicomDir):
             os.remove(os.path.join(tempDicomDir, file))
 
-        # Clear markup cache to force update on reload
-        self._lastMarkupFrameIndex = None
-        self._lastMarkupFrameHash = None
-
         # Copy DICOM file to temporary folder
         shutil.copy(nextDicomFilepath, tempDicomDir)
 
@@ -2430,6 +2426,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             if self.hasObserver(currentLine, currentLine.PointPositionDefinedEvent, self.onPointPositionDefined):
                 self.removeObserver(currentLine, currentLine.PointPositionDefinedEvent, self.onPointPositionDefined)
             slicer.mrmlScene.RemoveNode(currentLine)
+            self.updateCurrentFrame()
             ratio = self.updateOverlayVolume()
             if ratio is not None:
                 parameterNode = self.getParameterNode()
@@ -2445,20 +2442,24 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             if self.hasObserver(currentLine, currentLine.PointPositionDefinedEvent, self.onPointPositionDefined):
                 self.removeObserver(currentLine, currentLine.PointPositionDefinedEvent, self.onPointPositionDefined)
             slicer.mrmlScene.RemoveNode(currentLine)
+            self.updateCurrentFrame()
             ratio = self.updateOverlayVolume()
             if ratio is not None:
                 parameterNode = self.getParameterNode()
                 parameterNode.pleuraPercentage = ratio * 100
 
     def onPointModified(self, caller, event):
-        parameterNode = self.getParameterNode()
-        ratio = self.updateOverlayVolume()
-        if ratio is not None:
-            parameterNode.pleuraPercentage = ratio * 100
+        numControlPoints = caller.GetNumberOfControlPoints()
+        if numControlPoints >= 2:
+            parameterNode = self.getParameterNode()
+            self.updateCurrentFrame()
+            ratio = self.updateOverlayVolume()
+            if ratio is not None:
+                parameterNode.pleuraPercentage = ratio * 100
 
-        # Only set unsavedChanges if this is a user-initiated modification
-        if not self._isProgrammaticUpdate:
-            parameterNode.unsavedChanges = True
+            # Only set unsavedChanges if this is a user-initiated modification
+            if not self._isProgrammaticUpdate:
+                parameterNode.unsavedChanges = True
 
     def onPointPositionDefined(self, caller, event):
         parameterNode = self.getParameterNode()
@@ -2467,6 +2468,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             parameterNode.lineBeingPlaced = None
             self.removeObserver(caller, caller.PointPositionDefinedEvent, self.onPointPositionDefined)
 
+        self.updateCurrentFrame()
         ratio = self.updateOverlayVolume()
         if ratio is not None:
             parameterNode.pleuraPercentage = ratio * 100
@@ -2731,12 +2733,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if not slicer.mrmlScene:
             return
 
-        # Initialize cache attributes if not present
-        if not hasattr(self, '_lastMarkupFrameIndex'):
-            self._lastMarkupFrameIndex = None
-        if not hasattr(self, '_lastMarkupFrameHash'):
-            self._lastMarkupFrameHash = None
-
         if self.annotations is None:
             logging.warning("No annotations loaded")
             return
@@ -2752,39 +2748,18 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             return
 
         frame = next((item for item in self.annotations['frame_annotations'] if str(item.get("frame_number")) == str(currentFrameIndex)), None)
-        # Compute a hash of the frame annotation data and selected raters for caching
-        frame_hash = None
-        if frame is not None:
-            try:
-                # Include selected raters in the hash so rater selection changes trigger updates
-                cache_data = {
-                    'frame': frame,
-                    'selectedRaters': sorted(list(self.selectedRaters)) if hasattr(self, 'selectedRaters') else []
-                }
-                frame_hash = hash(json.dumps(cache_data, sort_keys=True))
-            except Exception:
-                frame_hash = None
-
-        # Early return if frame index, annotation data, and selected raters are unchanged
-        if self._lastMarkupFrameIndex == currentFrameIndex and self._lastMarkupFrameHash == frame_hash:
-            return
-
-        # Update cache after check
-        self._lastMarkupFrameIndex = currentFrameIndex
-        self._lastMarkupFrameHash = frame_hash
-
         # Set programmatic update flag to prevent unsavedChanges from being set
         self._isProgrammaticUpdate = True
 
         # Batch scene updates using StartState/EndState
         slicer.mrmlScene.StartState(slicer.mrmlScene.BatchProcessState)
         try:
+            # Hide all markups if no frame data
+            for node in self.pleuraLines:
+                node.GetDisplayNode().SetVisibility(False)
+            for node in self.bLines:
+                node.GetDisplayNode().SetVisibility(False)
             if frame is None:
-                # Hide all markups if no frame data
-                for node in self.pleuraLines:
-                    node.GetDisplayNode().SetVisibility(False)
-                for node in self.bLines:
-                    node.GetDisplayNode().SetVisibility(False)
                 return
 
             self._updateMarkupNodesForFrame(frame)
