@@ -1818,9 +1818,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
     def getParameterNode(self):
         return self.parameterNode
 
-    def getRater(self):
-        return self.getParameterNode().rater.strip().lower()
-
     def getColorsForRater(self, rater: str):
         """
         Assign unique, visually distinct colors for pleura and b-lines per rater.
@@ -1889,6 +1886,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if hasattr(self, "selectedRaters"):
             return self.selectedRaters
         return None
+
+    def getRater(self):
+        return self.getParameterNode().rater.strip().lower()
 
     def setRater(self, value):
         node = self.getParameterNode()
