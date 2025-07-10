@@ -462,23 +462,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.logic.updateCurrentFrame()
         self.updateGuiFromAnnotations()
 
-    def _updateMarkupsAndOverlayProgrammatically(self, setUnsavedChanges=False):
-        """
-        Helper to update line markups and overlay volume programmatically, suppressing unsavedChanges unless specified.
-        """
-        self.logic._isProgrammaticUpdate = True
-        try:
-            self.logic.updateLineMarkups()
-            ratio = self.logic.updateOverlayVolume()
-            if ratio is not None:
-                self._parameterNode.pleuraPercentage = ratio * 100
-            else:
-                self._parameterNode.pleuraPercentage = 0.0
-        finally:
-            self.logic._isProgrammaticUpdate = False
-        if setUnsavedChanges:
-            self._parameterNode.unsavedChanges = True
-
     def onRemoveCurrentFrame(self):
         logging.info('removeCurrentFrame')
 
@@ -489,7 +472,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         else:
             currentFrameIndex = self.logic.sequenceBrowserNode.GetSelectedItemNumber()
             self.logic.removeFrame(currentFrameIndex)
-            self._updateMarkupsAndOverlayProgrammatically(setUnsavedChanges=True)
+            self.logic._updateMarkupsAndOverlayProgrammatically(setUnsavedChanges=True)
             self.updateGuiFromAnnotations()
 
     def onInputDirectorySelected(self):
@@ -1591,7 +1574,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     def updateRatersFromCheckboxes(self):
         self.selectedRaters = self.getSelectedRatersFromTable()
         self.logic.setSelectedRaters(self.selectedRaters)
-        self._updateMarkupsAndOverlayProgrammatically()
+        self.logic._updateMarkupsAndOverlayProgrammatically()
         self._updateGUIFromParameterNode()
         self.ui.raterColorTable.repaint()
         self.ui.raterColorTable.update()
@@ -1770,7 +1753,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Call Logic class to update markups (data processing)
         if self.logic:
-            self.logic._updateMarkupsAndOverlayProgrammatically(None)
+            self.logic._updateMarkupsAndOverlayProgrammatically()
 
     def onShowHideLines(self, checked=None):
         """Toggle visibility of all lines and overlays."""
@@ -2151,7 +2134,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         save_data['frame_annotations'] = copied_frames
         return save_data # a copy of the data, so caller has to save
 
-    def _updateMarkupsAndOverlayProgrammatically(self, parameterNode=None):
+    def _updateMarkupsAndOverlayProgrammatically(self, parameterNode=None, setUnsavedChanges=False):
+        """
+        Helper to update line markups and overlay volume programmatically, suppressing unsavedChanges unless specified.
+        """
         if parameterNode is None:
             parameterNode = self.getParameterNode()
         self._isProgrammaticUpdate = True
@@ -2164,6 +2150,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 parameterNode.pleuraPercentage = 0.0
         finally:
             self._isProgrammaticUpdate = False
+        if setUnsavedChanges:
+            parameterNode.unsavedChanges = True
 
     def loadNextSequence(self):
         """
@@ -2355,7 +2343,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.setSelectedRaters(self.realRaters)
 
         # Set programmatic update flag to prevent unsavedChanges from being set
-        self._updateMarkupsAndOverlayProgrammatically(parameterNode)
+        self._updateMarkupsAndOverlayProgrammatically(parameterNode=parameterNode)
         parameterNode.EndModify(previousNodeState)
 
         # Set overlay volume as foreground in slice viewers
@@ -2375,7 +2363,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         return self.nextDicomDfIndex
 
     def onSequenceBrowserModified(self, caller, event):
-        self._updateMarkupsAndOverlayProgrammatically(None)
+        self._updateMarkupsAndOverlayProgrammatically()
 
     def createMarkupLine(self, name, rater, coordinates, color=[1, 1, 0]):
         markupNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode")
