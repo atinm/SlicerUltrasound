@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16.3...3.19.7 FATAL_ERROR)
 
 project(Ultrasound)
-
+include(CTest)
 #-----------------------------------------------------------------------------
 # Extension meta-information
 set(EXTENSION_HOMEPAGE "https://github.com/SlicerUltrasound/SlicerUltrasound")
@@ -14,6 +14,7 @@ set(EXTENSION_DEPENDS SlicerIGT) # Specified as a list or "NA" if no dependencie
 
 #-----------------------------------------------------------------------------
 # Extension dependencies
+set(Slicer_USE_ADDITIONAL_LAUNCHER_SETTINGS OFF)
 find_package(Slicer REQUIRED)
 include(${Slicer_USE_FILE})
 
@@ -41,12 +42,6 @@ if(BUILD_TESTING)
     set_tests_properties(${label} PROPERTIES LABELS ${label})
   endforeach()
 
-  # Remove the dummy test
-  remove_test("unit")
-  remove_test("integration")
-  remove_test("gui")
-  remove_test("slicer")
-  remove_test("ultrasound")
 endif()
 
 #-----------------------------------------------------------------------------
@@ -58,12 +53,5 @@ add_subdirectory(TimeSeriesAnnotation)
 # add_subdirectory(SceneCleaner)
 ## NEXT_MODULE
 
-#-----------------------------------------------------------------------------
-# Testing infrastructure
-if(BUILD_TESTING)
-  add_subdirectory(Testing)
-endif()
-
-#-----------------------------------------------------------------------------
 include(${Slicer_EXTENSION_GENERATE_CONFIG})
 include(${Slicer_EXTENSION_CPACK})
