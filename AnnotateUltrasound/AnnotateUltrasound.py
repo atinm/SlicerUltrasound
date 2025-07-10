@@ -1826,7 +1826,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         """
 
         rater = rater.strip().lower()
-        current_rater = self.getParameterNode().rater.strip().lower()
+        current_rater = self.getRater()
 
         if rater not in self.seenRaters and rater != '':
             self.seenRaters.append(rater)
@@ -1886,6 +1886,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if hasattr(self, "selectedRaters"):
             return self.selectedRaters
         return None
+
+    def getRater(self):
+        return self.getParameterNode().rater.strip().lower()
 
     def setRater(self, value):
         node = self.getParameterNode()
