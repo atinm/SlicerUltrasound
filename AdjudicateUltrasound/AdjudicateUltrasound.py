@@ -723,7 +723,7 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
 
         # Remove existing sequence browser observer before reloading
         if self.logic.sequenceBrowserNode:
-            self.removeObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
+            self.removeObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.logic.onSequenceBrowserModified)
 
         numFilesFound = self.logic.updateInputDf(rater, inputDirectory)
         logging.info(f"Found {numFilesFound} DICOM files")
@@ -747,7 +747,7 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
 
             # Add observer for the new sequence browser node
             if self.logic.sequenceBrowserNode:
-                self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
+                self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.logic.onSequenceBrowserModified)
 
             # Update self.ui.currentFileLabel using the DICOM file name
             currentDicomFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['Filepath']
@@ -1254,12 +1254,6 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
                 }
                 existing['b_lines'].append(line_data)
                 bline_saved += 1
-
-        # Update the markups in the scene to match the annotation data
-        self.updateLineMarkups()
-
-        # At the end of updateCurrentFrame, always update overlays
-        self.updateOverlayVolume()
 
     def loadNextSequence(self):
         """

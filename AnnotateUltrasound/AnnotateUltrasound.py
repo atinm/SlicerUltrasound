@@ -468,23 +468,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.logic.updateCurrentFrame()
         self.updateGuiFromAnnotations()
 
-    def _updateMarkupsAndOverlayProgrammatically(self, setUnsavedChanges=False):
-        """
-        Helper to update line markups and overlay volume programmatically, suppressing unsavedChanges unless specified.
-        """
-        self.logic._isProgrammaticUpdate = True
-        try:
-            self.logic.updateLineMarkups()
-            ratio = self.logic.updateOverlayVolume()
-            if ratio is not None:
-                self._parameterNode.pleuraPercentage = ratio * 100
-            else:
-                self._parameterNode.pleuraPercentage = 0.0
-        finally:
-            self.logic._isProgrammaticUpdate = False
-        if setUnsavedChanges:
-            self._parameterNode.unsavedChanges = True
-
     def onRemoveCurrentFrame(self):
         logging.info('removeCurrentFrame')
 
@@ -495,7 +478,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         else:
             currentFrameIndex = self.logic.sequenceBrowserNode.GetSelectedItemNumber()
             self.logic.removeFrame(currentFrameIndex)
-            self._updateMarkupsAndOverlayProgrammatically(setUnsavedChanges=True)
+            self.logic._updateMarkupsAndOverlayProgrammatically(setUnsavedChanges=True)
             self.updateGuiFromAnnotations()
 
     def onInputDirectorySelected(self):
@@ -557,7 +540,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Remove existing sequence browser observer before reloading
         if self.logic.sequenceBrowserNode:
-            self.removeObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
+            self.removeObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.logic.onSequenceBrowserModified)
 
         numFilesFound, numAnnotationsCreated = self.logic.updateInputDf(rater, inputDirectory)
         logging.info(f"Found {numFilesFound} DICOM files")
@@ -584,7 +567,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
             # Add observer for the new sequence browser node
             if self.logic.sequenceBrowserNode:
-                self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
+                self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.logic.onSequenceBrowserModified)
 
             # Update self.ui.currentFileLabel using the DICOM file name
             currentDicomFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['Filepath']
@@ -683,7 +666,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Add observer for the new sequence browser node
         if self.logic.sequenceBrowserNode:
-            self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
+            self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.logic.onSequenceBrowserModified)
 
         # After loading the next sequence, extract seen raters and update checkboxes
         self.extractSeenAndSelectedRaters()
@@ -1330,7 +1313,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         # Add sequence browser observer if sequence browser exists
         if self.logic and self.logic.sequenceBrowserNode:
-            self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.onSequenceBrowserModified)
+            self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.logic.onSequenceBrowserModified)
 
         self._updateGUIFromParameterNode()
 
@@ -1612,7 +1595,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
     def updateRatersFromCheckboxes(self):
         self.selectedRaters = self.getSelectedRatersFromTable()
         self.logic.setSelectedRaters(self.selectedRaters)
-        self._updateMarkupsAndOverlayProgrammatically()
+        self.logic._updateMarkupsAndOverlayProgrammatically()
         self._updateGUIFromParameterNode()
         self.ui.raterColorTable.repaint()
         self.ui.raterColorTable.update()
@@ -1782,17 +1765,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         """Handle Shift+Down or Ctrl+Down press for next clip."""
         self._navigateToClip("next")
 
-    def onSequenceBrowserModified(self, caller, event):
-        """Handle sequence browser modifications (e.g., frame navigation via Slicer UI)."""
-        # Reset selected node ID when sequence browser changes (UI state management)
-        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
-        if selectionNode:
-            selectionNode.SetActivePlaceNodeID("")
-
-        # Call Logic class to update markups (data processing)
-        if self.logic:
-            self.logic._updateMarkupsAndOverlayProgrammatically(None)
-
     def onShowHideLines(self, checked=None):
         """Toggle visibility of all lines and overlays."""
         if checked is None:
@@ -1864,7 +1836,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         """
 
         rater = rater.strip().lower()
-        current_rater = self.getParameterNode().rater.strip().lower()
+        current_rater = self.getRater()
 
         if rater not in self.seenRaters and rater != '':
             self.seenRaters.append(rater)
@@ -1924,6 +1896,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if hasattr(self, "selectedRaters"):
             return self.selectedRaters
         return None
+
+    def getRater(self):
+        return self.getParameterNode().rater.strip().lower()
 
     def setRater(self, value):
         node = self.getParameterNode()
@@ -2042,15 +2017,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         # Get current rater
         current_rater = self.getParameterNode().rater.strip().lower()
-        # Remove only current rater's lines from existing annotations
-        existing['pleura_lines'] = [
-            line for line in existing['pleura_lines']
-            if line.get("rater", "").strip().lower() != current_rater
-        ]
-        existing['b_lines'] = [
-            line for line in existing['b_lines']
-            if line.get("rater", "").strip().lower() != current_rater
-        ]
 
         # Add current rater's pleura lines to annotations
         pleura_saved = 0
@@ -2109,12 +2075,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 }
                 existing['b_lines'].append(line_data)
                 bline_saved += 1
-
-        # Update the markups in the scene to match the annotation data
-        self.updateLineMarkups()
-
-        # At the end of updateCurrentFrame, always update overlays
-        self.updateOverlayVolume()
 
     def removeFrame(self, frameIndex):
         logging.info(f"removeFrame -- frameIndex: {frameIndex}")
@@ -2178,7 +2138,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         save_data['frame_annotations'] = copied_frames
         return save_data # a copy of the data, so caller has to save
 
-    def _updateMarkupsAndOverlayProgrammatically(self, parameterNode=None):
+    def _updateMarkupsAndOverlayProgrammatically(self, parameterNode=None, setUnsavedChanges=False):
+        """
+        Helper to update line markups and overlay volume programmatically, suppressing unsavedChanges unless specified.
+        """
         if parameterNode is None:
             parameterNode = self.getParameterNode()
         self._isProgrammaticUpdate = True
@@ -2191,6 +2154,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 parameterNode.pleuraPercentage = 0.0
         finally:
             self._isProgrammaticUpdate = False
+        if setUnsavedChanges:
+            parameterNode.unsavedChanges = True
 
     def loadNextSequence(self):
         """
@@ -2243,10 +2208,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Delete all files in the temporary folder
         for file in os.listdir(tempDicomDir):
             os.remove(os.path.join(tempDicomDir, file))
-
-        # Clear markup cache to force update on reload
-        self._lastMarkupFrameIndex = None
-        self._lastMarkupFrameHash = None
 
         # Copy DICOM file to temporary folder
         shutil.copy(nextDicomFilepath, tempDicomDir)
@@ -2386,7 +2347,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.setSelectedRaters(self.realRaters)
 
         # Set programmatic update flag to prevent unsavedChanges from being set
-        self._updateMarkupsAndOverlayProgrammatically(parameterNode)
+        self._updateMarkupsAndOverlayProgrammatically(parameterNode=parameterNode)
         parameterNode.EndModify(previousNodeState)
 
         # Set overlay volume as foreground in slice viewers
@@ -2406,7 +2367,13 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         return self.nextDicomDfIndex
 
     def onSequenceBrowserModified(self, caller, event):
-        self._updateMarkupsAndOverlayProgrammatically(None)
+        """Handle sequence browser modifications (e.g., frame navigation via Slicer UI)."""
+        # Reset selected node ID when sequence browser changes (UI state management)
+        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
+        if selectionNode:
+            selectionNode.SetActivePlaceNodeID("")
+
+        self._updateMarkupsAndOverlayProgrammatically()
 
     def createMarkupLine(self, name, rater, coordinates, color=[1, 1, 0]):
         markupNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode")
@@ -2457,6 +2424,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             if self.hasObserver(currentLine, currentLine.PointPositionDefinedEvent, self.onPointPositionDefined):
                 self.removeObserver(currentLine, currentLine.PointPositionDefinedEvent, self.onPointPositionDefined)
             slicer.mrmlScene.RemoveNode(currentLine)
+            self.updateCurrentFrame()
             ratio = self.updateOverlayVolume()
             if ratio is not None:
                 parameterNode = self.getParameterNode()
@@ -2472,20 +2440,24 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             if self.hasObserver(currentLine, currentLine.PointPositionDefinedEvent, self.onPointPositionDefined):
                 self.removeObserver(currentLine, currentLine.PointPositionDefinedEvent, self.onPointPositionDefined)
             slicer.mrmlScene.RemoveNode(currentLine)
+            self.updateCurrentFrame()
             ratio = self.updateOverlayVolume()
             if ratio is not None:
                 parameterNode = self.getParameterNode()
                 parameterNode.pleuraPercentage = ratio * 100
 
     def onPointModified(self, caller, event):
-        parameterNode = self.getParameterNode()
-        ratio = self.updateOverlayVolume()
-        if ratio is not None:
-            parameterNode.pleuraPercentage = ratio * 100
+        numControlPoints = caller.GetNumberOfControlPoints()
+        if numControlPoints >= 2:
+            parameterNode = self.getParameterNode()
+            self.updateCurrentFrame()
+            ratio = self.updateOverlayVolume()
+            if ratio is not None:
+                parameterNode.pleuraPercentage = ratio * 100
 
-        # Only set unsavedChanges if this is a user-initiated modification
-        if not self._isProgrammaticUpdate:
-            parameterNode.unsavedChanges = True
+            # Only set unsavedChanges if this is a user-initiated modification
+            if not self._isProgrammaticUpdate:
+                parameterNode.unsavedChanges = True
 
     def onPointPositionDefined(self, caller, event):
         parameterNode = self.getParameterNode()
@@ -2494,6 +2466,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             parameterNode.lineBeingPlaced = None
             self.removeObserver(caller, caller.PointPositionDefinedEvent, self.onPointPositionDefined)
 
+        self.updateCurrentFrame()
         ratio = self.updateOverlayVolume()
         if ratio is not None:
             parameterNode.pleuraPercentage = ratio * 100
@@ -2758,16 +2731,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if not slicer.mrmlScene:
             return
 
-        # Initialize cache attributes if not present
-        if not hasattr(self, '_lastMarkupFrameIndex'):
-            self._lastMarkupFrameIndex = None
-        if not hasattr(self, '_lastMarkupFrameHash'):
-            self._lastMarkupFrameHash = None
-
         if self.annotations is None:
-            # this is legit when we are loading a new sequence as we change selections when loading a new sequence
-            # which causes updateLineMarkups to be called before the annotations are loaded
-            logging.debug("updateLineMarkups: No annotations loaded")
+            logging.debug("No annotations loaded")
             return
 
         if self.sequenceBrowserNode is None:
@@ -2781,39 +2746,18 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             return
 
         frame = next((item for item in self.annotations['frame_annotations'] if str(item.get("frame_number")) == str(currentFrameIndex)), None)
-        # Compute a hash of the frame annotation data and selected raters for caching
-        frame_hash = None
-        if frame is not None:
-            try:
-                # Include selected raters in the hash so rater selection changes trigger updates
-                cache_data = {
-                    'frame': frame,
-                    'selectedRaters': sorted(list(self.selectedRaters)) if hasattr(self, 'selectedRaters') else []
-                }
-                frame_hash = hash(json.dumps(cache_data, sort_keys=True))
-            except Exception:
-                frame_hash = None
-
-        # Early return if frame index, annotation data, and selected raters are unchanged
-        if self._lastMarkupFrameIndex == currentFrameIndex and self._lastMarkupFrameHash == frame_hash:
-            return
-
-        # Update cache after check
-        self._lastMarkupFrameIndex = currentFrameIndex
-        self._lastMarkupFrameHash = frame_hash
-
         # Set programmatic update flag to prevent unsavedChanges from being set
         self._isProgrammaticUpdate = True
 
         # Batch scene updates using StartState/EndState
         slicer.mrmlScene.StartState(slicer.mrmlScene.BatchProcessState)
         try:
+            # Hide all markups if no frame data
+            for node in self.pleuraLines:
+                node.GetDisplayNode().SetVisibility(False)
+            for node in self.bLines:
+                node.GetDisplayNode().SetVisibility(False)
             if frame is None:
-                # Hide all markups if no frame data
-                for node in self.pleuraLines:
-                    node.GetDisplayNode().SetVisibility(False)
-                for node in self.bLines:
-                    node.GetDisplayNode().SetVisibility(False)
                 return
 
             self._updateMarkupNodesForFrame(frame)
