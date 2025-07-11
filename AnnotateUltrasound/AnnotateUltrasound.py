@@ -172,9 +172,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutS = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutS.setKey(qt.QKeySequence('S'))
         self.shortcutS.setContext(qt.Qt.ApplicationShortcut)
-        self.shortcutO = qt.QShortcut(slicer.util.mainWindow())
-        self.shortcutO.setKey(qt.QKeySequence('O'))
-        self.shortcutO.setContext(qt.Qt.ApplicationShortcut)
+        self.shortcutSpace = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutSpace.setKey(qt.QKeySequence('Space'))
+        self.shortcutSpace.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutE = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutE.setKey(qt.QKeySequence('E'))
         self.shortcutE.setContext(qt.Qt.ApplicationShortcut)
@@ -196,9 +196,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutEnd = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutEnd.setKey(qt.QKeySequence('End'))
         self.shortcutEnd.setContext(qt.Qt.ApplicationShortcut)
-        self.shortcutSpace = qt.QShortcut(slicer.util.mainWindow())
-        self.shortcutSpace.setKey(qt.QKeySequence('Space'))
-        self.shortcutSpace.setContext(qt.Qt.ApplicationShortcut)
+        self.shortcutC = qt.QShortcut(slicer.util.mainWindow())
+        self.shortcutC.setKey(qt.QKeySequence('C'))
+        self.shortcutC.setContext(qt.Qt.ApplicationShortcut)
         self.shortcutPageUp = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutPageUp.setKey(qt.QKeySequence('PageUp'))
         self.shortcutPageUp.setContext(qt.Qt.ApplicationShortcut)
@@ -219,7 +219,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Connect shortcuts to respective actions
         self.shortcutW.connect('activated()', lambda: self.onAddLine("Pleura", not self.ui.addPleuraButton.isChecked()))
         self.shortcutS.connect('activated()', lambda: self.onAddLine("Bline", not self.ui.addBlineButton.isChecked()))
-        self.shortcutO.connect('activated()', lambda: self.ui.overlayVisibilityButton.toggle())
+        self.shortcutSpace.connect('activated()', lambda: self.ui.overlayVisibilityButton.toggle())
 
         # New shortcuts for removing lines
         self.shortcutE.connect('activated()', lambda: self.onRemoveLine("Pleura"))  # "E" removes the last pleura line
@@ -233,8 +233,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Home/End keys for first/last frame
         self.shortcutHome.connect('activated()', self._firstFrameInSequence)
         self.shortcutEnd.connect('activated()', self._lastFrameInSequence)
-        # Spacebar for play/pause
-        self.shortcutSpace.connect('activated()', self._togglePlayPauseSequence)
+        self.shortcutC.connect('activated()', self._togglePlayPauseSequence)
 
         # Page Up/Page Down for previous/next clip
         self.shortcutPageUp.connect('activated()', self._onPageUpPressed)
@@ -250,7 +249,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Disconnect shortcuts to avoid issues when the user leaves the module
         self.shortcutW.activated.disconnect()
         self.shortcutS.activated.disconnect()
-        self.shortcutO.activated.disconnect()
+        self.shortcutSpace.activated.disconnect()
         self.shortcutE.activated.disconnect()
         self.shortcutD.activated.disconnect()
         self.shortcutA.activated.disconnect()
@@ -258,7 +257,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutLeftArrow.activated.disconnect()
         self.shortcutHome.activated.disconnect()
         self.shortcutEnd.activated.disconnect()
-        self.shortcutSpace.activated.disconnect()
+        self.shortcutC.activated.disconnect()
         self.shortcutPageUp.activated.disconnect()
         self.shortcutPageDown.activated.disconnect()
         self.shortcutShiftUp.activated.disconnect()
