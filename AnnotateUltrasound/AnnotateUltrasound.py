@@ -464,7 +464,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
     def onAddCurrentFrame(self):
         logging.info('onAddCurrentFrame')
-        self.logic.updateCurrentFrame()
+        self.logic.syncMarkupsToAnnotations()
+        self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
         self.updateGuiFromAnnotations()
 
     def onRemoveCurrentFrame(self):
@@ -477,7 +478,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         else:
             currentFrameIndex = self.logic.sequenceBrowserNode.GetSelectedItemNumber()
             self.logic.removeFrame(currentFrameIndex)
-            self.logic._updateMarkupsAndOverlayProgrammatically(setUnsavedChanges=True)
+            self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
             self.updateGuiFromAnnotations()
 
     def onInputDirectorySelected(self):
@@ -576,7 +577,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             self.ui.statusLabel.setText('')
             slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
             self.logic.sequenceBrowserNode.SetSelectedItemNumber(0)
-            self.logic.updateCurrentFrame()
+            self.logic.syncMarkupsToAnnotations()
+            self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
 
             self.ui.intensitySlider.setValue(0)
 
@@ -2235,7 +2237,7 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.setSelectedRaters(self.realRaters)
 
         # Set programmatic update flag to prevent unsavedChanges from being set
-        self._updateMarkupsAndOverlayProgrammatically(parameterNode=parameterNode)
+        self.refreshDisplay(updateOverlay=True, updateGui=True)
         parameterNode.EndModify(previousNodeState)
 
         # Set overlay volume as foreground in slice viewers
@@ -2302,7 +2304,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         if self.sequenceBrowserNode is not None and self.annotations is not None and 'frame_annotations' in self.annotations:
             currentFrameIndex = max(0, self.sequenceBrowserNode.GetSelectedItemNumber())
             if any(int(f.get("frame_number", -1)) == currentFrameIndex for f in self.annotations["frame_annotations"]):
-                self.updateCurrentFrame()
+                self.syncMarkupsToAnnotations()
+                self.refreshDisplay(updateOverlay=True, updateGui=True)
 
     def removeLastPleuraLine(self):
         """
@@ -2314,11 +2317,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             if self.hasObserver(currentLine, currentLine.PointPositionDefinedEvent, self.onPointPositionDefined):
                 self.removeObserver(currentLine, currentLine.PointPositionDefinedEvent, self.onPointPositionDefined)
             slicer.mrmlScene.RemoveNode(currentLine)
-            self.updateCurrentFrame()
-            ratio = self.updateOverlayVolume()
-            if ratio is not None:
-                parameterNode = self.getParameterNode()
-                parameterNode.pleuraPercentage = ratio * 100
+            self.syncMarkupsToAnnotations()
+            self.refreshDisplay(updateOverlay=True, updateGui=True)
 
     def removeLastBline(self):
         """
@@ -2330,11 +2330,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             if self.hasObserver(currentLine, currentLine.PointPositionDefinedEvent, self.onPointPositionDefined):
                 self.removeObserver(currentLine, currentLine.PointPositionDefinedEvent, self.onPointPositionDefined)
             slicer.mrmlScene.RemoveNode(currentLine)
-            self.updateCurrentFrame()
-            ratio = self.updateOverlayVolume()
-            if ratio is not None:
-                parameterNode = self.getParameterNode()
-                parameterNode.pleuraPercentage = ratio * 100
+            self.syncMarkupsToAnnotations()
+            self.refreshDisplay(updateOverlay=True, updateGui=True)
 
     def onPointModified(self, caller, event):
         numControlPoints = caller.GetNumberOfControlPoints()

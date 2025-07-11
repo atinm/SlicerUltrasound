@@ -368,7 +368,8 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
             # Clear selection if clicking away from any line
             selectionNode.SetActivePlaceNodeID("")
         # Update line markups to refresh visual appearance (highlighting, etc.)
-        self.logic.updateLineMarkups()
+        self.logic.syncAnnotationsToMarkups()
+        self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
 
     def onSelectionChanged(self, caller, event):
         selectionNode = slicer.app.applicationLogic().GetSelectionNode()
@@ -380,7 +381,8 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
                 if not displayNode or not displayNode.GetVisibility():
                     selectionNode.SetActivePlaceNodeID("")  # Clear selection
         # Update line markups to refresh visual appearance (highlighting, etc.)
-        self.logic.updateLineMarkups()
+        self.logic.syncAnnotationsToMarkups()
+        self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
 
 
     def saveUserSettings(self):
@@ -613,7 +615,8 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
         newNode = nodes[new_idx]
         selectionNode.SetActivePlaceNodeID(newNode.GetID())
         slicer.util.showStatusMessage(f"{status_message_prefix} {new_idx+1} of {len(nodes)}.", 2000)
-        self.logic.updateLineMarkups()
+        self.logic.syncAnnotationsToMarkups()
+        self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
         rater = newNode.GetAttribute("rater") or "unknown"
         line_type = "pleura" if newNode in self.logic.pleuraLines else "b-line"
         logging.info(f"{direction[0].upper()}: Selected {line_type} line from rater '{rater}' (line {new_idx+1} of {len(nodes)})")
@@ -665,7 +668,7 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
             line["validation"] = {"status": "unadjudicated"}
         for line in frame.get("b_lines", []):
             line["validation"] = {"status": "unadjudicated"}
-        self.logic._updateMarkupsAndOverlayProgrammatically()
+        self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
         slicer.util.showStatusMessage("All lines reset to unadjudicated.", 3000)
 
     def extractSeenAndSelectedRaters(self):
@@ -744,7 +747,9 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
             self.ui.statusLabel.setText('')
             slicer.util.mainWindow().statusBar().showMessage(statusText, 3000)
             self.logic.sequenceBrowserNode.SetSelectedItemNumber(0)
-            self.logic.updateCurrentFrame()
+            # Update annotations and refresh display
+            self.logic.syncMarkupsToAnnotations()
+            self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
 
             self.ui.intensitySlider.setValue(0)
 
@@ -1323,7 +1328,7 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
         self.setSelectedRaters(self.realRaters)
 
         # Set programmatic update flag to prevent unsavedChanges from being set
-        self._updateMarkupsAndOverlayProgrammatically(parameterNode)
+        self.refreshDisplay(updateOverlay=True, updateGui=True)
         parameterNode.EndModify(previousNodeState)
 
         # Set overlay volume as foreground in slice viewers
@@ -2025,6 +2030,10 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
             slicer.mrmlScene.EndState(slicer.mrmlScene.BatchProcessState)
             # Reset programmatic update flag
             self._isProgrammaticUpdate = False
+
+        # Update annotations and refresh display
+        self.logic.syncMarkupsToAnnotations()
+        self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
 
     def refreshDisplay(self, updateOverlay=True, updateGui=True):
         """
