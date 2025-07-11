@@ -873,8 +873,7 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
         success = self.saveAnnotations()
         if success:
             self.onNextButton()
-            # After loading next, restore focus and shortcuts with a slight delay
-            self.refocusAndRestoreShortcuts()
+            # Focus restoration is already handled by onNextButton(), no need to call it again
         else:
             # Error message already shown by saveAnnotations, don't proceed to next
             return
