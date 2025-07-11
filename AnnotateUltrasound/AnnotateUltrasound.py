@@ -967,8 +967,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         success = self.saveAnnotations()
         if success:
             self.onNextButton()
-            # After loading next, restore focus and shortcuts with a slight delay
-            self.refocusAndRestoreShortcuts()
         else:
             # Error message already shown by saveAnnotations, don't proceed to next
             return
@@ -1195,7 +1193,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         self.logic.nextDicomDfIndex = nextUnlabeledIndex
         self.onNextButton()
-        self.refocusAndRestoreShortcuts()
 
     def findNextUnlabeledScan(self):
         """
