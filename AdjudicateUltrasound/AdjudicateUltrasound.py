@@ -393,27 +393,6 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
             self._parameterNode.pleuraPercentage = ratio * 100
         self._updateGUIFromParameterNode()
 
-    def _updateMarkupsAndOverlayProgrammatically(self, setUnsavedChanges=False):
-        """
-        DEPRECATED: Use refreshDisplay() instead.
-        This method is kept for backward compatibility but delegates to the new method.
-        """
-        logging.info('_updateMarkupsAndOverlayProgrammatically (adjudicate - deprecated - use refreshDisplay)')
-        self.logic.syncAnnotationsToMarkups()
-        self.logic.refreshDisplay(updateOverlay=True, updateGui=False)
-        if setUnsavedChanges:
-            self._parameterNode.unsavedChanges = True
-
-        # Clear selection if selected node is not visible (adjudication-specific logic)
-        selectionNode = slicer.app.applicationLogic().GetSelectionNode()
-        selectedNodeID = selectionNode.GetActivePlaceNodeID()
-        if selectedNodeID:
-            node = slicer.mrmlScene.GetNodeByID(selectedNodeID)
-            if node and node.GetClassName() == "vtkMRMLMarkupsLineNode":
-                displayNode = node.GetDisplayNode()
-                if not displayNode or not displayNode.GetVisibility():
-                    selectionNode.SetActivePlaceNodeID("")  # Clear selection
-
     def onInputDirectorySelected(self):
         logging.info('onInputDirectorySelected')
 
@@ -1169,14 +1148,6 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
         # Return the number of rows in the dataframe
         return len(self.dicomDf)
 
-    def updateCurrentFrame(self):
-        """
-        DEPRECATED: Use syncMarkupsToAnnotations() instead.
-        This method is kept for backward compatibility but delegates to the new method.
-        """
-        logging.info('updateCurrentFrame (adjudicate - deprecated - use syncMarkupsToAnnotations)')
-        self.syncMarkupsToAnnotations()
-
     def loadNextSequence(self):
         """
         Load the next sequence in the dataframe.
@@ -1527,14 +1498,6 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
                 displayNode = node.GetDisplayNode()
                 if displayNode:
                     displayNode.SetVisibility(False)
-
-    def updateLineMarkups(self):
-        """
-        DEPRECATED: Use syncAnnotationsToMarkups() instead.
-        This method is kept for backward compatibility but delegates to the new method.
-        """
-        logging.info('updateLineMarkups (adjudicate - deprecated - use syncAnnotationsToMarkups)')
-        self.syncAnnotationsToMarkups()
 
     def updateOverlayVolume(self):
         """

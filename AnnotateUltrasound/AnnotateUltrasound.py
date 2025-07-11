@@ -1986,14 +1986,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Return the number of rows in the dataframe and the number of annotations files created
         return len(self.dicomDf), annotations_created_count
 
-    def updateCurrentFrame(self):
-        """
-        DEPRECATED: Use syncMarkupsToAnnotations() instead.
-        This method is kept for backward compatibility but delegates to the new method.
-        """
-        logging.info('updateCurrentFrame (deprecated - use syncMarkupsToAnnotations)')
-        self.syncMarkupsToAnnotations()
-
     def removeFrame(self, frameIndex):
         logging.info(f"removeFrame -- frameIndex: {frameIndex}")
         if self.annotations is None:
@@ -2055,19 +2047,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
                 frame["coordinate_space"] = "LPS"  # Update coordinate_space
         save_data['frame_annotations'] = copied_frames
         return save_data # a copy of the data, so caller has to save
-
-    def _updateMarkupsAndOverlayProgrammatically(self, parameterNode=None, setUnsavedChanges=False):
-        """
-        DEPRECATED: Use refreshDisplay() instead.
-        This method is kept for backward compatibility but delegates to the new method.
-        """
-        logging.info('_updateMarkupsAndOverlayProgrammatically (deprecated - use refreshDisplay)')
-        self.syncAnnotationsToMarkups()
-        self.refreshDisplay(updateOverlay=True, updateGui=False)
-        if setUnsavedChanges:
-            if parameterNode is None:
-                parameterNode = self.getParameterNode()
-            parameterNode.unsavedChanges = True
 
     def loadNextSequence(self):
         """
@@ -2652,14 +2631,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Hide unused b-line markups
         for i in range(len(bline_entries), len(self.bLines)):
             self.bLines[i].GetDisplayNode().SetVisibility(False)
-
-    def updateLineMarkups(self):
-        """
-        DEPRECATED: Use syncAnnotationsToMarkups() instead.
-        This method is kept for backward compatibility but delegates to the new method.
-        """
-        logging.info('updateLineMarkups (deprecated - use syncAnnotationsToMarkups)')
-        self.syncAnnotationsToMarkups()
 
     def drawDepthGuideLine(self, image_size_rows, image_size_cols, depth_ratio=0.5, color=(0, 255, 255), thickness=4, dash_length=20, dash_gap=16):
         """
