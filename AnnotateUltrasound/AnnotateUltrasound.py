@@ -1530,7 +1530,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.raterColorTable.clearContents()
         colors = list(self.logic.getAllRaterColors())
 
-        # Filter out __selected_node__ and __adjudicated_node__ before setting row count, we don't want to show it in the UI
+        # Filter out __selected_node__ and __adjudicated_node__ before setting row count, we don't want to show it in the UI.
+        # Note: populateRaterColorTable is shared with AdjudicatedUltrasound, it is leaking __adjudicated_node__ knowledge
+        # but better than copying it to AdjudicatedUltrasound for this and we do not want to have the __selected_node__ "red"
+        # and __adjudicated_node__ "blue"/"magenta" colors used by raters in any module.
         visible_colors = [(r, (pleura_color, bline_color)) for r, (pleura_color, bline_color) in colors if r != "__selected_node__" and r != "__adjudicated_node__"]
 
         self.ui.raterColorTable.setRowCount(len(visible_colors))
@@ -2251,9 +2254,10 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         if current_rater in self.seenRaters:
             self.seenRaters.remove(current_rater)
-        # put current rater at the top
-        self.seenRaters = [current_rater, "__selected_node__"] + sorted(self.seenRaters)
-        self.realRaters = [r for r in self.seenRaters if r != "__selected_node__"]
+        # put current rater at the top and add __selected_node__ and __adjudicated_node__ after so that those colors
+        # all stay constant regardless of which module we are in.
+        self.seenRaters = [current_rater, "__selected_node__", "__adjudicated_node__"] + sorted(self.seenRaters)
+        self.realRaters = [r for r in self.seenRaters if r != "__selected_node__" and r != "__adjudicated_node__"]
         self.setSelectedRaters(self.realRaters)
 
         # Set programmatic update flag to prevent unsavedChanges from being set
@@ -3089,15 +3093,18 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # Remove __selected_node__ if it exists (to avoid duplicates)
         if "__selected_node__" in seenRaters:
             seenRaters.remove("__selected_node__")
+        # Remove __adjudicated_node__ if it exists (to avoid duplicates)
+        if "__adjudicated_node__" in seenRaters:
+            seenRaters.remove("__adjudicated_node__")
         # Remove current_rater if it exists (to avoid duplicates)
         if current_rater in seenRaters:
             seenRaters.remove(current_rater)
-        # Now build the list: current_rater, __selected_node__ then sorted rest
-        # we need to add __selected_node__ to the list to ensure that the selected line is always visible and
-        # uses a different color than the other lines
-        self.seenRaters = [current_rater, "__selected_node__"] + sorted(seenRaters)
-        # Select all real raters by default (exclude __selected_node__)
-        self.realRaters = [r for r in self.seenRaters if r != "__selected_node__"]
+        # Now build the list: current_rater, __selected_node__, __adjudicated_node__, then sorted rest
+        # we need to add __selected_node__ and __adjudicated_node__ to the list to ensure that the selected line is always visible and
+        # uses a different color than the other lines and that the adjudicated_node colors aren't taken by the raters regardless of which module we are in.
+        self.seenRaters = [current_rater, "__selected_node__", "__adjudicated_node__"] + sorted(seenRaters)
+        # Select all real raters by default (exclude __selected_node__ and __adjudicated_node__)
+        self.realRaters = [r for r in self.seenRaters if r != "__selected_node__" and r != "__adjudicated_node__"]
         self.setSelectedRaters(set(self.realRaters))
 
     def cleanupAnnotationDuplicates(self):
