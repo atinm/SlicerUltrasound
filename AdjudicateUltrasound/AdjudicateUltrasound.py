@@ -394,9 +394,17 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
         self._updateGUIFromParameterNode()
 
     def _updateMarkupsAndOverlayProgrammatically(self, setUnsavedChanges=False):
-        super()._updateMarkupsAndOverlayProgrammatically(setUnsavedChanges)
+        """
+        DEPRECATED: Use refreshDisplay() instead.
+        This method is kept for backward compatibility but delegates to the new method.
+        """
+        logging.info('_updateMarkupsAndOverlayProgrammatically (adjudicate - deprecated - use refreshDisplay)')
+        self.logic.syncAnnotationsToMarkups()
+        self.logic.refreshDisplay(updateOverlay=True, updateGui=False)
+        if setUnsavedChanges:
+            self._parameterNode.unsavedChanges = True
 
-        # Clear selection if selected node is not visible
+        # Clear selection if selected node is not visible (adjudication-specific logic)
         selectionNode = slicer.app.applicationLogic().GetSelectionNode()
         selectedNodeID = selectionNode.GetActivePlaceNodeID()
         if selectedNodeID:
@@ -466,9 +474,8 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
             displayNode.SetOpacity(0.3)
         # Also update the corresponding annotation line
         self._updateAnnotationLineValidation(markupNode, validation)
-        # Reset cache to force immediate color updates when validation status changes
-        self.logic._resetMarkupCache()
-        self.logic.updateCurrentFrame()
+        self.logic.syncMarkupsToAnnotations()
+        self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
         slicer.util.showStatusMessage(f"Line {status_description}.", 3000)
 
     def onValidateAllUnadjudicated(self):
@@ -522,14 +529,14 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
 
                     count += 1
 
-            # Reset cache to force immediate color updates when validation status changes
-            self.logic._resetMarkupCache()
-
             # Update the visual appearance of all lines
-            self.logic.updateLineMarkups()
+            self.logic.syncAnnotationsToMarkups()
 
             # Update the current frame to save the changes to annotations
-            self.logic.updateCurrentFrame()
+            self.logic.syncMarkupsToAnnotations()
+
+            # Refresh display
+            self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
 
         finally:
             # Reset programmatic update flag
@@ -672,13 +679,14 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
 
     def onResetAllAdjudication(self):
         """Reset all lines in the current frame to unadjudicated status."""
-        for node in self.logic.pleuraLines + self.logic.bLines:
-            displayNode = node.GetDisplayNode()
-            if displayNode and displayNode.GetVisibility():
-                node.SetAttribute("validation", json.dumps({"status": "unadjudicated"}))
-                displayNode.SetOpacity(1.0)
-        self.logic.updateCurrentFrame()
-        self._parameterNode.unsavedChanges = True
+
+        currentFrameIndex = max(0, self.logic.sequenceBrowserNode.GetSelectedItemNumber())
+        frame = next((item for item in self.logic.annotations['frame_annotations'] if str(item.get("frame_number")) == str(currentFrameIndex)), None)
+        for line in frame.get("pleura_lines", []):
+            line["validation"] = {"status": "unadjudicated"}
+        for line in frame.get("b_lines", []):
+            line["validation"] = {"status": "unadjudicated"}
+        self.logic._updateMarkupsAndOverlayProgrammatically()
         slicer.util.showStatusMessage("All lines reset to unadjudicated.", 3000)
 
     def extractSeenAndSelectedRaters(self):
@@ -1162,98 +1170,12 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
         return len(self.dicomDf)
 
     def updateCurrentFrame(self):
-        logging.info('updateCurrentFrame')
-
-        if self.sequenceBrowserNode is None:
-            logging.warning("No sequence browser node found, cannot update current frame.")
-            return
-
-        # Get the current frame index from the sequence browser
-        currentFrameIndex = max(0, self.sequenceBrowserNode.GetSelectedItemNumber())  # TODO: investigate whey this could be negative!
-        logging.debug(f"Updating frame {currentFrameIndex} with {len(self.pleuraLines)} pleura lines and {len(self.bLines)} b-lines")
-
-        # Check if annotations already has a list of frame annotations. Create it if it doesn't exist.
-        if 'frame_annotations' not in self.annotations:
-            self.annotations['frame_annotations'] = []
-
-        # Find existing frame annotation for currentFrameIndex
-        existing = next((f for f in self.annotations['frame_annotations']
-                         if int(f.get("frame_number", -1)) == currentFrameIndex), None)
-        if not existing:
-            # create an empty frame and append it to annotations
-            existing = {
-                "frame_number": currentFrameIndex,
-                "coordinate_space": "RAS",
-                "pleura_lines": [],
-                "b_lines": []
-            }
-            self.annotations['frame_annotations'].append(existing)
-
-        # Remove all lines, we will add only the visible lines back in and any updates will take here
-        existing['pleura_lines'] = []
-        existing['b_lines'] = []
-
-        pleura_saved = 0
-        for i, markupNode in enumerate(self.pleuraLines):
-            displayNode = markupNode.GetDisplayNode() if markupNode else None
-            is_visible = displayNode.GetVisibility() if displayNode else False
-            num_points = markupNode.GetNumberOfControlPoints() if markupNode else 0
-
-            # Only save visible nodes with valid coordinates
-            if not is_visible:
-                continue  # Skip hidden nodes
-
-            coordinates = []
-            for j in range(num_points):
-                coord = [0, 0, 0]
-                markupNode.GetNthControlPointPosition(j, coord)
-                coordinates.append(coord)
-
-            validation_json = markupNode.GetAttribute("validation")
-            try:
-                validation = json.loads(validation_json) if validation_json else {"status": "unadjudicated"}
-            except json.JSONDecodeError:
-                validation = {"status": "unadjudicated"}
-
-            if coordinates and len(coordinates) >= 2:  # Only save lines with at least 2 points
-                line_data = {
-                    "rater": markupNode.GetAttribute("rater"),
-                    "line": {"points": coordinates},
-                    "validation": validation
-                }
-                existing['pleura_lines'].append(line_data)
-                pleura_saved += 1
-
-        bline_saved = 0
-        for i, markupNode in enumerate(self.bLines):
-            displayNode = markupNode.GetDisplayNode() if markupNode else None
-            is_visible = displayNode.GetVisibility() if displayNode else False
-            num_points = markupNode.GetNumberOfControlPoints() if markupNode else 0
-
-            # Only save visible nodes with valid coordinates
-            if not is_visible:
-                continue  # Skip hidden nodes
-
-            coordinates = []
-            for j in range(num_points):
-                coord = [0, 0, 0]
-                markupNode.GetNthControlPointPosition(j, coord)
-                coordinates.append(coord)
-
-            validation_json = markupNode.GetAttribute("validation")
-            try:
-                validation = json.loads(validation_json) if validation_json else {"status": "unadjudicated"}
-            except json.JSONDecodeError:
-                validation = {"status": "unadjudicated"}
-
-            if coordinates and len(coordinates) >= 2:  # Only save lines with at least 2 points
-                line_data = {
-                    "rater": markupNode.GetAttribute("rater"),
-                    "line": {"points": coordinates},
-                    "validation": validation
-                }
-                existing['b_lines'].append(line_data)
-                bline_saved += 1
+        """
+        DEPRECATED: Use syncMarkupsToAnnotations() instead.
+        This method is kept for backward compatibility but delegates to the new method.
+        """
+        logging.info('updateCurrentFrame (adjudicate - deprecated - use syncMarkupsToAnnotations)')
+        self.syncMarkupsToAnnotations()
 
     def loadNextSequence(self):
         """
@@ -1293,10 +1215,6 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
         # Delete all files in the temporary folder
         for file in os.listdir(tempDicomDir):
             os.remove(os.path.join(tempDicomDir, file))
-
-        # Clear markup cache to force update on reload
-        self._lastMarkupFrameIndex = None
-        self._lastMarkupFrameHash = None
 
         # Copy DICOM file to temporary folder
         shutil.copy(nextDicomFilepath, tempDicomDir)
@@ -1612,82 +1530,11 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
 
     def updateLineMarkups(self):
         """
-        Update the line markups to match the annotations at the current frame index. Reuse markups instead of deleting/creating them every frame. Only update if frame or annotation data has changed.
+        DEPRECATED: Use syncAnnotationsToMarkups() instead.
+        This method is kept for backward compatibility but delegates to the new method.
         """
-        # Check if scene is valid before proceeding
-        if not slicer.mrmlScene:
-            return
-
-        # Initialize cache attributes if not present
-        if not hasattr(self, '_lastMarkupFrameIndex'):
-            self._lastMarkupFrameIndex = None
-        if not hasattr(self, '_lastMarkupFrameHash'):
-            self._lastMarkupFrameHash = None
-
-        if self.annotations is None:
-            # this is legit when we are loading a new sequence as we change selections when loading a new sequence
-            # which causes updateLineMarkups to be called before the annotations are loaded
-            logging.debug("updateLineMarkups (adjudicate): No annotations loaded")
-            return
-
-        if self.sequenceBrowserNode is None:
-            logging.warning("No sequence browser node found")
-            return
-
-        currentFrameIndex = max(0, self.sequenceBrowserNode.GetSelectedItemNumber())
-
-        if 'frame_annotations' not in self.annotations:
-            logging.debug("No frame annotations found")
-            return
-
-        frame = next((item for item in self.annotations['frame_annotations'] if str(item.get("frame_number")) == str(currentFrameIndex)), None)
-        # Compute a hash of the frame annotation data and selected raters for caching
-        frame_hash = None
-        if frame is not None:
-            try:
-                selectionNode = slicer.app.applicationLogic().GetSelectionNode()
-                selectedNodeID = selectionNode.GetActivePlaceNodeID() if selectionNode else None
-                # Include selected raters and selected node in the hash so selection changes trigger updates
-                cache_data = {
-                    'frame': frame,
-                    'selectedRaters': sorted(list(self.selectedRaters)) if hasattr(self, 'selectedRaters') else [],
-                    'selectedNodeID': selectedNodeID
-                }
-                frame_hash = hash(json.dumps(cache_data, sort_keys=True))
-            except Exception:
-                frame_hash = None
-
-        # Early return if frame index, annotation data, and selected raters are unchanged
-        if self._lastMarkupFrameIndex == currentFrameIndex and self._lastMarkupFrameHash == frame_hash:
-            return
-
-        # Update cache after check
-        self._lastMarkupFrameIndex = currentFrameIndex
-        self._lastMarkupFrameHash = frame_hash
-
-        # Set programmatic update flag to prevent unsavedChanges from being set
-        self._isProgrammaticUpdate = True
-
-        # Batch scene updates using StartState/EndState
-        slicer.mrmlScene.StartState(slicer.mrmlScene.BatchProcessState)
-        try:
-            if frame is None:
-                # Hide all markups if no frame data
-                for node in self.pleuraLines:
-                    displayNode = node.GetDisplayNode()
-                    if displayNode:
-                        displayNode.SetVisibility(False)
-                for node in self.bLines:
-                    displayNode = node.GetDisplayNode()
-                    if displayNode:
-                        displayNode.SetVisibility(False)
-                return
-
-            self._updateMarkupNodesForFrame(frame)
-        finally:
-            slicer.mrmlScene.EndState(slicer.mrmlScene.BatchProcessState)
-            # Reset programmatic update flag
-            self._isProgrammaticUpdate = False
+        logging.info('updateLineMarkups (adjudicate - deprecated - use syncAnnotationsToMarkups)')
+        self.syncAnnotationsToMarkups()
 
     def updateOverlayVolume(self):
         """
@@ -1712,13 +1559,13 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
             return None
 
         # if we are using multiple raters and have selected more than one, don't show overlay volume
-        if hasattr(self, "selectedRaters") and len(self.selectedRaters) > 1:
-            overlayArray = slicer.util.arrayFromVolume(parameterNode.overlayVolume)
-            overlayArray[:] = 0
-            overlayArray = self._applyDepthGuideToMask(overlayArray, parameterNode)
-            slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, overlayArray)
-            slicer.util.showStatusMessage("Overlay hidden: multiple raters selected", 3000)
-            return None
+        # if hasattr(self, "selectedRaters") and len(self.selectedRaters) > 1:
+        #     overlayArray = slicer.util.arrayFromVolume(parameterNode.overlayVolume)
+        #     overlayArray[:] = 0
+        #     overlayArray = self._applyDepthGuideToMask(overlayArray, parameterNode)
+        #     slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, overlayArray)
+        #     slicer.util.showStatusMessage("Overlay hidden: multiple raters selected", 3000)
+        #     return None
 
         if self.annotations is None:
             logging.warning("updateOverlayVolume (adjudicate): No annotations loaded")
@@ -1846,15 +1693,6 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
         else:
             parameterNode.pleuraPercentage = greenPixels / bluePixels * 100
             return greenPixels / bluePixels
-
-    def _resetMarkupCache(self):
-        """
-        Reset the markup cache to force immediate updates when validation status changes.
-        """
-        if hasattr(self, '_lastMarkupFrameIndex'):
-            self._lastMarkupFrameIndex = None
-        if hasattr(self, '_lastMarkupFrameHash'):
-            self._lastMarkupFrameHash = None
 
     def process(self,
                 inputVolume: vtkMRMLScalarVolumeNode,
@@ -2064,6 +1902,205 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
             abs(current_blines - max_blines) > 2):
             self.initializeMarkupNodesFromAnnotations()
 
+    def syncMarkupsToAnnotations(self):
+        """
+        One-way sync: Save current markup nodes to annotations for the current frame.
+        This is the single source of truth for persisting markup changes.
+        Overridden to handle validation data.
+        """
+        if self.sequenceBrowserNode is None:
+            logging.warning("No sequence browser node found, cannot sync markups to annotations.")
+            return
+
+        currentFrameIndex = max(0, self.sequenceBrowserNode.GetSelectedItemNumber())
+        logging.debug(f"Syncing markups to annotations for frame {currentFrameIndex} (adjudicate)")
+
+        # Check if annotations already has a list of frame annotations
+        if 'frame_annotations' not in self.annotations:
+            self.annotations['frame_annotations'] = []
+
+        # Find existing frame annotation for currentFrameIndex
+        existing = next((f for f in self.annotations['frame_annotations']
+                         if int(f.get("frame_number", -1)) == currentFrameIndex), None)
+        if not existing:
+            # create an empty frame and append it to annotations
+            existing = {
+                "frame_number": currentFrameIndex,
+                "coordinate_space": "RAS",
+                "pleura_lines": [],
+                "b_lines": []
+            }
+            self.annotations['frame_annotations'].append(existing)
+
+        # Remove all lines, we will add only the visible lines back in and any updates will take here
+        existing['pleura_lines'] = []
+        existing['b_lines'] = []
+
+        # Add visible pleura lines to annotations
+        for markupNode in self.pleuraLines:
+            displayNode = markupNode.GetDisplayNode() if markupNode else None
+            is_visible = displayNode.GetVisibility() if displayNode else False
+            num_points = markupNode.GetNumberOfControlPoints() if markupNode else 0
+
+            # Only save visible nodes with valid coordinates
+            if not is_visible:
+                continue  # Skip hidden nodes
+
+            coordinates = []
+            for j in range(num_points):
+                coord = [0, 0, 0]
+                markupNode.GetNthControlPointPosition(j, coord)
+                coordinates.append(coord)
+
+            validation_json = markupNode.GetAttribute("validation")
+            try:
+                validation = json.loads(validation_json) if validation_json else {"status": "unadjudicated"}
+            except json.JSONDecodeError:
+                validation = {"status": "unadjudicated"}
+
+            if coordinates and len(coordinates) >= 2:  # Only save lines with at least 2 points
+                line_data = {
+                    "rater": markupNode.GetAttribute("rater"),
+                    "line": {"points": coordinates},
+                    "validation": validation
+                }
+                existing['pleura_lines'].append(line_data)
+
+        # Add visible B-lines to annotations
+        for markupNode in self.bLines:
+            displayNode = markupNode.GetDisplayNode() if markupNode else None
+            is_visible = displayNode.GetVisibility() if displayNode else False
+            num_points = markupNode.GetNumberOfControlPoints() if markupNode else 0
+
+            # Only save visible nodes with valid coordinates
+            if not is_visible:
+                continue  # Skip hidden nodes
+
+            coordinates = []
+            for j in range(num_points):
+                coord = [0, 0, 0]
+                markupNode.GetNthControlPointPosition(j, coord)
+                coordinates.append(coord)
+
+            validation_json = markupNode.GetAttribute("validation")
+            try:
+                validation = json.loads(validation_json) if validation_json else {"status": "unadjudicated"}
+            except json.JSONDecodeError:
+                validation = {"status": "unadjudicated"}
+
+            if coordinates and len(coordinates) >= 2:  # Only save lines with at least 2 points
+                line_data = {
+                    "rater": markupNode.GetAttribute("rater"),
+                    "line": {"points": coordinates},
+                    "validation": validation
+                }
+                existing['b_lines'].append(line_data)
+
+    def syncAnnotationsToMarkups(self):
+        """
+        One-way sync: Update markup nodes from annotations for the current frame.
+        This is the single source of truth for displaying annotations.
+        Overridden to handle validation data and adjudication-specific display logic.
+        """
+        if not slicer.mrmlScene:
+            return
+
+        if self.annotations is None:
+            logging.debug("syncAnnotationsToMarkups (adjudicate): No annotations loaded")
+            # Hide all markups
+            for node in self.pleuraLines:
+                displayNode = node.GetDisplayNode()
+                if displayNode:
+                    displayNode.SetVisibility(False)
+            for node in self.bLines:
+                displayNode = node.GetDisplayNode()
+                if displayNode:
+                    displayNode.SetVisibility(False)
+            return
+
+        if self.sequenceBrowserNode is None:
+            logging.warning("No sequence browser node found")
+            return
+
+        currentFrameIndex = max(0, self.sequenceBrowserNode.GetSelectedItemNumber())
+
+        if 'frame_annotations' not in self.annotations:
+            logging.debug("No frame annotations found")
+            # Hide all markups
+            for node in self.pleuraLines:
+                displayNode = node.GetDisplayNode()
+                if displayNode:
+                    displayNode.SetVisibility(False)
+            for node in self.bLines:
+                displayNode = node.GetDisplayNode()
+                if displayNode:
+                    displayNode.SetVisibility(False)
+            return
+
+        frame = next((item for item in self.annotations['frame_annotations']
+                     if str(item.get("frame_number")) == str(currentFrameIndex)), None)
+
+        # Set programmatic update flag to prevent unsavedChanges from being set
+        self._isProgrammaticUpdate = True
+
+        # Batch scene updates using StartState/EndState
+        slicer.mrmlScene.StartState(slicer.mrmlScene.BatchProcessState)
+        try:
+            if frame is None:
+                # Hide all markups if no frame data
+                for node in self.pleuraLines:
+                    displayNode = node.GetDisplayNode()
+                    if displayNode:
+                        displayNode.SetVisibility(False)
+                for node in self.bLines:
+                    displayNode = node.GetDisplayNode()
+                    if displayNode:
+                        displayNode.SetVisibility(False)
+                return
+
+            self._updateMarkupNodesForFrame(frame)
+        finally:
+            slicer.mrmlScene.EndState(slicer.mrmlScene.BatchProcessState)
+            # Reset programmatic update flag
+            self._isProgrammaticUpdate = False
+
+    def refreshDisplay(self, updateOverlay=True, updateGui=True):
+        """
+        Central method to refresh the display after any changes.
+        This ensures consistent updates across all UI elements.
+        Overridden to handle adjudication-specific display requirements.
+        """
+        parameterNode = self.getParameterNode()
+
+        # Update overlay volume if requested
+        if updateOverlay:
+            ratio = self.updateOverlayVolume()
+            if ratio is not None:
+                parameterNode.pleuraPercentage = ratio * 100
+            else:
+                parameterNode.pleuraPercentage = 0.0
+
+        # Update GUI if requested and we have a widget
+        if updateGui:
+            try:
+                widget = getAdjudicateUltrasoundWidget()
+                if widget:
+                    widget.updateGuiFromAnnotations()
+            except RuntimeError:
+                # Widget not initialized yet, skip GUI update
+                pass
+
+    def updateDisplayForRaterChange(self):
+        """
+        Specialized method for when rater selection changes.
+        This ensures the display is updated to show/hide the correct lines.
+        Overridden to handle adjudication-specific logic.
+        """
+        # Sync annotations to markups (this respects selectedRaters)
+        self.syncAnnotationsToMarkups()
+
+        # Refresh display
+        self.refreshDisplay(updateOverlay=True, updateGui=True)
 
 #
 # Register the module
