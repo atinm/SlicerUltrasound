@@ -37,6 +37,11 @@ class AnnotateUltrasoundLogicTest(ScriptedLoadableModuleTest):
         """
         slicer.mrmlScene.Clear(0)
 
+    def tearDown(self):
+        """ Reset the state - typically a scene clear will be enough.
+        """
+        slicer.mrmlScene.Clear(0)
+
     def runTest(self):
         """Run the tests. Add calls to additional tests as we add them here.
         """
@@ -50,6 +55,7 @@ class AnnotateUltrasoundLogicTest(ScriptedLoadableModuleTest):
         self.test_error_handling()
         self.test_sequence_browser_integration()
         self.test_overlay_volume_management()
+        self.tearDown()
 
     def test_AnnotateUltrasoundLogic(self):
         """ Test the logic class.

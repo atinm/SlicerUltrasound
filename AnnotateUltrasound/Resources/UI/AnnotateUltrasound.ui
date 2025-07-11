@@ -310,10 +310,10 @@
                         <item row="3" column="0">
                             <widget class="QPushButton" name="overlayVisibilityButton">
                                 <property name="toolTip">
-                                    <string>Toggles overlay display (Shortcut O key)</string>
+                                    <string>Toggles overlay display (Shortcut Space key)</string>
                                 </property>
                                 <property name="text">
-                                    <string>Overlay [O]</string>
+                                    <string>Overlay [Space]</string>
                                 </property>
                                 <property name="checkable">
                                     <bool>true</bool>
