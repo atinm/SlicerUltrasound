@@ -507,7 +507,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.realRaters = self.logic.realRaters.copy()
         self.selectedRaters = self.logic.selectedRaters.copy()
 
-    def refocusAndRestoreShortcuts(self, delay: int = 200):
+    def refocusAndRestoreShortcuts(self, delay: int = 300):
         qt.QTimer.singleShot(delay, self._delayedSetRedViewFocus)
         qt.QTimer.singleShot(delay + 100, self._restoreFocusAndShortcuts)
 
@@ -668,6 +668,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         # Add observer for the new sequence browser node
         if self.logic.sequenceBrowserNode:
             self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.logic.onSequenceBrowserModified)
+
+        # Set sequence browser to first frame
+        self.logic.sequenceBrowserNode.SetSelectedItemNumber(0)
+        self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
 
         # After loading the next sequence, extract seen raters and update checkboxes
         self.extractSeenAndSelectedRaters()
@@ -835,6 +839,14 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             # show status message for 5 seconds
             slicer.util.mainWindow().statusBar().showMessage('⚠️ First DICOM file reached', 5000)
             return
+
+        # Add observer for the new sequence browser node
+        if self.logic.sequenceBrowserNode:
+            self.addObserver(self.logic.sequenceBrowserNode, vtk.vtkCommand.ModifiedEvent, self.logic.onSequenceBrowserModified)
+
+        # Set sequence browser to first frame
+        self.logic.sequenceBrowserNode.SetSelectedItemNumber(0)
+        self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
 
         # Update self.ui.currentFileLabel using the DICOM file name
         currentDicomFilepath = self.logic.dicomDf.iloc[self.logic.nextDicomDfIndex - 1]['Filepath']
@@ -1220,6 +1232,12 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         for idx in range(self.logic.nextDicomDfIndex, len(self.logic.dicomDf)):
             annotationsFilepath = self.logic.dicomDf.iloc[idx]['AnnotationsFilepath']
+
+            # Check if the annotation file exists
+            if not os.path.exists(annotationsFilepath):
+                # File doesn't exist, so this scan is unlabeled
+                return idx
+
             try:
                 with open(annotationsFilepath, 'r') as f:
                     annotations = json.load(f)
@@ -1228,6 +1246,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                         return idx
             except Exception as e:
                 logging.error(f"Error reading annotations file {annotationsFilepath}: {e}")
+                # If there's an error reading the file, treat it as unlabeled
+                return idx
 
         return None
 
