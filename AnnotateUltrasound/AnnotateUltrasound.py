@@ -1444,7 +1444,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
             # Update corner annotation if _parameterNode.pleuraPercentage is a non-negative number
             # if we are using multiple raters and have selected more than one, don't show overlay volume
             selectedRaters = self.logic.getSelectedRaters()
-            if selectedRaters is not None and len(selectedRaters) == 1:
+            if selectedRaters is not None:
                 if self.ui.showPleuraPercentageCheckBox.checked and self._parameterNode.pleuraPercentage >= 0:
                     view=slicer.app.layoutManager().sliceWidget("Red").sliceView()
                     view.cornerAnnotation().SetText(vtk.vtkCornerAnnotation.UpperLeft,f"B-line/Pleura = {self._parameterNode.pleuraPercentage:.1f} %")
@@ -2835,15 +2835,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         if parameterNode.inputVolume is None:
             logging.debug("No input volume found, not updating overlay volume.")
-            return None
-
-        # if we are using multiple raters and have selected more than one, don't show overlay volume
-        if hasattr(self, "selectedRaters") and len(self.selectedRaters) > 1:
-            overlayArray = slicer.util.arrayFromVolume(parameterNode.overlayVolume)
-            overlayArray[:] = 0
-            overlayArray = self._applyDepthGuideToMask(overlayArray, parameterNode)
-            slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, overlayArray)
-            slicer.util.showStatusMessage("Overlay hidden: multiple raters selected", 3000)
             return None
 
         if self.annotations is None:
