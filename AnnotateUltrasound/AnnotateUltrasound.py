@@ -2929,19 +2929,8 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         # apply depthGuide if enabled
         maskArray = self._applyDepthGuideToMask(maskArray, parameterNode)
 
-        # Compute a hash of the mask array for fast comparison
-        mask_hash = zlib.crc32(maskArray.tobytes())
-        if hasattr(self, '_lastOverlayMaskHash') and self._lastOverlayMaskHash == mask_hash:
-            # No change, skip update
-            if bluePixels == 0:
-                parameterNode.pleuraPercentage = 0.0
-                return 0.0
-            else:
-                parameterNode.pleuraPercentage = greenPixels / bluePixels * 100
-                return greenPixels / bluePixels
         # Update the overlay volume
         slicer.util.updateVolumeFromArray(parameterNode.overlayVolume, maskArray)
-        self._lastOverlayMaskHash = mask_hash
 
         # Return the ratio of green pixels to blue pixels
         if bluePixels == 0:
