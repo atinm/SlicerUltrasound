@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.16.3...3.19.7 FATAL_ERROR)
 
 project(Ultrasound)
-include(CTest)
 #-----------------------------------------------------------------------------
 # Extension meta-information
 set(EXTENSION_HOMEPAGE "https://github.com/SlicerUltrasound/SlicerUltrasound")
@@ -17,32 +16,7 @@ set(EXTENSION_DEPENDS SlicerIGT) # Specified as a list or "NA" if no dependencie
 set(Slicer_USE_ADDITIONAL_LAUNCHER_SETTINGS OFF)
 find_package(Slicer REQUIRED)
 include(${Slicer_USE_FILE})
-
-#-----------------------------------------------------------------------------
-# Testing configuration
-if(BUILD_TESTING)
-  # Enable CTest
-  enable_testing()
-
-  # Set test timeout (5 minutes)
-  set(DART_TESTING_TIMEOUT 300)
-
-  # Configure test labels
-  set(TEST_LABELS
-    "unit"
-    "integration"
-    "gui"
-    "slicer"
-    "ultrasound"
-  )
-
-  # Add test labels to all tests
-  foreach(label ${TEST_LABELS})
-    add_test(NAME ${label} COMMAND ${CMAKE_COMMAND} -E echo "Test label: ${label}")
-    set_tests_properties(${label} PROPERTIES LABELS ${label})
-  endforeach()
-
-endif()
+include(CTest)
 
 #-----------------------------------------------------------------------------
 # Extension modules
