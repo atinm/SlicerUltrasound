@@ -15,8 +15,8 @@ set(EXTENSION_DEPENDS SlicerIGT) # Specified as a list or "NA" if no dependencie
 # Extension dependencies
 set(Slicer_USE_ADDITIONAL_LAUNCHER_SETTINGS OFF)
 find_package(Slicer REQUIRED)
-include(${Slicer_USE_FILE})
 include(CTest)
+include(${Slicer_USE_FILE})
 
 #-----------------------------------------------------------------------------
 # Extension modules
