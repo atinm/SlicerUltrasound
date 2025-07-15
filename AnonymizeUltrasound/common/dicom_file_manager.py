@@ -906,6 +906,12 @@ class DicomFileManager:
             - Birth date is truncated to year only with "0101" appended
             - Uses convertToJsonCompatible for handling DICOM-specific data types
         """
+        if current_dicom_record is None:
+            raise ValueError("Current DICOM record is required")
+
+        if output_filename is None or output_filename == "":
+            raise ValueError("Output filename is required")
+
         if headers_directory is None:
             return None
 

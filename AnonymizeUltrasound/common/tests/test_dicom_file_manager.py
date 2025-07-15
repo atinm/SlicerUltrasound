@@ -1399,16 +1399,14 @@ class TestDicomFileManager:
 
         result = manager_with_data.save_anonymized_dicom_header(
             current_record,
-            headers_directory,
-            True,
-            output_filename
+            output_filename,
+            headers_directory
         )
 
         assert result is not None
         assert result.endswith("_DICOMHeader.json")
         assert os.path.exists(result)
 
-    @pytest.mark.debug
     def test_save_anonymized_dicom_header_anonymizes_patient_name(self, manager_with_data, temp_dir):
         headers_directory = os.path.join(temp_dir, "headers")
         current_record = manager_with_data.dicom_df.iloc[0]
@@ -1419,9 +1417,8 @@ class TestDicomFileManager:
 
         result_path = manager_with_data.save_anonymized_dicom_header(
             current_record,
-            headers_directory,
-            True,
-            output_filename
+            output_filename,
+            headers_directory
         )
 
         # Read the JSON file and verify anonymization
@@ -1440,9 +1437,8 @@ class TestDicomFileManager:
 
         result_path = manager_with_data.save_anonymized_dicom_header(
             current_record,
-            headers_directory,
-            True,
-            output_filename
+            output_filename,
+            headers_directory
         )
 
         # Read the JSON file and verify anonymization
@@ -1456,43 +1452,51 @@ class TestDicomFileManager:
 
         result = manager_with_data.save_anonymized_dicom_header(
             current_record,
-            None,
-            True,
-            "test.dcm"
+            "test.dcm",
+            None
         )
 
         assert result is None
 
-    def test_save_anonymized_dicom_header_preserves_directory_structure(self, manager_with_data, temp_dir):
+    def test_save_anonymized_dicom_header_raises_error_when_no_filename(self, manager_with_data, temp_dir):
+        headers_directory = os.path.join(temp_dir, "headers")
+        current_record = manager_with_data.dicom_df.iloc[0]
+
+        with pytest.raises(ValueError, match="Output filename is required"):
+            manager_with_data.save_anonymized_dicom_header(
+                current_record,
+                "",
+                headers_directory
+            )
+
+        with pytest.raises(ValueError, match="Output filename is required"):
+            manager_with_data.save_anonymized_dicom_header(
+                current_record,
+                "",
+                headers_directory
+            )
+
+    def test_save_anonymized_dicom_header_raises_error_when_no_record(self, manager_with_data, temp_dir):
+        headers_directory = os.path.join(temp_dir, "headers")
+        current_record = None
+
+        with pytest.raises(ValueError, match="Current DICOM record is required"):
+            manager_with_data.save_anonymized_dicom_header(
+                current_record,
+                "test.dcm",
+                headers_directory
+            )
+
+    def test_save_anonymized_dicom_header_flatten_directory_structure(self, manager_with_data, temp_dir):
         headers_directory = os.path.join(temp_dir, "headers")
 
         # Create a record with nested relative path
         current_record = manager_with_data.dicom_df.iloc[0].copy()
-        current_record.RelativePath = "patient/study/series/test.dcm"
 
         result_path = manager_with_data.save_anonymized_dicom_header(
             current_record,
-            headers_directory,
-            True,
-            "test.dcm"
-        )
-
-        expected_path = os.path.join(headers_directory, "patient", "study", "series", "test_DICOMHeader.json")
-        assert result_path == expected_path
-        assert os.path.exists(result_path)
-
-    def test_save_anonymized_dicom_header_flattens_directory_structure(self, manager_with_data, temp_dir):
-        headers_directory = os.path.join(temp_dir, "headers")
-
-        # Create a record with nested relative path
-        current_record = manager_with_data.dicom_df.iloc[0].copy()
-        current_record.RelativePath = "patient/study/series/test.dcm"
-
-        result_path = manager_with_data.save_anonymized_dicom_header(
-            current_record,
-            headers_directory,
-            False,
-            "test.dcm"
+            "test.dcm",
+            headers_directory
         )
 
         expected_path = os.path.join(headers_directory, "test_DICOMHeader.json")
