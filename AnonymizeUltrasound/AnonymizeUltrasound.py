@@ -141,6 +141,8 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self._parameterNode = None
         self._parameterNodeGuiTag = None
         self.compositingModeExit = None
+        # If True, the user is processing DICOM files. If False, the user is not processing DICOM files.
+        self.processing_mode = False
 
         # --- Keyboard shortcuts ---
         # M: toggle Define Mask, N: next scan, Space: toggle auto overlay, E: export scan, A: export and load next scan
@@ -229,7 +231,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         else:
             self.ui.preserveDirectoryStructureCheckBox.checked = False
         self.ui.preserveDirectoryStructureCheckBox.connect('toggled(bool)',
-                                                          lambda newValue: self.onSettingChanged(self.PRESERVE_DIRECTORY_STRUCTURE_SETTING, str(newValue)))
+                                                          lambda newValue: self.on_critical_setting_changed(self.PRESERVE_DIRECTORY_STRUCTURE_SETTING, str(newValue)))
 
         enableMaskCache = settings.value(self.ENABLE_MASK_CACHE_SETTING)
         if enableMaskCache and enableMaskCache.lower() == "true":
@@ -408,6 +410,90 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         self.ui.labelsScrollAreaWidgetContents.layout().addStretch(1)
 
+    def confirm_setting_change(self, message: str = "Are you sure you want to change this setting?") -> bool:
+        """
+        Show a confirmation dialog for setting changes.
+        Returns True if user confirms, False if they cancel.
+        """
+        alert = qt.QMessageBox()
+        alert.setIcon(qt.QMessageBox.Warning)
+        alert.setWindowTitle("Confirm Setting Change")
+        alert.setText(message)
+        alert.setStandardButtons(qt.QMessageBox.Yes | qt.QMessageBox.No)
+        alert.setDefaultButton(qt.QMessageBox.No)
+
+        result = alert.exec_()
+        return result == qt.QMessageBox.Yes
+
+    def format_setting_name(self, setting_name: str) -> str:
+        """
+        Convert a setting name to a human-readable format.
+        Example: "AnonymizeUltrasound/preserveDirectoryStructure" -> "Preserve Directory Structure"
+        """
+        # Extract the part after the last '/'
+        if '/' in setting_name:
+            name_part = setting_name.split('/')[-1]
+        else:
+            name_part = setting_name
+
+        # Convert camelCase to Title Case with spaces
+        import re
+        spaced = re.sub(r'(?<!^)(?=[A-Z])', ' ', name_part)
+        return spaced.title()
+
+    def revert_setting(self, settingName: str, previousValue: str) -> None:
+        """
+        Revert a UI setting to its previous value when user cancels a change.
+        """
+        if settingName == self.PRESERVE_DIRECTORY_STRUCTURE_SETTING:
+            try:
+                # Temporarily disconnect to prevent recursion
+                self.ui.preserveDirectoryStructureCheckBox.disconnect('toggled(bool)')
+                # Convert string back to boolean for checkbox
+                should_be_checked = previousValue and previousValue.lower() == "true"
+                self.ui.preserveDirectoryStructureCheckBox.checked = should_be_checked
+            finally:
+                # Reconnect the signal after setting the value
+                self.ui.preserveDirectoryStructureCheckBox.connect('toggled(bool)', lambda newValue: self.on_critical_setting_changed(self.PRESERVE_DIRECTORY_STRUCTURE_SETTING, str(newValue)))
+        else:
+            logging.error(f"Reverting UI setting for {settingName} not implemented")
+
+    def on_critical_setting_changed(self, settingName: str, newValue: str) -> None:
+        """
+        Handle changes to critical settings that may require user confirmation.
+
+        Args:
+            settingName (str): The full setting key/name identifier (e.g.,
+                            "AnonymizeUltrasound/preserveDirectoryStructure")
+            newValue (str): The new value for the setting as a string representation.
+                        For boolean settings, this will be "True" or "False"
+
+        Returns:
+            None
+
+        Raises:
+            ValueError: If the setting name is not supported for critical setting changes
+
+        Behavior:
+            1. Retrieves the current/previous value from persistent settings
+            2. Checks if the application is in processing mode for the specific setting
+            3. If in processing mode and changing a critical setting:
+                - Shows a confirmation dialog explaining potential consequences
+                - If user cancels: reverts the UI to the previous state without persisting
+                - If user confirms: proceeds with the change
+            4. For unsupported settings, raises a ValueError
+        """
+        settings = slicer.app.settings()
+        previousValue = settings.value(settingName)
+
+        if self.processing_mode and settingName == self.PRESERVE_DIRECTORY_STRUCTURE_SETTING:
+            message = f"Changing the '{self.format_setting_name(self.PRESERVE_DIRECTORY_STRUCTURE_SETTING)}'setting while processing DICOM files may result in duplicated files in the output directory. If you want to change the setting, reload the DICOM folder."
+            if not self.confirm_setting_change(message):
+                self.revert_setting(settingName, previousValue)
+                return
+        else:
+            raise ValueError(f"Reverting UI setting for {settingName} not implemented")
+
     def onSettingChanged(self, settingName: str, newValue: str) -> None:
         """
         Update setting value and GUI based on user selection.
@@ -415,10 +501,13 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         @param newValue: new value, if "" then setting is removed
         """
         settings = slicer.app.settings()
+
+        # If the setting is not set, remove it from the settings
         if newValue and newValue != "":
             settings.setValue(settingName, newValue)
         else:
             settings.remove(settingName)
+
         if settingName == self.THREE_POINT_FAN_SETTING and self._parameterNode:
             # clear any existing points and reset overlay
             markupsNode = self._parameterNode.maskMarkups
@@ -455,10 +544,9 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             self.ui.labelsCollapsibleButton.enabled = False
             self.ui.statusLabel.text = "Select input folder and press Read DICOM folder button to load DICOM files"
 
-
-
     def onImportDicomButton(self) -> None:
         logging.info("Import DICOM button clicked")
+        self.set_processing_mode(True)
 
         # Check input and output folders
 
@@ -506,9 +594,8 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             statusText += " dicom files found in input folder."
 
         if self.ui.continueProgressCheckBox.checked:
-            preserve_directory_structure = self.ui.preserveDirectoryStructureCheckBox.checked
             # Find the number of files already processed in the output directory
-            numDone = self.logic.dicom_file_manager.update_progress_from_output(outputDirectory, preserve_directory_structure)
+            numDone = self.logic.dicom_file_manager.update_progress_from_output(outputDirectory, self.ui.preserveDirectoryStructureCheckBox.checked)
             if numDone is None:
                 statusText += '\nAll files have been processed. Cannot load more files from input folder.'
             elif numDone < 1:
@@ -516,6 +603,9 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             else:
                 statusText += '\n' + str(numDone) + ' files already processed in output folder. Continue at next.'
         self.ui.statusLabel.text = statusText
+
+    def set_processing_mode(self, mode: bool):
+        self.processing_mode = mode
 
     def onNextButton(self) -> None:
         logging.info("Next button clicked")
@@ -830,9 +920,9 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
 
         # Export the scan
         dicomFilePath, jsonFilePath, dicomHeaderFilePath = self.logic.exportDicom(
-            outputDirectory=outputDirectory,
-            outputFilename=filename,
-            headersDirectory=headersDirectory,
+            output_directory=outputDirectory,
+            output_filename=filename,
+            headers_directory=headersDirectory,
             labels = annotationLabels,
             new_patient_name = new_patient_name,
             new_patient_id = new_patient_id,
@@ -1071,6 +1161,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             logging.info(f"Next DICOM dataframe index: {self.dicom_file_manager.next_dicom_index}")
         else:
             self.dicom_file_manager.next_dicom_index = None
+            self.widget.set_processing_mode(False)
             slicer.util.mainWindow().statusBar().showMessage("No more DICOM files to process", 3000)
 
         return self.dicom_file_manager.next_dicom_index
@@ -1764,9 +1855,9 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         return imageArray
 
     def exportDicom(self,
-                    outputDirectory,
-                    outputFilename = None,
-                    headersDirectory = None,
+                    output_directory,
+                    output_filename = None,
+                    headers_directory = None,
                     labels = None,
                     new_patient_name = "",
                     new_patient_id = "",
@@ -1806,48 +1897,47 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         if SOPInstanceUID is None:
             SOPInstanceUID = "None"
 
-        sequenceInfo = {
+        sequence_info = {
             'SOPInstanceUID': SOPInstanceUID,
             'GrayscaleConversion': False
         }
 
         # Create output directory if it doesn't exist
-        if not os.path.exists(outputDirectory):
-            os.makedirs(outputDirectory)
+        if not os.path.exists(output_directory):
+            os.makedirs(output_directory)
 
         # Save DICOM image file
-        if outputFilename is None:
-            outputFilename, _, _ = self.dicom_file_manager.generate_filename_from_dicom_dataset(current_dicom_record.DICOMDataset)
+        if output_filename is None:
+            output_filename, _, _ = self.dicom_file_manager.generate_filename_from_dicom_dataset(current_dicom_record.DICOMDataset)
 
-        if outputFilename is None or outputFilename == "":
+        if output_filename is None or output_filename == "":
             return None, None, None
 
         # Generate complete output path with directory structure consideration
-        dicomFilePath = self.dicom_file_manager.generate_output_filepath(
-            outputDirectory, current_dicom_record.RelativePath, preserve_directory_structure)
+        dicom_file_path = self.dicom_file_manager.generate_output_filepath(
+            output_directory, current_dicom_record.RelativePath, preserve_directory_structure)
 
-        self.saveDicomFile(dicomFilePath, new_patient_name, new_patient_id)
+        self.saveDicomFile(dicom_file_path, new_patient_name, new_patient_id)
 
         # Save original DICOM header to a json file. This may not be completely anonymized.
-        dicomHeaderFilePath = self.dicom_file_manager.save_anonymized_dicom_header(
-            current_dicom_record, headersDirectory, preserve_directory_structure, outputFilename)
+        dicom_header_file_path = self.dicom_file_manager.save_anonymized_dicom_header(current_dicom_record, output_filename, headers_directory)
 
         # Add mask parameters to sequenceInfo
         for key, value in self.maskParameters.items():
-            sequenceInfo[key] = value
+            sequence_info[key] = value
 
         # Add annotation labels to sequenceInfo
         if labels is not None:
-            sequenceInfo["AnnotationLabels"] = labels
+            sequence_info["AnnotationLabels"] = labels
 
         # Save sequenceInfo to a file
-        sequenceInfoFilename = dicomFilePath.replace(".dcm", ".json")
-        sequenceInfoFilePath = os.path.join(outputDirectory, sequenceInfoFilename)
+        sequence_info_filename = dicom_file_path.replace(".dcm", ".json")
+        sequence_info_file_path = os.path.join(output_directory, sequence_info_filename)
 
-        with open(sequenceInfoFilePath, 'w') as outfile:
-            json.dump(sequenceInfo, outfile)
+        with open(sequence_info_file_path, 'w') as outfile:
+            json.dump(sequence_info, outfile)
 
-        return dicomFilePath, sequenceInfoFilePath, dicomHeaderFilePath
+        return dicom_file_path, sequence_info_file_path, dicom_header_file_path
 
     def _composeAndPushOverlay(self):
         """Merge masks according to parameter-node switches and

@@ -880,8 +880,7 @@ class DicomFileManager:
 
         return f"{patient_id}_{instance_id}.dcm", patient_id, instance_id
 
-    def save_anonymized_dicom_header(self, current_dicom_record, headers_directory: Optional[str],
-                                    preserve_directory_structure: bool, output_filename: str) -> Optional[str]:
+    def save_anonymized_dicom_header(self, current_dicom_record, output_filename: str, headers_directory: Optional[str] = None) -> Optional[str]:
         """
         Save anonymized DICOM header information as a JSON file.
 
@@ -894,8 +893,6 @@ class DicomFileManager:
                                 the DICOM dataset and metadata
             headers_directory: Directory path where header JSON files will be saved.
                             If None, no header file is created
-            preserve_directory_structure: If True, maintains the original directory
-                                        structure in the output path
             output_filename: Base filename for the output (used for patient name anonymization)
 
         Returns:
@@ -915,13 +912,9 @@ class DicomFileManager:
         if not os.path.exists(headers_directory):
             os.makedirs(headers_directory)
 
-
-        dicom_header_filepath = self.generate_output_filepath(
-            headers_directory, current_dicom_record.RelativePath, preserve_directory_structure)
-        dicom_header_filepath = dicom_header_filepath.replace(".dcm", "_DICOMHeader.json")
-
-        directory = os.path.dirname(dicom_header_filepath)
-        os.makedirs(directory, exist_ok=True)
+        dicom_header_filename = output_filename.replace(".dcm", "_DICOMHeader.json")
+        dicom_header_filepath = os.path.join(headers_directory, dicom_header_filename)
+        os.makedirs(os.path.dirname(dicom_header_filepath), exist_ok=True)
 
         with open(dicom_header_filepath, 'w') as outfile:
             if self.dicom_df is not None:
@@ -931,7 +924,7 @@ class DicomFileManager:
                 if "Patient's Name" in anonymized_header:
                     anonymized_header["Patient's Name"] = output_filename.split(".")[0]
 
-                # Anonymize birth date
+                # Partially anonymize birth date
                 if "Patient's Birth Date" in anonymized_header:
                     anonymized_header["Patient's Birth Date"] = anonymized_header["Patient's Birth Date"][:4] + "0101"
 
