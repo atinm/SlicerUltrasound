@@ -214,15 +214,19 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.shortcutL.setKey(qt.QKeySequence('L'))
         self.shortcutL.setContext(qt.Qt.ApplicationShortcut)
 
-    def connectKeyboardShortcuts(self):
-        # Connect shortcuts to respective actions
+    def connectDrawingShortcuts(self):
         self.shortcutW.connect('activated()', lambda: self.onAddLine("Pleura", not self.ui.addPleuraButton.isChecked()))
         self.shortcutS.connect('activated()', lambda: self.onAddLine("Bline", not self.ui.addBlineButton.isChecked()))
-        self.shortcutSpace.connect('activated()', lambda: self.ui.overlayVisibilityButton.toggle())
-
-        # New shortcuts for removing lines
         self.shortcutE.connect('activated()', lambda: self.onRemoveLine("Pleura", not self.ui.removePleuraButton.isChecked()))  # "E" removes the last pleura line
         self.shortcutD.connect('activated()', lambda: self.onRemoveLine("Bline", not self.ui.removeBlineButton.isChecked()))   # "D" removes the last B-line
+
+    def connectKeyboardShortcuts(self):
+        # Disconnect any existing connections first to avoid duplicates
+        self.disconnectKeyboardShortcuts()
+
+        # Connect shortcuts to respective actions
+        self.connectDrawingShortcuts()
+        self.shortcutSpace.connect('activated()', lambda: self.ui.overlayVisibilityButton.toggle())
 
         self.shortcutA.connect('activated()', self.onSaveAndLoadNextButton)  # "A" to save and load next scan
 
@@ -244,24 +248,75 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
 
         self.shortcutL.connect('activated()', lambda: self.onShowHideLines(None))  # "L" to show/hide lines
 
+    def disconnectDrawingShortcuts(self):
+        try:
+            self.shortcutW.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutS.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutE.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutD.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+
     def disconnectKeyboardShortcuts(self):
         # Disconnect shortcuts to avoid issues when the user leaves the module
-        self.shortcutW.activated.disconnect()
-        self.shortcutS.activated.disconnect()
-        self.shortcutSpace.activated.disconnect()
-        self.shortcutE.activated.disconnect()
-        self.shortcutD.activated.disconnect()
-        self.shortcutA.activated.disconnect()
-        self.shortcutRightArrow.activated.disconnect()
-        self.shortcutLeftArrow.activated.disconnect()
-        self.shortcutHome.activated.disconnect()
-        self.shortcutEnd.activated.disconnect()
-        self.shortcutC.activated.disconnect()
-        self.shortcutPageUp.activated.disconnect()
-        self.shortcutPageDown.activated.disconnect()
-        self.shortcutShiftUp.activated.disconnect()
-        self.shortcutShiftDown.activated.disconnect()
-        self.shortcutL.activated.disconnect()
+        self.disconnectDrawingShortcuts()
+        try:
+            self.shortcutSpace.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutA.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutRightArrow.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutLeftArrow.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutHome.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutEnd.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutC.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutPageUp.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutPageDown.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutShiftUp.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutShiftDown.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
+        try:
+            self.shortcutL.activated.disconnect()
+        except RuntimeError:
+            pass  # Already disconnected
 
     def setup(self) -> None:
         """
@@ -342,6 +397,9 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
         self.ui.addBlineButton.toggled.connect(lambda checked: self.onAddLine("Bline", checked))
         self.ui.removeBlineButton.clicked.connect(lambda checked:  self.onRemoveLine("Bline", checked))
         self.ui.overlayVisibilityButton.toggled.connect(self.overlayVisibilityToggled)
+
+        # Set up dynamic layout adjustment for overlay button
+        self._setupOverlayButtonLayout()
         self.ui.clearAllLinesButton.clicked.connect(self.onClearAllLines)
         self.ui.addCurrentFrameButton.clicked.connect(self.onAddCurrentFrame)
         self.ui.removeCurrentFrameButton.clicked.connect(self.onRemoveCurrentFrame)
@@ -1272,6 +1330,48 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixin
                 return idx
 
         return None
+
+    def _setupOverlayButtonLayout(self):
+        """Set up dynamic layout adjustment for the overlay button based on clearAllLinesButton visibility"""
+        # Initial adjustment
+        self._adjustOverlayButtonLayout()
+
+        # Connect to the sector annotations collapsible button state changes
+        self.ui.sectorAnnotationsCollapsibleButton.toggled.connect(self._adjustOverlayButtonLayout)
+
+    def _adjustOverlayButtonLayout(self):
+        """Adjust the overlay button layout based on visibility of clearAllLinesButton"""
+        # Check if clearAllLinesButton is visible
+        clearButtonVisible = self.ui.clearAllLinesButton.isVisible()
+
+        # Get the grid layout
+        gridLayout = self.ui.overlayVisibilityButton.parent().layout()
+
+        if not isinstance(gridLayout, qt.QGridLayout):
+            return  # Not a grid layout, can't adjust
+
+        # Find and remove the overlay button item from the layout
+        overlayItem = None
+        for i in range(gridLayout.count()):
+            item = gridLayout.itemAt(i)
+            if item.widget() == self.ui.overlayVisibilityButton:
+                overlayItem = item
+                break
+
+        if overlayItem is None:
+            return  # Overlay button not found in layout
+
+        # Remove the item from the layout
+        gridLayout.removeItem(overlayItem)
+
+        # Add it back with the appropriate column span
+        # We know the overlay button is in row 3, column 0 based on the UI file
+        if not clearButtonVisible:
+            # Clear button not visible, make overlay button span full width (colspan=2)
+            gridLayout.addWidget(self.ui.overlayVisibilityButton, 3, 0, 1, 2)
+        else:
+            # Clear button visible, keep overlay button in normal position (colspan=1)
+            gridLayout.addWidget(self.ui.overlayVisibilityButton, 3, 0, 1, 1)
 
     def overlayVisibilityToggled(self, checked):
         logging.debug(f"overlayVisibilityToggled -- checked: {checked}")
