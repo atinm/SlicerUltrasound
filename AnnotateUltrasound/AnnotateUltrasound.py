@@ -2387,11 +2387,9 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
 
         self.annotations = merged_data
 
-        # Clean up duplicates from the loaded annotation data
-        self.cleanupAnnotationDuplicates()
-
         # Initialize markup nodes based on loaded annotations
-        self.initializeMarkupNodesFromAnnotations()
+        if self.useFreeList:
+            self.initializeMarkupNodesFromAnnotations()
 
         if current_rater in self.seenRaters:
             self.seenRaters.remove(current_rater)
@@ -3518,72 +3516,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
         self.realRaters = [r for r in self.seenRaters if r != "__selected_node__" and r != "__adjudicated_node__"]
         self.setSelectedRaters(set(self.realRaters))
 
-    def cleanupAnnotationDuplicates(self):
-        """
-        Remove duplicate lines from the annotation data in memory.
-        Lines are only considered duplicates if they have identical points AND the same rater.
-        This prevents duplicates from being displayed. We shouldn't need this anymore but it's here just in case
-        there are files that have duplicates that got saved from previous versions of the module.
-        """
-        if not self.annotations or 'frame_annotations' not in self.annotations:
-            return
-
-        total_removed = 0
-        has_duplicates = False
-
-        for frame in self.annotations['frame_annotations']:
-            frame_num = frame.get('frame_number', 'unknown')
-
-            # Check pleura lines for duplicates
-            if 'pleura_lines' in frame:
-                original_count = len(frame['pleura_lines'])
-                seen_pleura = set()
-                unique_pleura = []
-
-                for i, entry in enumerate(frame['pleura_lines']):
-                    points = entry.get('line', {}).get('points', [])
-                    rater = entry.get('rater', '')
-                    # Create a hash of points and rater
-                    points_hash = hash(tuple(tuple(pt) for pt in points) + (rater,))
-
-                    if points_hash not in seen_pleura:
-                        seen_pleura.add(points_hash)
-                        unique_pleura.append(entry)
-                    else:
-                        has_duplicates = True
-
-                if has_duplicates:
-                    frame['pleura_lines'] = unique_pleura
-                    removed = original_count - len(unique_pleura)
-                    total_removed += removed
-
-            # Check b-lines for duplicates
-            if 'b_lines' in frame:
-                original_count = len(frame['b_lines'])
-                seen_blines = set()
-                unique_blines = []
-
-                for i, entry in enumerate(frame['b_lines']):
-                    points = entry.get('line', {}).get('points', [])
-                    rater = entry.get('rater', '')
-                    # Create a hash of points and rater
-                    points_hash = hash(tuple(tuple(pt) for pt in points) + (rater,))
-
-                    if points_hash not in seen_blines:
-                        seen_blines.add(points_hash)
-                        unique_blines.append(entry)
-                    else:
-                        has_duplicates = True
-
-                if has_duplicates:
-                    frame['b_lines'] = unique_blines
-                    removed = original_count - len(unique_blines)
-                    total_removed += removed
-
-        if has_duplicates:
-            # Reinitialize markup nodes if needed after cleanup
-            self.reinitializeMarkupNodesIfNeeded()
-
     def initializeMarkupNodesFromAnnotations(self):
         """
         Initialize markup nodes based on the maximum number needed across all frames.
@@ -3621,41 +3553,6 @@ class AnnotateUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin):
             for i in range(len(self.freeMarkupNodes), max_blines):
                 node = self._allocateNewMarkupNode()
                 self.freeMarkupNodes.append(node)
-
-    def reinitializeMarkupNodesIfNeeded(self):
-        """
-        Reinitialize markup nodes if the current number doesn't match what's needed.
-        This is useful after cleaning up duplicates or when the annotation data changes significantly.
-        """
-        if not self.annotations or 'frame_annotations' not in self.annotations:
-            return
-
-        # Calculate what we actually need now
-        max_pleura_lines = 0
-        max_blines = 0
-
-        for frame in self.annotations['frame_annotations']:
-            pleura_count = len(frame.get('pleura_lines', []))
-            bline_count = len(frame.get('b_lines', []))
-            max_pleura_lines = max(max_pleura_lines, pleura_count)
-            max_blines = max(max_blines, bline_count)
-
-        # Add buffer
-        max_pleura_lines = max(max_pleura_lines, 2)
-        max_blines = max(max_blines, 2)
-
-        # Cap the maximum
-        max_pleura_lines = min(max_pleura_lines, 10)
-        max_blines = min(max_blines, 10)
-
-        current_pleura = len(self.pleuraLines)
-        current_blines = len(self.bLines)
-        current_free = len(self.freeMarkupNodes)
-
-        # Only reinitialize if there's a significant difference
-        if (abs(current_pleura - max_pleura_lines - current_free) > 2 or
-            abs(current_blines - max_blines - current_free) > 2):
-            self.initializeMarkupNodesFromAnnotations()
 
     def syncMarkupsToAnnotations(self):
         """

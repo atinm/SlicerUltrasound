@@ -1060,6 +1060,7 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
         self.depthGuideMode = 1
         self.seen_basenames = set()
         self.dcm_by_base = {}  # base_name → dcm filepath
+        self.useFreeList = False
 
         # Flag to track when we're doing programmatic updates (to avoid setting unsavedChanges)
         self._isProgrammaticUpdate = False
@@ -1310,11 +1311,11 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
 
         # Extract and set up raters using the centralized method
         self.extractAndSetupRaters()
-        # Clean up duplicates from the loaded annotation data
-        self.cleanupAnnotationDuplicates()
 
         # Initialize markup nodes based on loaded annotations
-        self.initializeMarkupNodesFromAnnotations()
+        if self.useFreeList:
+            self.initializeMarkupNodesFromAnnotations()
+
         current_rater = self.getParameterNode().rater.strip().lower()
         if current_rater in self.seenRaters:
             self.seenRaters.remove(current_rater)
