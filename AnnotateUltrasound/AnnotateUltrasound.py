@@ -114,7 +114,7 @@ class AnnotateUltrasoundParameterNode:
     depthGuideVisible: bool = True
     rater = ''
 
-class SliceViewClickFilter(qt.QObject):
+class SliceViewEventFilter(qt.QObject):
     def __init__(self, parentWidget, sliceView):
         super().__init__()
         self.parentWidget = parentWidget
@@ -134,6 +134,13 @@ class SliceViewClickFilter(qt.QObject):
                     return True
                 else:
                     return False
+        return False
+
+    def _isChildOf(self, child, parent):
+        while child:
+            if child is parent:
+                return True
+            child = child.parent()
         return False
 
 class CustomObserverMixin:
@@ -234,7 +241,6 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, CustomObserverMixin
         # Now set focus
         redView.setFocus()
         redView.activateWindow()
-        # print(f"[DEBUG] Red view has focus? {redView.hasFocus()}")
 
     def initializeShortcuts(self):
         self.shortcutW = qt.QShortcut(slicer.util.mainWindow())
@@ -285,30 +291,60 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, CustomObserverMixin
         self.shortcutL = qt.QShortcut(slicer.util.mainWindow())
         self.shortcutL.setKey(qt.QKeySequence('L'))
         self.shortcutL.setContext(qt.Qt.ApplicationShortcut)
-        # Add SelectAll/Copy/Paste shortcuts
-        redView = slicer.app.layoutManager().sliceWidget("Red").sliceView()
-        self.shortcutSelectAll = qt.QShortcut(qt.QKeySequence(qt.QKeySequence.SelectAll), redView)
-        self.shortcutSelectAll.setContext(qt.Qt.WidgetShortcut)
-        self.shortcutEscape = qt.QShortcut(qt.QKeySequence(qt.Qt.Key_Escape), redView)
-        self.shortcutEscape.setContext(qt.Qt.WidgetShortcut)
-        self.shortcutDelete = qt.QShortcut(qt.QKeySequence(qt.Qt.Key_Delete), redView)
-        self.shortcutDelete.setContext(qt.Qt.WidgetShortcut)
-        self.shortcutCopy = qt.QShortcut(qt.QKeySequence(qt.QKeySequence.Copy), redView)
-        self.shortcutCopy.setContext(qt.Qt.WidgetShortcut)
-        self.shortcutPaste = qt.QShortcut(qt.QKeySequence(qt.QKeySequence.Paste), redView)
-        self.shortcutPaste.setContext(qt.Qt.WidgetShortcut)
+        # Add SelectAll/Copy/Paste shortcuts to mainWindow with ApplicationShortcut context
+        mainWindow = slicer.util.mainWindow()
+        self.shortcutSelectAll = qt.QShortcut(qt.QKeySequence(qt.QKeySequence.SelectAll), mainWindow)
+        self.shortcutSelectAll.setContext(qt.Qt.ApplicationShortcut)
+        self.shortcutEscape = qt.QShortcut(qt.QKeySequence(qt.Qt.Key_Escape), mainWindow)
+        self.shortcutEscape.setContext(qt.Qt.ApplicationShortcut)
+        self.shortcutCopy = qt.QShortcut(qt.QKeySequence(qt.QKeySequence.Copy), mainWindow)
+        self.shortcutCopy.setContext(qt.Qt.ApplicationShortcut)
+        self.shortcutPaste = qt.QShortcut(qt.QKeySequence(qt.QKeySequence.Paste), mainWindow)
+        self.shortcutPaste.setContext(qt.Qt.ApplicationShortcut)
+        self.shortcutDelete = qt.QShortcut(qt.QKeySequence(qt.Qt.Key_Delete), mainWindow)
+        self.shortcutDelete.setContext(qt.Qt.ApplicationShortcut)
+        self.shortcutBackspace = qt.QShortcut(qt.QKeySequence(qt.Qt.Key_Backspace), mainWindow)
+        self.shortcutBackspace.setContext(qt.Qt.ApplicationShortcut)
 
     def connectDrawingShortcuts(self):
         self.shortcutW.connect('activated()', lambda: self.onAddLine("Pleura", not self.ui.addPleuraButton.isChecked()))
         self.shortcutS.connect('activated()', lambda: self.onAddLine("B-line", not self.ui.addBlineButton.isChecked()))
         self.shortcutE.connect('activated()', lambda: self.onRemoveLine("Pleura", not self.ui.removePleuraButton.isChecked()))  # "E" removes the last pleura line
         self.shortcutD.connect('activated()', lambda: self.onRemoveLine("B-line", not self.ui.removeBlineButton.isChecked()))   # "D" removes the last B-line
-        # Add SelectAll/Copy/Paste shortcut connections
-        self.shortcutSelectAll.activated.connect(self.onSelectAllLines)
+        # Add SelectAll/Copy/Paste shortcut connections using helpers that check for Red view focus
+        self.shortcutSelectAll.activated.connect(self._selectAllIfRedViewFocused)
         self.shortcutEscape.activated.connect(self.onDeselectAllLines)
-        self.shortcutDelete.activated.connect(self.onDeleteSelectedLines)
-        self.shortcutCopy.activated.connect(self.onCopyLines)
-        self.shortcutPaste.activated.connect(self.onPasteLines)
+        self.shortcutCopy.activated.connect(self._copyIfRedViewFocused)
+        self.shortcutPaste.activated.connect(self._pasteIfRedViewFocused)
+        self.shortcutDelete.activated.connect(self._deleteIfRedViewFocused)
+        self.shortcutBackspace.activated.connect(self._deleteIfRedViewFocused)
+
+    def _redViewHasFocus(self):
+        focused = qt.QApplication.focusWidget()
+        return self._isChildOf(focused, self.sliceView)
+
+    def _isChildOf(self, child, parent):
+        while child:
+            if child is parent:
+                return True
+            child = child.parent()
+        return False
+
+    def _pasteIfRedViewFocused(self):
+        if self._redViewHasFocus():
+            self.onPasteLines()
+
+    def _copyIfRedViewFocused(self):
+        if self._redViewHasFocus():
+            self.onCopyLines()
+
+    def _selectAllIfRedViewFocused(self):
+        if self._redViewHasFocus():
+            self.onSelectAllLines()
+
+    def _deleteIfRedViewFocused(self):
+        if self._redViewHasFocus():
+            self.onDeleteSelectedLines()
 
     def connectKeyboardShortcuts(self):
         # Disconnect any existing connections first to avoid duplicates
@@ -366,15 +402,19 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, CustomObserverMixin
         except RuntimeError:
             pass  # Already disconnected
         try:
-            self.shortcutDelete.activated.disconnect()
-        except RuntimeError:
-            pass  # Already disconnected
-        try:
             self.shortcutCopy.activated.disconnect()
         except RuntimeError:
             pass
         try:
             self.shortcutPaste.activated.disconnect()
+        except RuntimeError:
+            pass
+        try:
+            self.shortcutDelete.activated.disconnect()
+        except RuntimeError:
+            pass
+        try:
+            self.shortcutBackspace.activated.disconnect()
         except RuntimeError:
             pass
 
@@ -590,8 +630,8 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, CustomObserverMixin
         # Guard flag for programmatic collapse/expand of raterColorsCollapsibleButton
         self._ignoreCollapsedChangedSignal = False
         sliceView = slicer.app.layoutManager().sliceWidget("Red").sliceView()
-        self.sliceViewClickFilter = SliceViewClickFilter(self, sliceView)
-        sliceView.installEventFilter(self.sliceViewClickFilter)
+        self.sliceViewEventFilter = SliceViewEventFilter(self, sliceView)
+        sliceView.installEventFilter(self.sliceViewEventFilter)
         self.sliceView = sliceView  # Save reference so it's not GC'ed
 
     def distanceToLineSegment2D(self, p, a, b):
@@ -1394,6 +1434,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, CustomObserverMixin
                 self.logic.updateMarkupNodeAppearance(node)
 
         slicer.util.mainWindow().statusBar().showMessage(f"Selected {len(self.logic.selectedLineIDs)} lines", 2000)
+        self._setRedViewFocus()
 
     def onDeselectAllLines(self):
         logging.debug("onDeselectAllLines")
@@ -1405,6 +1446,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, CustomObserverMixin
         for node in self.logic.pleuraLines + self.logic.bLines:
             if slicer.mrmlScene.IsNodePresent(node):
                 self.logic.updateMarkupNodeAppearance(node)
+        self._setRedViewFocus()
 
     def toggleLineSelection(self, lineNode):
         if not lineNode or not slicer.mrmlScene.IsNodePresent(lineNode):
@@ -1420,6 +1462,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, CustomObserverMixin
 
         self.logic.updateMarkupNodeAppearance(lineNode)
         slicer.util.mainWindow().statusBar().showMessage(f"Selected lines changed from {selected_lines_before} to {selected_lines_after}", 2000)
+        self._setRedViewFocus()
 
     def onCopyLines(self):
         logging.debug('onCopyLines')
@@ -1470,9 +1513,10 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, CustomObserverMixin
 
         self.logic.selectedLineIDs = []  # clear after copying
         slicer.util.mainWindow().statusBar().showMessage(f"Copied {len(self.logic.clipboardLines)} lines", 2000)
+        self._setRedViewFocus()
 
     def onPasteLines(self, force=False):
-        logging.debug('onPasteLines')
+        logging.debug(f'onPasteLines -- force: {force}')
 
         if not hasattr(self.logic, "clipboardLines") or not self.logic.clipboardLines:
             logging.info("Clipboard is empty")
@@ -1544,8 +1588,11 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, CustomObserverMixin
             slicer.util.mainWindow().statusBar().showMessage(f"Pasted {len(pastedLines)} unique lines, and skipped {len(self.logic.clipboardLines) - len(pastedLines)} duplicate lines", 2000)
         else:
             slicer.util.mainWindow().statusBar().showMessage(f"Skipped {len(self.logic.clipboardLines)} duplicate lines", 2000)
+        self._setRedViewFocus()
 
     def onDeleteSelectedLines(self, force=False):
+        logging.debug(f"onDeleteSelectedLines -- force: {force}")
+
         selectedIDs = self.logic.selectedLineIDs
         if not selectedIDs:
             return
@@ -1587,6 +1634,7 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, CustomObserverMixin
             slicer.util.mainWindow().statusBar().showMessage(f"Deleted {deletedLines} line(s) you created", 2000)
         else:
             slicer.util.mainWindow().statusBar().showMessage("No lines belonging to you were deleted", 2000)
+        self._setRedViewFocus()
 
     def onLabelsFileSelected(self, labelsFilepath=None):
         # Use self.resourcePath to get the correct path to resources (consistent with other resource usage in this module)
@@ -2210,18 +2258,32 @@ class AnnotateUltrasoundWidget(ScriptedLoadableModuleWidget, CustomObserverMixin
         self._setRedViewFocus()
 
     def _setRedViewFocus(self):
-        """Force focus to the Red slice view after delay."""
+        """Force focus to the Red slice view's render widget after delay."""
         def forceFocus():
             mainWin = slicer.util.mainWindow()
             mainWin.raise_()
             mainWin.activateWindow()
 
             redSliceView = slicer.app.layoutManager().sliceWidget("Red").sliceView()
-            redSliceView.setFocus()
-            redSliceView.raise_()
-            redSliceView.activateWindow()
-            qt.QApplication.setActiveWindow(redSliceView)
-            # print(f"[DEBUG] Focus set to: {redSliceView}, hasFocus: {redSliceView.hasFocus()}")
+            renderWidget = None
+
+            for child in redSliceView.findChildren(qt.QWidget):
+                className = type(child).__name__
+                if "vtk" in className.lower() or "render" in className.lower():
+                    renderWidget = child
+                    break
+
+            if not renderWidget:
+                # Fallback: try by object name
+                renderWidget = redSliceView.findChild(qt.QWidget, "qt_viewport")
+
+            if renderWidget:
+                renderWidget.setFocus()
+                renderWidget.raise_()
+                renderWidget.activateWindow()
+                qt.QApplication.setActiveWindow(renderWidget)
+            else:
+                logging.warning("Could not find render widget in Red slice view")
 
         qt.QTimer.singleShot(100, forceFocus)
 
