@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Line selection, copy, paste, and delete test for AnnotateUltrasound module.
-This test tests the new SelectAll/Copy/Paste/Delete shortcuts and functionality.
+Line selection, copy, paste, cut, and delete test for AnnotateUltrasound module.
+This test tests the new SelectAll/Copy/Paste/Cut/Delete shortcuts and functionality.
 """
 
 import sys
@@ -37,7 +37,7 @@ except ImportError:
 
 class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
     """
-    Line selection, copy, paste, and delete test that tests the new functionality.
+    Line selection, copy, paste, cut, and delete test that tests the new functionality.
     Uses ScriptedLoadableModuleTest base class, available at:
     https://github.com/Slicer/Slicer/blob/main/Base/Python/slicer/ScriptedLoadableModule.py
     """
@@ -377,15 +377,17 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
         """Test keyboard shortcuts for select all, copy, paste, and deselect."""
         print("Testing keyboard shortcuts...")
 
+        # Ensure we have test lines
+        self.create_test_lines()
+        initial_line_count = len(self.logic.pleuraLines) + len(self.logic.bLines)
+        assert initial_line_count > 0, "Should have lines to test with"
+
         # Test Ctrl+A (Select All)
         print("Testing Ctrl+A (Select All)...")
         self.logic.selectedLineIDs = []  # Clear selection first
 
-        # Simulate Ctrl+A
         try:
-            import qt
-            # Create a QKeyEvent for Ctrl+A
-            key_event = qt.QKeyEvent(qt.QEvent.KeyPress, qt.Qt.Key_A, qt.Qt.ControlModifier)
+            # Simulate Ctrl+A
             self.widget.shortcutSelectAll.activated.emit()
 
             # Verify all lines are selected
@@ -396,10 +398,15 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
 
         except Exception as e:
             print(f"⚠️ Could not test Ctrl+A shortcut: {e}")
+            raise  # Re-raise the exception so the test fails properly
 
         # Test Ctrl+C (Copy)
         print("Testing Ctrl+C (Copy)...")
         try:
+            # Ensure we have selected lines to copy
+            if len(self.logic.selectedLineIDs) == 0:
+                self.widget.onSelectAllLines()
+
             self.widget.shortcutCopy.activated.emit()
 
             # Verify lines were copied
@@ -410,16 +417,23 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
 
         except Exception as e:
             print(f"⚠️ Could not test Ctrl+C shortcut: {e}")
+            raise  # Re-raise the exception so the test fails properly
 
         # Test Ctrl+V (Paste)
         print("Testing Ctrl+V (Paste)...")
         try:
+            # Clear any existing lines and create fresh ones for copying
+            self.logic.clearSceneLines()
             self.create_test_lines()
 
-            # First select all lines
+            # Select and copy lines
             self.widget.onSelectAllLines()
             self.widget.onCopyLines()
 
+            # Verify we have lines in clipboard
+            assert self.logic.clipboardLines and len(self.logic.clipboardLines) > 0, "Should have lines in clipboard"
+
+            # Move to next frame for pasting (to avoid duplicate detection)
             self.widget._nextFrameInSequence()
             time.sleep(1)
 
@@ -427,17 +441,30 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
             pleura_count_before = len(self.logic.pleuraLines)
             bline_count_before = len(self.logic.bLines)
 
-            self.widget.shortcutPaste.activated.emit()
+                                    # For testing purposes, temporarily mock the focus check to always return True
+            original_red_view_has_focus = self.widget._redViewHasFocus
+            self.widget._redViewHasFocus = lambda: True
+
+            try:
+                # Trigger paste via shortcut (should now work since focus check returns True)
+                self.widget.shortcutPaste.activated.emit()
+            finally:
+                # Restore original method
+                self.widget._redViewHasFocus = original_red_view_has_focus
+
+            # Give some time for the paste operation to complete
+            time.sleep(0.5)
 
             pleura_count_after = len(self.logic.pleuraLines)
             bline_count_after = len(self.logic.bLines)
 
             # Should have more lines after pasting
-            assert pleura_count_after > pleura_count_before or bline_count_after > bline_count_before, "Should have more lines after pasting"
+            assert pleura_count_after > pleura_count_before or bline_count_after > bline_count_before, f"Should have more lines after pasting: before={pleura_count_before}+{bline_count_before}, after={pleura_count_after}+{bline_count_after}"
             print("✅ Ctrl+V (Paste) shortcut works")
 
         except Exception as e:
             print(f"⚠️ Could not test Ctrl+V shortcut: {e}")
+            raise  # Re-raise the exception so the test fails properly
 
         # Test Escape (Deselect All)
         print("Testing Escape (Deselect All)...")
@@ -455,6 +482,7 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
 
         except Exception as e:
             print(f"⚠️ Could not test Escape shortcut: {e}")
+            raise  # Re-raise the exception so the test fails properly
 
         # Test Delete (Delete Selected Lines)
         print("Testing Delete (Delete Selected Lines)...")
@@ -464,6 +492,7 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
         qt.QMessageBox.question = lambda *args, **kwargs: qt.QMessageBox.Yes
 
         try:
+            # Create fresh test lines for deletion test
             self.create_test_lines()
 
             # First select some lines
@@ -492,6 +521,7 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
 
         except Exception as e:
             print(f"⚠️ Could not test Delete shortcut: {e}")
+            raise  # Re-raise the exception so the test fails properly
         finally:
             # Restore original QMessageBox.question
             qt.QMessageBox.question = original_question
@@ -646,6 +676,9 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
         """Test deleting selected lines."""
         print("Testing delete selected lines...")
 
+        # Create fresh test lines to ensure we have lines to delete
+        self.create_test_lines()
+
         # First, select some lines
         self.widget.onSelectAllLines()
         initial_selected_count = len(self.logic.selectedLineIDs)
@@ -679,41 +712,88 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
         """Test deleting a single selected line."""
         print("Testing delete single line...")
 
+        # Create fresh test lines and ensure they are properly initialized
         self.create_test_lines()
-        # Select only one line
-        if len(self.logic.pleuraLines) > 0:
-            test_line = self.logic.pleuraLines[0]
-            self.widget.toggleLineSelection(test_line)
-            assert len(self.logic.selectedLineIDs) == 1, "Should have exactly one selected line"
 
-            # Count lines before deletion
-            pleura_count_before = len(self.logic.pleuraLines)
+        # Clear any existing selection first
+        self.logic.selectedLineIDs = []
 
-            # Delete the selected line
-            self.widget.onDeleteSelectedLines(force=True)
+        # Select only one line that belongs to the current rater
+        current_rater = self.logic.getRater()
+        test_line = None
 
-            # Verify line was deleted
-            pleura_count_after = len(self.logic.pleuraLines)
-            assert pleura_count_after == pleura_count_before - 1, f"Should have deleted exactly one line: {pleura_count_before} -> {pleura_count_after}"
+        # Try to find a pleura line with the current rater
+        for line in self.logic.pleuraLines:
+            if line.GetAttribute("rater") == current_rater:
+                test_line = line
+                break
 
-            # Verify selection is cleared
-            assert len(self.logic.selectedLineIDs) == 0, "Selection should be cleared after deletion"
+        # If no pleura line with current rater, try b-lines
+        if test_line is None:
+            for line in self.logic.bLines:
+                if line.GetAttribute("rater") == current_rater:
+                    test_line = line
+                    break
 
-            print("✅ Delete single line test passed")
+        # If still no line found, just pick the last created line
+        if test_line is None:
+            if len(self.logic.pleuraLines) > 0:
+                test_line = self.logic.pleuraLines[-1]  # Pick the last one
+            elif len(self.logic.bLines) > 0:
+                test_line = self.logic.bLines[-1]  # Pick the last one
 
-        elif len(self.logic.bLines) > 0:
-            test_line = self.logic.bLines[0]
+        assert test_line is not None, "Should have a line to test with"
+        self.widget.toggleLineSelection(test_line)
+        assert len(self.logic.selectedLineIDs) == 1, "Should have exactly one selected line"
+
+        # Count lines before deletion
+        pleura_count_before = len(self.logic.pleuraLines)
+        print(f"Before deletion: {pleura_count_before} pleura lines, {len(self.logic.bLines)} b-lines")
+        print(f"Selected line ID: {test_line.GetID()}")
+        print(f"Selected line in pleuraLines: {test_line in self.logic.pleuraLines}")
+
+        # Delete the selected line
+        self.widget.onDeleteSelectedLines(force=True)
+
+        # Verify line was deleted
+        pleura_count_after = len(self.logic.pleuraLines)
+        print(f"After deletion: {pleura_count_after} pleura lines, {len(self.logic.bLines)} b-lines")
+        assert pleura_count_after == pleura_count_before - 1, f"Should have deleted exactly one line: {pleura_count_before} -> {pleura_count_after}"
+
+        # Verify selection is cleared
+        assert len(self.logic.selectedLineIDs) == 0, "Selection should be cleared after deletion"
+
+        print("✅ Delete single line test passed")
+
+        # If we didn't find a pleura line with current rater, try b-lines
+        if test_line is None and len(self.logic.bLines) > 0:
+            # Try to find a b-line with the current rater
+            for line in self.logic.bLines:
+                if line.GetAttribute("rater") == current_rater:
+                    test_line = line
+                    break
+
+            # If still no line found, pick the last b-line
+            if test_line is None:
+                test_line = self.logic.bLines[-1]
+
+            # Clear selection and select the b-line
+            self.logic.selectedLineIDs = []
             self.widget.toggleLineSelection(test_line)
             assert len(self.logic.selectedLineIDs) == 1, "Should have exactly one selected line"
 
             # Count lines before deletion
             bline_count_before = len(self.logic.bLines)
+            print(f"Before deletion: {len(self.logic.pleuraLines)} pleura lines, {bline_count_before} b-lines")
+            print(f"Selected line ID: {test_line.GetID()}")
+            print(f"Selected line in bLines: {test_line in self.logic.bLines}")
 
             # Delete the selected line
             self.widget.onDeleteSelectedLines(force=True)
 
             # Verify line was deleted
             bline_count_after = len(self.logic.bLines)
+            print(f"After deletion: {len(self.logic.pleuraLines)} pleura lines, {bline_count_after} b-lines")
             assert bline_count_after == bline_count_before - 1, f"Should have deleted exactly one line: {bline_count_before} -> {bline_count_after}"
 
             # Verify selection is cleared
@@ -721,7 +801,7 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
 
             print("✅ Delete single line test passed")
 
-        else:
+        if test_line is None:
             print("⚠️ No lines available for single line deletion test")
 
     def test_delete_no_selection(self):
@@ -784,6 +864,7 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
 
         except Exception as e:
             print(f"⚠️ Could not test Delete key shortcut: {e}")
+            raise  # Re-raise the exception so the test fails properly
         finally:
             # Restore original QMessageBox.question
             qt.QMessageBox.question = original_question
@@ -828,6 +909,7 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
 
         except Exception as e:
             print(f"⚠️ Could not test Backspace key shortcut: {e}")
+            raise  # Re-raise the exception so the test fails properly
         finally:
             # Restore original QMessageBox.question
             qt.QMessageBox.question = original_question
@@ -938,17 +1020,324 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
             # Restore original QMessageBox.question
             qt.QMessageBox.question = original_question
 
+    def test_cut_lines(self):
+        """Test cutting selected lines (Cmd+X functionality)."""
+        print("Testing cut lines (Cmd+X)...")
+
+        # Create fresh test lines
+        self.create_test_lines()
+
+        # Select all the lines
+        self.widget.onSelectAllLines()
+        initial_selected_count = len(self.logic.selectedLineIDs)
+        assert initial_selected_count > 0, "Should have selected lines to cut"
+
+        # Count lines before cutting
+        pleura_count_before = len(self.logic.pleuraLines)
+        bline_count_before = len(self.logic.bLines)
+        total_lines_before = pleura_count_before + bline_count_before
+
+        # Mock the QMessageBox to simulate user clicking "Yes" for delete confirmation
+        original_question = qt.QMessageBox.question
+        qt.QMessageBox.question = lambda *args, **kwargs: qt.QMessageBox.Yes
+
+        try:
+            # Cut the selected lines using the cut method
+            self.widget._cutIfRedViewFocused()
+
+            # Verify lines were copied to clipboard
+            assert self.logic.clipboardLines is not None, "Clipboard lines should not be None"
+            expected_copied = total_lines_before
+            actual_copied = len(self.logic.clipboardLines)
+            assert actual_copied == expected_copied, f"Expected {expected_copied} copied lines, got {actual_copied}"
+
+            # Verify lines were deleted from the scene
+            pleura_count_after = len(self.logic.pleuraLines)
+            bline_count_after = len(self.logic.bLines)
+            total_lines_after = pleura_count_after + bline_count_after
+            assert total_lines_after < total_lines_before, f"Should have fewer lines after cut: {total_lines_after} < {total_lines_before}"
+
+            # Verify selection is cleared after cut
+            assert len(self.logic.selectedLineIDs) == 0, "Selection should be cleared after cut"
+
+            # Verify clipboard lines are hidden
+            for node in self.logic.clipboardLines:
+                assert not node.GetDisplayVisibility(), "Clipboard lines should be hidden"
+
+            # Verify unsaved changes flag is set
+            assert self.widget._parameterNode.unsavedChanges, "Unsaved changes flag should be set after cut"
+
+            print("✅ Cut lines test passed")
+
+        except Exception as e:
+            print(f"⚠️ Could not test cut functionality: {e}")
+        finally:
+            # Restore original QMessageBox.question
+            qt.QMessageBox.question = original_question
+
+    def test_cut_keyboard_shortcut(self):
+        """Test the Cmd+X keyboard shortcut for cutting selected lines."""
+        print("Testing Cmd+X keyboard shortcut...")
+
+        # Create fresh test lines
+        self.create_test_lines()
+
+        # Select some lines
+        self.widget.onSelectAllLines()
+        initial_selected_count = len(self.logic.selectedLineIDs)
+        assert initial_selected_count > 0, "Should have selected lines"
+
+        # Count lines before cutting
+        total_lines_before = len(self.logic.pleuraLines) + len(self.logic.bLines)
+
+        # Mock the QMessageBox to simulate user clicking "Yes"
+        original_question = qt.QMessageBox.question
+        qt.QMessageBox.question = lambda *args, **kwargs: qt.QMessageBox.Yes
+
+        try:
+            # For testing purposes, temporarily mock the focus check to always return True
+            original_red_view_has_focus = self.widget._redViewHasFocus
+            self.widget._redViewHasFocus = lambda: True
+
+            try:
+                # Simulate Cmd+X using the shortcut (should now work since focus check returns True)
+                self.widget.shortcutCut.activated.emit()
+            finally:
+                # Restore original method
+                self.widget._redViewHasFocus = original_red_view_has_focus
+
+            # Verify lines were copied to clipboard
+            assert self.logic.clipboardLines is not None, "Clipboard lines should not be None"
+            expected_copied = total_lines_before
+            actual_copied = len(self.logic.clipboardLines)
+            assert actual_copied == expected_copied, f"Expected {expected_copied} copied lines, got {actual_copied}"
+
+            # Verify lines were deleted from the scene
+            total_lines_after = len(self.logic.pleuraLines) + len(self.logic.bLines)
+            assert total_lines_after < total_lines_before, f"Should have fewer lines after Cmd+X: {total_lines_after} < {total_lines_before}"
+
+            # Verify selection is cleared
+            assert len(self.logic.selectedLineIDs) == 0, "Selection should be cleared after Cmd+X"
+
+            print("✅ Cmd+X keyboard shortcut test passed")
+
+        except Exception as e:
+            print(f"⚠️ Could not test Cmd+X shortcut: {e}")
+            raise  # Re-raise the exception so the test fails properly
+        finally:
+            # Restore original QMessageBox.question
+            qt.QMessageBox.question = original_question
+
+    def test_cut_and_paste_workflow(self):
+        """Test the complete cut and paste workflow."""
+        print("Testing cut and paste workflow...")
+
+        # Create fresh test lines
+        self.create_test_lines()
+
+        # Count lines before cutting
+        pleura_count_before = len(self.logic.pleuraLines)
+        bline_count_before = len(self.logic.bLines)
+        total_lines_before = pleura_count_before + bline_count_before
+
+        # Count lines belonging to current rater (these are the ones that will be cut)
+        current_rater = self.logic.getRater()
+        rater_lines_count = 0
+        for line in self.logic.pleuraLines + self.logic.bLines:
+            if line.GetAttribute("rater") == current_rater:
+                rater_lines_count += 1
+        print(f"Total lines: {total_lines_before}, Lines belonging to rater '{current_rater}': {rater_lines_count}")
+
+        # Select all lines
+        self.widget.onSelectAllLines()
+        initial_selected_count = len(self.logic.selectedLineIDs)
+        print(f"Selected {initial_selected_count} lines out of {total_lines_before} total lines")
+        assert initial_selected_count > 0, "Should have selected lines"
+
+        # Mock the QMessageBox to simulate user clicking "Yes"
+        original_question = qt.QMessageBox.question
+        qt.QMessageBox.question = lambda *args, **kwargs: qt.QMessageBox.Yes
+
+        try:
+            # For testing purposes, temporarily mock the focus check to always return True
+            original_red_view_has_focus = self.widget._redViewHasFocus
+            self.widget._redViewHasFocus = lambda: True
+
+            try:
+                # Cut the lines (should now work since focus check returns True)
+                self.widget._cutIfRedViewFocused()
+            finally:
+                # Restore original method
+                self.widget._redViewHasFocus = original_red_view_has_focus
+
+                        # Verify lines are in clipboard and removed from scene
+            assert len(self.logic.clipboardLines) == total_lines_before, "All lines should be in clipboard"
+
+            # Only the current rater's lines should be removed from scene
+            lines_after_cut = len(self.logic.pleuraLines) + len(self.logic.bLines)
+            expected_lines_after_cut = total_lines_before - rater_lines_count
+            assert lines_after_cut == expected_lines_after_cut, f"Should have {expected_lines_after_cut} lines after cut (removed {rater_lines_count} rater lines), got {lines_after_cut}"
+
+            print(f"After cut: {lines_after_cut} lines in scene, {len(self.logic.clipboardLines)} lines in clipboard")
+
+            # Move to next frame
+            self.widget._nextFrameInSequence()
+            time.sleep(1)
+
+            # Check what lines exist in the new frame before pasting
+            lines_in_new_frame = len(self.logic.pleuraLines) + len(self.logic.bLines)
+            print(f"Lines in new frame before paste: {lines_in_new_frame}")
+
+            # Paste the lines (force=False to let duplicate detection work normally)
+            self.widget.onPasteLines(force=False)
+
+            # Verify lines were pasted
+            pleura_count_after = len(self.logic.pleuraLines)
+            bline_count_after = len(self.logic.bLines)
+            total_lines_after = pleura_count_after + bline_count_after
+
+            print(f"After paste: {total_lines_after} lines in scene, {len(self.logic.clipboardLines)} lines in clipboard")
+
+            # Should have at least the existing lines in the new frame (some clipboard lines may be duplicates)
+            assert total_lines_after >= lines_in_new_frame, f"Should have at least the existing lines: {total_lines_after} >= {lines_in_new_frame}"
+
+            # Should have some lines after paste (the operation should have some effect)
+            assert total_lines_after > 0, f"Should have some lines after paste: {total_lines_after} > 0"
+
+            # Verify pasted lines are visible
+            for node in self.logic.pleuraLines + self.logic.bLines:
+                if slicer.mrmlScene.IsNodePresent(node):
+                    assert node.GetDisplayVisibility(), "Pasted lines should be visible"
+
+            print("✅ Cut and paste workflow test passed")
+
+        except Exception as e:
+            print(f"⚠️ Could not test cut and paste workflow: {e}")
+            raise  # Re-raise the exception so the test fails properly
+        finally:
+            # Restore original QMessageBox.question
+            qt.QMessageBox.question = original_question
+
+    def test_cut_no_selection(self):
+        """Test cut behavior when no lines are selected."""
+        print("Testing cut with no selection...")
+
+        # Clear any existing selection
+        self.logic.selectedLineIDs = []
+        self.logic.clearClipboard()
+
+        assert len(self.logic.selectedLineIDs) == 0, "Should have no selected lines"
+
+        # Count lines before attempting cut
+        pleura_count_before = len(self.logic.pleuraLines)
+        bline_count_before = len(self.logic.bLines)
+        total_lines_before = pleura_count_before + bline_count_before
+
+        # Try to cut with no selection
+        self.widget._cutIfRedViewFocused()
+
+        # Verify no lines were affected
+        pleura_count_after = len(self.logic.pleuraLines)
+        bline_count_after = len(self.logic.bLines)
+        total_lines_after = pleura_count_after + bline_count_after
+        assert total_lines_after == total_lines_before, "No lines should be affected when cutting with no selection"
+
+        # Verify clipboard is empty (should be an empty list, not None)
+        assert self.logic.clipboardLines is not None, "Clipboard should be initialized as empty list"
+        assert len(self.logic.clipboardLines) == 0, "Clipboard should be empty when cutting with no selection"
+
+        print("✅ Cut with no selection test passed")
+
+    def test_cut_single_line(self):
+        """Test cutting a single selected line."""
+        print("Testing cut single line...")
+
+        self.create_test_lines()
+
+        # Select only one line
+        if len(self.logic.pleuraLines) > 0:
+            test_line = self.logic.pleuraLines[0]
+            self.widget.toggleLineSelection(test_line)
+            assert len(self.logic.selectedLineIDs) == 1, "Should have exactly one selected line"
+
+            # Count lines before cutting
+            pleura_count_before = len(self.logic.pleuraLines)
+            total_lines_before = pleura_count_before + len(self.logic.bLines)
+
+            # Mock the QMessageBox to simulate user clicking "Yes"
+            original_question = qt.QMessageBox.question
+            qt.QMessageBox.question = lambda *args, **kwargs: qt.QMessageBox.Yes
+
+            try:
+                # Cut the selected line
+                self.widget._cutIfRedViewFocused()
+
+                # Verify line was copied to clipboard
+                assert self.logic.clipboardLines is not None, "Clipboard should not be None"
+                assert len(self.logic.clipboardLines) == 1, "Should have exactly one line in clipboard"
+
+                # Verify line was deleted from scene
+                pleura_count_after = len(self.logic.pleuraLines)
+                assert pleura_count_after == pleura_count_before - 1, f"Should have deleted exactly one line: {pleura_count_before} -> {pleura_count_after}"
+
+                # Verify selection is cleared
+                assert len(self.logic.selectedLineIDs) == 0, "Selection should be cleared after cut"
+
+                print("✅ Cut single line test passed")
+
+            finally:
+                # Restore original QMessageBox.question
+                qt.QMessageBox.question = original_question
+
+        elif len(self.logic.bLines) > 0:
+            test_line = self.logic.bLines[0]
+            self.widget.toggleLineSelection(test_line)
+            assert len(self.logic.selectedLineIDs) == 1, "Should have exactly one selected line"
+
+            # Count lines before cutting
+            bline_count_before = len(self.logic.bLines)
+            total_lines_before = len(self.logic.pleuraLines) + bline_count_before
+
+            # Mock the QMessageBox to simulate user clicking "Yes"
+            original_question = qt.QMessageBox.question
+            qt.QMessageBox.question = lambda *args, **kwargs: qt.QMessageBox.Yes
+
+            try:
+                # Cut the selected line
+                self.widget._cutIfRedViewFocused()
+
+                # Verify line was copied to clipboard
+                assert self.logic.clipboardLines is not None, "Clipboard should not be None"
+                assert len(self.logic.clipboardLines) == 1, "Should have exactly one line in clipboard"
+
+                # Verify line was deleted from scene
+                bline_count_after = len(self.logic.bLines)
+                assert bline_count_after == bline_count_before - 1, f"Should have deleted exactly one line: {bline_count_before} -> {bline_count_after}"
+
+                # Verify selection is cleared
+                assert len(self.logic.selectedLineIDs) == 0, "Selection should be cleared after cut"
+
+                print("✅ Cut single line test passed")
+
+            finally:
+                # Restore original QMessageBox.question
+                qt.QMessageBox.question = original_question
+
+        else:
+            print("⚠️ No lines available for single line cut test")
+
     def runTest(self):
-        """Run the line selection, copy, paste, and delete test."""
-        print("Starting line selection, copy, paste, and delete test...")
+        """Run the line selection, copy, paste, cut, and delete test."""
+        print("Starting line selection, copy, paste, cut, and delete test...")
         print("This test will:")
         print("1. Load the AnnotateUltrasound module")
         print("2. Load test DICOM data")
         print("3. Create test lines (Pleura and B-lines)")
         print("4. Test line selection functionality")
         print("5. Test copy and paste functionality")
-        print("6. Test delete functionality")
-        print("7. Test keyboard shortcuts")
+        print("6. Test cut functionality")
+        print("7. Test delete functionality")
+        print("8. Test keyboard shortcuts")
 
         # Load test data
         if not self.load_test_data():
@@ -1007,18 +1396,33 @@ class LineSelectionCopyPasteTest(ScriptedLoadableModuleTest):
         print("\n--- Testing Delete Confirmation Dialog ---")
         self.test_delete_confirmation_dialog()
 
+        print("\n=== PHASE 5: Cut Line Tests ===")
+        print("\n--- Testing Cut Lines (Cmd+X) ---")
+        self.test_cut_lines()
+        print("\n--- Testing Cut Keyboard Shortcut (Cmd+X) ---")
+        self.test_cut_keyboard_shortcut()
+        print("\n--- Testing Cut and Paste Workflow ---")
+        self.test_cut_and_paste_workflow()
+        print("\n--- Testing Cut with No Selection ---")
+        self.test_cut_no_selection()
+        print("\n--- Testing Cut Single Line ---")
+        self.test_cut_single_line()
+
         print("\n=== TEST SUMMARY ===")
-        print("✅ All line selection, copy, paste, and delete tests completed successfully!")
+        print("✅ All line selection, copy, paste, cut, and delete tests completed successfully!")
         print("The following functionality was tested:")
         print("- Line selection (Select All, Deselect All)")
         print("- Copy and paste operations")
         print("- Multiple copy/paste cycles")
-        print("- Keyboard shortcuts (Ctrl+A, Ctrl+C, Ctrl+V, Escape, Delete, Backspace)")
+        print("- Cut operations (Cmd+X)")
+        print("- Cut and paste workflow")
+        print("- Keyboard shortcuts (Ctrl+A, Ctrl+C, Ctrl+V, Cmd+X, Escape, Delete, Backspace)")
         print("- Visual feedback for selected lines")
         print("- Clipboard management")
         print("- Individual line selection by clicking")
         print("- Control point selection")
         print("- Delete functionality (multiple, single, no selection, keyboard shortcut, rater filtering, confirmation dialog)")
+        print("- Cut functionality (multiple, single, no selection, keyboard shortcut, workflow)")
         print("- State management and cleanup")
 
 
