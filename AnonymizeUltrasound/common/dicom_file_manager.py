@@ -854,7 +854,7 @@ class DicomFileManager:
 
         try:
             num_frames = ds.NumberOfFrames
-        except:
+        except AttributeError:
             num_frames = 1
             logging.warning(f"Warning: No NumberOfFrames found in {dicom_file_path}, trying to read with num_frames=1")
 

@@ -11,7 +11,7 @@ import matplotlib.patches as patches
 from matplotlib.backends.backend_pdf import PdfPages
 
 from .dicom_file_manager import DicomFileManager
-from .inference import load_model, preprocess_image
+from .inference import load_model, preprocess_image, download_model
 from .masking import compute_masks_and_configs, mask_config_to_corner_points
 from .evaluation import compare_masks, load_mask_config
 
@@ -102,7 +102,7 @@ class DicomProcessor:
             # Check if model exists, download if not
             if not os.path.exists(self.config.model_path):
                 self.logger.info(f"Model not found at {self.config.model_path}. Attempting to download...")
-                success = self._download_model()
+                success = download_model(output_path=self.config.model_path)
                 if not success:
                     raise FileNotFoundError(f"Could not download model to {self.config.model_path}")
 
@@ -110,34 +110,6 @@ class DicomProcessor:
             self.device = self.config.device
             self.logger.info(f"Model loaded on {self.device}")
 
-    def _download_model(self):
-        """Download the AI model if it doesn't exist"""
-        try:
-            import requests
-
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(self.config.model_path), exist_ok=True)
-
-            # Model URL (same as in AnonymizeUltrasound.py)
-            model_url = "https://www.dropbox.com/scl/fi/mnu2k4n8fju6gy1glhieb/model_traced.pt?rlkey=eb0xmwzwsoesq3mp11s8xt9xd&dl=1"
-
-            self.logger.info(f"Downloading model from {model_url}...")
-
-            # Send a GET request to the URL
-            response = requests.get(model_url, stream=True)
-            response.raise_for_status()
-
-            # Write the content to the file
-            with open(self.config.model_path, 'wb') as file:
-                for chunk in response.iter_content(chunk_size=8192):
-                    file.write(chunk)
-
-            self.logger.info(f"Model downloaded successfully to {self.config.model_path}")
-            return True
-
-        except Exception as e:
-            self.logger.error(f"Failed to download model: {e}")
-            return False
 
     def evaluate_single_dicom(
         self,
@@ -491,31 +463,10 @@ class DicomProcessor:
         top_right = predicted_corners.get('upper_right')
 
         # Find the highest Y coordinate among top points
-        highest_y = 0
-        if top_left and len(top_left) >= 2:
-            try:
-                highest_y = max(highest_y, int(top_left[1]))
-            except (ValueError, TypeError):
-                self.logger.warning(f"Invalid top_left coordinate: {top_left}")
-        if top_right and len(top_right) >= 2:
-            try:
-                highest_y = max(highest_y, int(top_right[1]))
-            except (ValueError, TypeError):
-                self.logger.warning(f"Invalid top_right coordinate: {top_right}")
+        highest_y = self._get_highest_y_from_top_points(top_left, top_right)
 
-        # Use top points as upper limit - don't redact past the highest top point
-        if highest_y > 0:
-            # If we have top points, use the minimum of base redaction and top points
-            final_redaction_height = min(base_redaction_height, highest_y)
-        else:
-            # If no top points detected, use base redaction height
-            final_redaction_height = base_redaction_height
-
-        # Ensure we don't redact more than the image height
-        final_redaction_height = min(final_redaction_height, height - 1)
-
-        # Ensure final_redaction_height is an integer for array slicing
-        final_redaction_height = int(final_redaction_height)
+        # Calculate final redaction height considering top points and image bounds
+        final_redaction_height = self._calculate_final_redaction_height(base_redaction_height, highest_y, height)
 
         # Apply redaction to each frame
         for i in range(image_array.shape[0]):
@@ -547,6 +498,35 @@ class DicomProcessor:
             hi = img.max(axis=(0,1), keepdims=True)
             img = (img - lo) / np.maximum(hi - lo, 1e-6)
         return np.clip(img, 0, 1)
+
+    def _get_highest_y_from_top_points(self, top_left: Optional[tuple], top_right: Optional[tuple]) -> int:
+        """Calculate the highest Y coordinate from top left and top right points"""
+        highest_y = 0
+        if top_left and len(top_left) >= 2:
+            try:
+                highest_y = max(highest_y, int(top_left[1]))
+            except (ValueError, TypeError):
+                self.logger.warning(f"Invalid top_left coordinate: {top_left}")
+        if top_right and len(top_right) >= 2:
+            try:
+                highest_y = max(highest_y, int(top_right[1]))
+            except (ValueError, TypeError):
+                self.logger.warning(f"Invalid top_right coordinate: {top_right}")
+        return highest_y
+
+    def _calculate_final_redaction_height(self, base_redaction_height: int, highest_y: int, image_height: int) -> int:
+        """Calculate the final redaction height considering top points and image bounds"""
+        # Use top points as upper limit - don't redact past the highest top point
+        if highest_y > 0:
+            # If we have top points, use the minimum of base redaction and top points
+            final_redaction_height = min(base_redaction_height, highest_y)
+        else:
+            # If no top points detected, use base redaction height
+            final_redaction_height = base_redaction_height
+
+        # Ensure we don't redact more than the image height
+        final_redaction_height = min(final_redaction_height, image_height - 1)
+        return int(final_redaction_height)
 
     def _add_page_to_pdf(self, pdf, original_image, redacted_image, predicted_corners, top_ratio, filename, frame_idx=0):
         """Add a single page to the PDF with original, redacted, and diff images"""
@@ -583,28 +563,10 @@ class DicomProcessor:
 
         top_left = predicted_corners.get('upper_left')
         top_right = predicted_corners.get('upper_right')
-        highest_y = 0
-        if top_left and len(top_left) >= 2:
-            try:
-                highest_y = max(highest_y, int(top_left[1]))
-            except (ValueError, TypeError):
-                pass
-        if top_right and len(top_right) >= 2:
-            try:
-                highest_y = max(highest_y, int(top_right[1]))
-            except (ValueError, TypeError):
-                pass
+        highest_y = self._get_highest_y_from_top_points(top_left, top_right)
 
-        # Use top points as upper limit - don't redact past the highest top point
-        if highest_y > 0:
-            # If we have top points, use the minimum of base redaction and top points
-            final_redaction_height = min(base_redaction_height, highest_y)
-        else:
-            # If no top points detected, use base redaction height
-            final_redaction_height = base_redaction_height
-
-        final_redaction_height = min(final_redaction_height, height - 1)
-        final_redaction_height = int(final_redaction_height)
+        # Calculate final redaction height considering top points and image bounds
+        final_redaction_height = self._calculate_final_redaction_height(base_redaction_height, highest_y, height)
 
         # Create figure with 3 subplots: Original, Redacted, Diff
         fig, axes = plt.subplots(1, 3, figsize=(18, 6))
