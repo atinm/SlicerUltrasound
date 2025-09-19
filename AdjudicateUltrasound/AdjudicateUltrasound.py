@@ -1249,7 +1249,6 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
                                     "coordinate_space": frame.get("coordinate_space", "RAS"),
                                     "pleura_lines": frame.get("pleura_lines", []),
                                     "b_lines": frame.get("b_lines", []),
-                                    "validation": frame.get("validation", "unadjudated")
                                 })
                 except Exception as e:
                     logging.warning(f"Failed to load annotation file {filepath}: {e}")
