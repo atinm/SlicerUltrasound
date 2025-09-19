@@ -29,6 +29,7 @@ class ProcessingConfig:
     ground_truth_dir: Optional[str] = None
     top_ratio: float = 0.1
     phi_only_mode: bool = False  # If True, only apply top redaction, skip fan mask
+    overwrite_files: bool = False  # If True, overwrite existing output files; if False, skip them
 
 @dataclass
 class ProcessingResult:
@@ -222,12 +223,16 @@ class DicomProcessor:
                 output_folder, row.OutputPath, self.config.preserve_directory_structure
             )
 
-            if self.config.resume_anonymization and os.path.exists(final_output_path):
-                self.logger.info(f"Skipping existing file: {final_output_path}")
-                return ProcessingResult(
-                    success=True, skipped=True, input_path=input_path,
-                    output_path=final_output_path, processing_time=time.time() - start_time
-                )
+            # Check if file exists and should be skipped
+            if os.path.exists(final_output_path):
+                if not self.config.overwrite_files:
+                    self.logger.info(f"Skipping existing file: {final_output_path}")
+                    return ProcessingResult(
+                        success=True, skipped=True, input_path=input_path,
+                        output_path=final_output_path, processing_time=time.time() - start_time
+                    )
+                else:
+                    self.logger.info(f"Overwriting existing file: {final_output_path}")
 
             if progress_callback:
                 progress_callback(f"Processing: {input_path}")
@@ -660,7 +665,7 @@ class DicomProcessor:
 
     def _save_sequence_info(self, final_output_path: str, row, mask_config: Optional[dict]):
         """Save sequence info JSON"""
-        if not self.config.no_mask_generation:
+        if not self.config.no_mask_generation and not self.config.phi_only_mode:
             sequence_info = {
                 'SOPInstanceUID': getattr(row.DICOMDataset, 'SOPInstanceUID', 'None') or 'None',
                 'GrayscaleConversion': False

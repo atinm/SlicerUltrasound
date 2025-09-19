@@ -603,7 +603,29 @@
                 </property>
               </widget>
             </item>
-            <item row="8" column="0" colspan="2">
+            <item row="8" column="0">
+              <widget class="QLabel" name="overwriteFilesLabel">
+                <property name="text">
+                  <string>Overwrite existing files:</string>
+                </property>
+                <property name="toolTip">
+                  <string>If enabled, overwrites existing output files. If disabled, skips files
+                    that already exist.</string>
+                </property>
+              </widget>
+            </item>
+            <item row="8" column="1">
+              <widget class="QCheckBox" name="overwriteFilesCheckBox">
+                <property name="text">
+                  <string>Overwrite existing files</string>
+                </property>
+                <property name="toolTip">
+                  <string>If enabled, overwrites existing output files. If disabled, skips files
+                    that already exist.</string>
+                </property>
+              </widget>
+            </item>
+            <item row="9" column="0" colspan="2">
               <widget class="QPushButton" name="runAutoAnonymizeButton">
                 <property name="text">
                   <string>Run Auto‑Anonymize</string>

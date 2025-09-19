@@ -173,6 +173,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
     AUTO_ANON_GT_DIR_SETTING = "AnonymizeUltrasound/AutoAnonymizeGroundTruthDir"
     AUTO_ANON_TOP_RATIO_SETTING = "AnonymizeUltrasound/AutoAnonymizeTopRatio"
     AUTO_ANON_PHI_ONLY_MODE_SETTING = "AnonymizeUltrasound/AutoAnonymizePhiOnlyMode"
+    AUTO_ANON_OVERWRITE_FILES_SETTING = "AnonymizeUltrasound/AutoAnonymizeOverwriteFiles"
     EVAL_ENABLE_SETTING = "AnonymizeUltrasound/EnableModelEvaluation"
     EVAL_INPUT_DIR_SETTING = "AnonymizeUltrasound/EvalInputFolder"
     EVAL_GT_DIR_SETTING = "AnonymizeUltrasound/EvalGroundTruthDir"
@@ -448,6 +449,12 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         self.ui.phiOnlyModeCheckBox.checked = phiOnlyMode
         self.ui.phiOnlyModeCheckBox.connect('toggled(bool)',
                                            lambda checked: self.onSettingChanged(self.AUTO_ANON_PHI_ONLY_MODE_SETTING, str(checked).lower()))
+
+        # Setup overwrite files setting
+        overwriteFiles = settings.value(self.AUTO_ANON_OVERWRITE_FILES_SETTING, "false").lower() == "true"
+        self.ui.overwriteFilesCheckBox.checked = overwriteFiles
+        self.ui.overwriteFilesCheckBox.connect('toggled(bool)',
+                                              lambda checked: self.onSettingChanged(self.AUTO_ANON_OVERWRITE_FILES_SETTING, str(checked).lower()))
 
         # Model evaluation settings
         eval_enable = settings.value(self.EVAL_ENABLE_SETTING)
@@ -1036,6 +1043,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         resume = self.ui.continueProgressCheckBox.checked
         top_ratio = self.ui.topRatioSpinBox.value
         phi_only_mode = self.ui.phiOnlyModeCheckBox.checked
+        overwrite_files = self.ui.overwriteFilesCheckBox.checked
 
         self.ui.statusLabel.text = "Running auto‑anonymize..."
         slicer.app.processEvents()
@@ -1053,6 +1061,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                 hash_patient_id=hash_pid,
                 top_ratio=top_ratio,
                 phi_only_mode=phi_only_mode,
+                overwrite_files=overwrite_files,
             )
             self.ui.statusLabel.text = result['status']
         except Exception as e:
@@ -2677,6 +2686,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             no_mask_generation=kwargs.get('no_mask_generation', False),
             top_ratio=kwargs.get('top_ratio', 0.1),
             phi_only_mode=kwargs.get('phi_only_mode', False),
+            overwrite_files=kwargs.get('overwrite_files', False),
         )
 
         # Initialize shared processor
