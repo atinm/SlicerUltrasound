@@ -283,6 +283,7 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
             row3 = qt.QHBoxLayout()
             row3.addWidget(make_button("Validate Rest", "Mark all visible unadjudicated lines as validated", "", self.onValidateAllUnadjudicated))
             row3.addWidget(make_button("Invalidate Rest", "Mark all visible unadjudicated lines as invalidated", "", self.onInvalidateAllUnadjudicated))
+            row3.addWidget(make_button("Validate Clip", "Mark all unadjudicated lines as validated for each frame in current clip", "", self.onValidateClip))
             adjudicationToolsLayout.addLayout(row3)
 
             # Reset all row
@@ -466,6 +467,111 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
     def onInvalidateAllUnadjudicated(self):
         self._setAllUnadjudicatedLinesStatus("invalidated", "Invalidated", 0.3)
 
+    def onValidateClip(self):
+        """Validate all unadjudicated lines for each frame in the current clip."""
+        if self.logic.sequenceBrowserNode is None:
+            slicer.util.errorDisplay("No sequence loaded. Please load a DICOM sequence first.")
+            return
+
+        if self.logic.annotations is None or 'frame_annotations' not in self.logic.annotations:
+            slicer.util.errorDisplay("No annotations found for this sequence.")
+            return
+
+        total_validated = 0
+        frames_processed = 0
+
+        # Get the total number of frames in the sequence
+        total_frames = self.logic.sequenceBrowserNode.GetNumberOfItems()
+
+        # Show progress dialog
+        progress_dialog = qt.QProgressDialog("Validating clip...", "Cancel", 0, total_frames)
+        progress_dialog.setWindowModality(qt.Qt.WindowModal)
+        progress_dialog.show()
+
+        # Set programmatic update flag to prevent unsavedChanges from being set
+        self.logic._isProgrammaticUpdate = True
+
+        try:
+            # Loop through each frame in the clip
+            for frame_index in range(total_frames):
+                if progress_dialog.wasCanceled:
+                    break
+
+                # Set the current frame
+                self.logic.sequenceBrowserNode.SetSelectedItemNumber(frame_index)
+                slicer.app.processEvents()  # Allow UI to update
+
+                # Validate all unadjudicated lines in the current frame
+                frame_validated = self._validateUnadjudicatedLinesInCurrentFrame("validated")
+
+                total_validated += frame_validated
+                if frame_validated > 0:
+                    frames_processed += 1
+
+                # Update progress
+                progress_dialog.setValue(frame_index + 1)
+                progress_dialog.setLabelText(f"Validating frame {frame_index + 1}/{total_frames}...")
+                slicer.app.processEvents()
+
+        finally:
+            # Reset programmatic update flag
+            self.logic._isProgrammaticUpdate = False
+            progress_dialog.close()
+
+        # Return to the first frame
+        self.logic.sequenceBrowserNode.SetSelectedItemNumber(0)
+        slicer.app.processEvents()
+
+        # Sync annotations to markups and refresh display
+        self.logic.syncAnnotationsToMarkups()
+        self.logic.refreshDisplay(updateOverlay=True, updateGui=True)
+
+        # Show completion message
+        if total_validated > 0:
+            slicer.util.showStatusMessage(f"Validated {total_validated} lines across {frames_processed} frames in the clip.", 5000)
+        else:
+            slicer.util.showStatusMessage("No unadjudicated lines found in the clip.", 3000)
+
+    def _validateUnadjudicatedLinesInCurrentFrame(self, status):
+        """
+        Validate all unadjudicated lines in the current frame.
+        Args:
+            status: The validation status to set ("validated", "invalidated")
+        Returns:
+            int: Number of lines validated
+        """
+        # Get current rater (adjudicator)
+        adjudicator = self.getCurrentRater()
+        count = 0
+
+        for nodeIndex in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLMarkupsLineNode")):
+            markupNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, "vtkMRMLMarkupsLineNode")
+            displayNode = markupNode.GetDisplayNode()
+            if not displayNode or not displayNode.GetVisibility():
+                continue # Skip if not visible
+            validation_json = markupNode.GetAttribute("validation")
+            current_status = None
+            if validation_json:
+                try:
+                    validation = json.loads(validation_json)
+                    current_status = validation.get("status", None)
+                except Exception:
+                    current_status = None
+            if not current_status or current_status == "unadjudicated":
+                validation = {
+                    "status": status,
+                    "adjudicator": adjudicator,
+                    "timestamp": datetime.datetime.now().isoformat()
+                }
+                markupNode.SetAttribute("validation", json.dumps(validation))
+
+                # Update the annotation data for this line
+                self._updateAnnotationLineValidation(markupNode, validation)
+
+                count += 1
+
+        return count
+
     def _setAllUnadjudicatedLinesStatus(self, status, status_past_tense, opacity):
         """
         Set the validation status of all unadjudicated lines.
@@ -474,39 +580,11 @@ class AdjudicateUltrasoundWidget(annotate.AnnotateUltrasoundWidget):
             status_past_tense: The past tense form for the success message (e.g., "Validated", "Invalidated")
             opacity: The opacity to set for the lines (1.0 for validated, 0.3 for others)
         """
-        # Get current rater (adjudicator)
-        adjudicator = self.getCurrentRater()
-        count = 0
-
         # Set programmatic update flag to prevent unsavedChanges from being set
         self.logic._isProgrammaticUpdate = True
 
         try:
-            for nodeIndex in range(slicer.mrmlScene.GetNumberOfNodesByClass("vtkMRMLMarkupsLineNode")):
-                markupNode = slicer.mrmlScene.GetNthNodeByClass(nodeIndex, "vtkMRMLMarkupsLineNode")
-                displayNode = markupNode.GetDisplayNode()
-                if not displayNode or not displayNode.GetVisibility():
-                    continue # Skip if not visible
-                validation_json = markupNode.GetAttribute("validation")
-                current_status = None
-                if validation_json:
-                    try:
-                        validation = json.loads(validation_json)
-                        current_status = validation.get("status", None)
-                    except Exception:
-                        current_status = None
-                if not current_status or current_status == "unadjudicated":
-                    validation = {
-                        "status": status,
-                        "adjudicator": adjudicator,
-                        "timestamp": datetime.datetime.now().isoformat()
-                    }
-                    markupNode.SetAttribute("validation", json.dumps(validation))
-
-                    # Update the annotation data for this line
-                    self._updateAnnotationLineValidation(markupNode, validation)
-
-                    count += 1
+            count = self._validateUnadjudicatedLinesInCurrentFrame(status)
 
             # Update the visual appearance of all lines since annotations are already updated above
             self.logic.syncAnnotationsToMarkups()
@@ -1171,7 +1249,6 @@ class AdjudicateUltrasoundLogic(annotate.AnnotateUltrasoundLogic):
                                     "coordinate_space": frame.get("coordinate_space", "RAS"),
                                     "pleura_lines": frame.get("pleura_lines", []),
                                     "b_lines": frame.get("b_lines", []),
-                                    "validation": frame.get("validation", "unadjudated")
                                 })
                 except Exception as e:
                     logging.warning(f"Failed to load annotation file {filepath}: {e}")
