@@ -171,6 +171,8 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
     AUTO_ANON_DEVICE_SETTING = "AnonymizeUltrasound/AutoAnonymizeDevice"
     AUTO_ANON_OVERVIEW_DIR_SETTING = "AnonymizeUltrasound/AutoAnonymizeOverviewDir"
     AUTO_ANON_GT_DIR_SETTING = "AnonymizeUltrasound/AutoAnonymizeGroundTruthDir"
+    AUTO_ANON_TOP_RATIO_SETTING = "AnonymizeUltrasound/AutoAnonymizeTopRatio"
+    AUTO_ANON_PHI_ONLY_MODE_SETTING = "AnonymizeUltrasound/AutoAnonymizePhiOnlyMode"
     EVAL_ENABLE_SETTING = "AnonymizeUltrasound/EnableModelEvaluation"
     EVAL_INPUT_DIR_SETTING = "AnonymizeUltrasound/EvalInputFolder"
     EVAL_GT_DIR_SETTING = "AnonymizeUltrasound/EvalGroundTruthDir"
@@ -429,7 +431,23 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                                                 lambda newValue: self.onSettingChanged(self.AUTO_ANON_DEVICE_SETTING, newValue))
 
        # Run button
-        self.ui.runAutoAnonymizeButton.clicked.connect(self.on_run_auto_anon_clicked) 
+        self.ui.runAutoAnonymizeButton.clicked.connect(self.on_run_auto_anon_clicked)
+
+        # Setup top ratio setting
+        topRatioStr = settings.value(self.AUTO_ANON_TOP_RATIO_SETTING, "0.1")
+        try:
+            topRatio = float(topRatioStr)
+            self.ui.topRatioSpinBox.value = topRatio
+        except ValueError:
+            self.ui.topRatioSpinBox.value = 0.1
+        self.ui.topRatioSpinBox.connect('valueChanged(double)',
+                                       lambda value: self.onSettingChanged(self.AUTO_ANON_TOP_RATIO_SETTING, str(value)))
+
+        # Setup PHI-only mode setting
+        phiOnlyMode = settings.value(self.AUTO_ANON_PHI_ONLY_MODE_SETTING, "false").lower() == "true"
+        self.ui.phiOnlyModeCheckBox.checked = phiOnlyMode
+        self.ui.phiOnlyModeCheckBox.connect('toggled(bool)',
+                                           lambda checked: self.onSettingChanged(self.AUTO_ANON_PHI_ONLY_MODE_SETTING, str(checked).lower()))
 
         # Model evaluation settings
         eval_enable = settings.value(self.EVAL_ENABLE_SETTING)
@@ -960,7 +978,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             self.ui.statusLabel.text = "No DICOM file loaded"
 
     def on_run_model_evaluation_clicked(self):
-        """ 
+        """
         Run model evaluation
         """
         in_dir = self.ui.inputDirectoryButtonEval.directory
@@ -1016,6 +1034,8 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         hash_pid = self.ui.hashPatientIdCheckBox.checked
         preserve_dirs = self.ui.preserveDirectoryStructureCheckBox.checked
         resume = self.ui.continueProgressCheckBox.checked
+        top_ratio = self.ui.topRatioSpinBox.value
+        phi_only_mode = self.ui.phiOnlyModeCheckBox.checked
 
         self.ui.statusLabel.text = "Running auto‑anonymize..."
         slicer.app.processEvents()
@@ -1031,6 +1051,8 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                 resume_anonymization=resume,
                 skip_single_frame=skip_single,
                 hash_patient_id=hash_pid,
+                top_ratio=top_ratio,
+                phi_only_mode=phi_only_mode,
             )
             self.ui.statusLabel.text = result['status']
         except Exception as e:
@@ -2653,6 +2675,8 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             skip_single_frame=kwargs.get('skip_single_frame', False),
             hash_patient_id=kwargs.get('hash_patient_id', True),
             no_mask_generation=kwargs.get('no_mask_generation', False),
+            top_ratio=kwargs.get('top_ratio', 0.1),
+            phi_only_mode=kwargs.get('phi_only_mode', False),
         )
 
         # Initialize shared processor
@@ -2714,6 +2738,9 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
                 if metrics_writer and result.success and not result.skipped:
                     csv_row = processor.format_metrics_for_csv(result)
                     metrics_writer.writerow(csv_row)
+
+            # Generate all PDFs after processing all files
+            processor.generate_all_pdfs()
 
         finally:
             progress_reporter.finish()
