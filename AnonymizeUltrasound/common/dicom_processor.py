@@ -6,9 +6,12 @@ import json
 import time
 from dataclasses import dataclass
 import torch
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.backends.backend_pdf import PdfPages
 
 from .dicom_file_manager import DicomFileManager
-from .inference import load_model, preprocess_image
+from .inference import load_model, preprocess_image, download_model
 from .masking import compute_masks_and_configs, mask_config_to_corner_points
 from .evaluation import compare_masks, load_mask_config
 
@@ -24,6 +27,9 @@ class ProcessingConfig:
     no_mask_generation: bool = False
     overview_dir: Optional[str] = None
     ground_truth_dir: Optional[str] = None
+    top_ratio: float = 0.1
+    phi_only_mode: bool = False  # If True, only apply top redaction, skip fan mask
+    overwrite_files: bool = False  # If True, overwrite existing output files; if False, skip them
 
 @dataclass
 class ProcessingResult:
@@ -93,9 +99,17 @@ class DicomProcessor:
     def initialize_model(self):
         """Load and initialize the AI model"""
         if not self.config.no_mask_generation:
+            # Check if model exists, download if not
+            if not os.path.exists(self.config.model_path):
+                self.logger.info(f"Model not found at {self.config.model_path}. Attempting to download...")
+                success = download_model(output_path=self.config.model_path)
+                if not success:
+                    raise FileNotFoundError(f"Could not download model to {self.config.model_path}")
+
             self.model = load_model(self.config.model_path, self.config.device)
             self.device = self.config.device
             self.logger.info(f"Model loaded on {self.device}")
+
 
     def evaluate_single_dicom(
         self,
@@ -181,12 +195,16 @@ class DicomProcessor:
                 output_folder, row.OutputPath, self.config.preserve_directory_structure
             )
 
-            if self.config.resume_anonymization and os.path.exists(final_output_path):
-                self.logger.info(f"Skipping existing file: {final_output_path}")
-                return ProcessingResult(
-                    success=True, skipped=True, input_path=input_path,
-                    output_path=final_output_path, processing_time=time.time() - start_time
-                )
+            # Check if file exists and should be skipped
+            if os.path.exists(final_output_path):
+                if not self.config.overwrite_files:
+                    self.logger.info(f"Skipping existing file: {final_output_path}")
+                    return ProcessingResult(
+                        success=True, skipped=True, input_path=input_path,
+                        output_path=final_output_path, processing_time=time.time() - start_time
+                    )
+                else:
+                    self.logger.info(f"Overwriting existing file: {final_output_path}")
 
             if progress_callback:
                 progress_callback(f"Processing: {input_path}")
@@ -204,24 +222,71 @@ class DicomProcessor:
                     output_path=final_output_path, processing_time=time.time() - start_time
                 )
 
-            # 3. Generate mask (if enabled)
+            # 3. Generate mask and get predicted corners (if enabled)
             curvilinear_mask = None
             mask_config = None
             predicted_corners = None
 
             if not self.config.no_mask_generation and self.model is not None:
-                # Run AI inference
+                # Run AI inference to get predicted corners
                 coords_normalized = self._run_inference(original_image)
                 predicted_corners = self._denormalize_coords(coords_normalized, original_dims)
 
-                # Generate mask
-                curvilinear_mask, mask_config = compute_masks_and_configs(
-                    original_dims=original_dims,
-                    predicted_corners=predicted_corners
+                # Generate mask only if not in PHI-only mode
+                if not self.config.phi_only_mode:
+                    curvilinear_mask, mask_config = compute_masks_and_configs(
+                        original_dims=original_dims,
+                        predicted_corners=predicted_corners
+                    )
+
+            # 4. Apply mask to image (only if not in PHI-only mode)
+            if self.config.phi_only_mode:
+                # In PHI-only mode, start with original image (no fan mask)
+                masked_image_array = original_image.copy()
+            else:
+                # Normal mode: apply fan mask
+                masked_image_array = self._apply_mask(original_image, curvilinear_mask)
+
+            # 4.5. Apply top redaction if enabled
+            if self.config.top_ratio > 0 and predicted_corners is not None:
+                masked_image_array = self._apply_top_redaction(
+                    masked_image_array, predicted_corners, self.config.top_ratio
                 )
 
-            # 4. Apply mask to image
-            masked_image_array = self._apply_mask(original_image, curvilinear_mask)
+                # Store data for PDF generation (will be processed at the end)
+                if headers_folder:
+                    os.makedirs(headers_folder, exist_ok=True)
+                    filename = os.path.splitext(row.AnonFilename)[0]
+
+                    # Store PDF data for later batch processing
+                    # Determine the correct subdirectory within headers tree to match the output structure
+                    if self.config.preserve_directory_structure:
+                        # Extract the relative path from the output path to determine headers subdirectory
+                        relative_path = os.path.relpath(final_output_path, output_folder)
+                        relative_dir = os.path.dirname(relative_path)
+                        if relative_dir:
+                            headers_subdir = os.path.join(headers_folder, relative_dir)
+                        else:
+                            headers_subdir = headers_folder
+                    else:
+                        # Flat structure - use headers folder directly
+                        headers_subdir = headers_folder
+
+                    if not hasattr(self, '_pdf_data'):
+                        self._pdf_data = {}
+
+                    if headers_subdir not in self._pdf_data:
+                        self._pdf_data[headers_subdir] = {
+                            'files': []
+                        }
+
+                    self._pdf_data[headers_subdir]['files'].append({
+                        'original_image': original_image,
+                        'redacted_image': masked_image_array,
+                        'predicted_corners': predicted_corners,
+                        'filename': filename,
+                        'top_ratio': self.config.top_ratio
+                    })
 
             # 5. Save anonymized DICOM
             anon_filename = row.AnonFilename
@@ -279,6 +344,39 @@ class DicomProcessor:
                 output_path="", error_message=error_msg,
                 processing_time=time.time() - start_time
             )
+
+    def generate_all_pdfs(self):
+        """Generate PDFs for all collected data (call this after processing all files)"""
+        if not hasattr(self, '_pdf_data') or not self._pdf_data:
+            return
+
+        for headers_subdir, data in self._pdf_data.items():
+            files = data['files']
+
+            if not files:
+                continue
+
+            # Create PDF in the headers subdirectory where *_DicomHeader.json files are saved
+            os.makedirs(headers_subdir, exist_ok=True)
+            pdf_path = os.path.join(headers_subdir, "redaction.pdf")
+
+            # Generate PDF with all files for this headers directory
+            with PdfPages(pdf_path) as pdf:
+                for file_data in files:
+                    self._add_page_to_pdf(
+                        pdf,
+                        file_data['original_image'],
+                        file_data['redacted_image'],
+                        file_data['predicted_corners'],
+                        file_data['top_ratio'],
+                        file_data['filename'],
+                        frame_idx=0
+                    )
+
+            self.logger.info(f"Generated redaction PDF with {len(files)} pages: {pdf_path}")
+
+        # Clear the PDF data after generation
+        self._pdf_data = {}
 
     def _convert_numpy_float_to_python_float(self, coords: Dict[str, Tuple[np.float32, np.float32]]) -> Dict[str, Tuple[float, float]]:
         """
@@ -339,9 +437,197 @@ class DicomProcessor:
         else:
             return original_image
 
+    def _apply_top_redaction(self, image_array: np.ndarray, predicted_corners: Dict[str, Tuple[int, int]], top_ratio: float) -> np.ndarray:
+        """
+        Apply top redaction to image array using predicted corners as hints.
+
+        Args:
+            image_array: Image array (N, H, W, C)
+            predicted_corners: Dictionary with corner points
+            top_ratio: Ratio of image height to redact from top (0.0-1.0)
+
+        Returns:
+            Image array with top redaction applied
+        """
+        if top_ratio <= 0:
+            return image_array
+
+        result = image_array.copy()
+        height = image_array.shape[1]
+
+        # Calculate base redaction height
+        base_redaction_height = int(height * top_ratio)
+
+        # Get top points from predicted corners
+        top_left = predicted_corners.get('upper_left')
+        top_right = predicted_corners.get('upper_right')
+
+        # Find the highest Y coordinate among top points
+        highest_y = self._get_highest_y_from_top_points(top_left, top_right)
+
+        # Calculate final redaction height considering top points and image bounds
+        final_redaction_height = self._calculate_final_redaction_height(base_redaction_height, highest_y, height)
+
+        # Apply redaction to each frame
+        for i in range(image_array.shape[0]):
+            # Ensure we have valid bounds for slicing
+            y_start = 0
+            y_end = min(final_redaction_height, height)
+
+            if y_start < y_end:
+                if image_array.shape[-1] == 1:  # Grayscale
+                    result[i, y_start:y_end, :, 0] = 0
+                else:  # RGB
+                    for c in range(image_array.shape[-1]):
+                        result[i, y_start:y_end, :, c] = 0
+
+        self.logger.info(f"Applied top redaction: {final_redaction_height}px (base: {base_redaction_height}px, top points: {highest_y}px)")
+        return result
+
+
+    def _normalize_image(self, img):
+        """Normalize image to 0-1 range for display (from redact_dicom_image_phi.py)"""
+        img = img.astype("float32", copy=False)
+        if img.ndim == 2:
+            lo, hi = np.percentile(img, [1, 99])
+            if hi <= lo:
+                lo, hi = float(img.min()), float(img.max())
+            img = (img - lo) / max(1e-6, (hi - lo))
+        else:
+            lo = img.min(axis=(0,1), keepdims=True)
+            hi = img.max(axis=(0,1), keepdims=True)
+            img = (img - lo) / np.maximum(hi - lo, 1e-6)
+        return np.clip(img, 0, 1)
+
+    def _get_highest_y_from_top_points(self, top_left: Optional[tuple], top_right: Optional[tuple]) -> int:
+        """Calculate the highest Y coordinate from top left and top right points"""
+        highest_y = 0
+        if top_left and len(top_left) >= 2:
+            try:
+                highest_y = max(highest_y, int(top_left[1]))
+            except (ValueError, TypeError):
+                self.logger.warning(f"Invalid top_left coordinate: {top_left}")
+        if top_right and len(top_right) >= 2:
+            try:
+                highest_y = max(highest_y, int(top_right[1]))
+            except (ValueError, TypeError):
+                self.logger.warning(f"Invalid top_right coordinate: {top_right}")
+        return highest_y
+
+    def _calculate_final_redaction_height(self, base_redaction_height: int, highest_y: int, image_height: int) -> int:
+        """Calculate the final redaction height considering top points and image bounds"""
+        # Use top points as upper limit - don't redact past the highest top point
+        if highest_y > 0:
+            # If we have top points, use the minimum of base redaction and top points
+            final_redaction_height = min(base_redaction_height, highest_y)
+        else:
+            # If no top points detected, use base redaction height
+            final_redaction_height = base_redaction_height
+
+        # Ensure we don't redact more than the image height
+        final_redaction_height = min(final_redaction_height, image_height - 1)
+        return int(final_redaction_height)
+
+    def _add_page_to_pdf(self, pdf, original_image, redacted_image, predicted_corners, top_ratio, filename, frame_idx=0):
+        """Add a single page to the PDF with original, redacted, and diff images"""
+        # Use only the first frame since redaction is the same across all frames
+        orig_frame = original_image[frame_idx]
+        redacted_frame = redacted_image[frame_idx]
+
+        # Normalize images for display (prevents matplotlib clipping warnings)
+        orig_norm = self._normalize_image(orig_frame)
+        redacted_norm = self._normalize_image(redacted_frame)
+
+        # Calculate difference using normalized images (matching redact_dicom_image_phi.py approach)
+        if orig_norm.shape == redacted_norm.shape:
+            diff_frame = np.abs(orig_norm - redacted_norm)
+        else:
+            # Handle size mismatches
+            h = min(orig_norm.shape[0], redacted_norm.shape[0])
+            w = min(orig_norm.shape[1], redacted_norm.shape[1])
+            orig_crop = orig_norm[:h, :w] if orig_norm.ndim == 2 else orig_norm[:h, :w, ...]
+            redacted_crop = redacted_norm[:h, :w] if redacted_norm.ndim == 2 else redacted_norm[:h, :w, ...]
+            diff_frame = np.abs(orig_crop - redacted_crop)
+
+        # Prepare display versions
+        if orig_norm.ndim == 2:
+            orig_frame_2d = orig_norm
+            redacted_frame_2d = redacted_norm
+        else:
+            orig_frame_2d = orig_norm
+            redacted_frame_2d = redacted_norm
+
+        # Calculate redaction parameters
+        height = original_image.shape[1]
+        base_redaction_height = int(height * top_ratio)
+
+        top_left = predicted_corners.get('upper_left')
+        top_right = predicted_corners.get('upper_right')
+        highest_y = self._get_highest_y_from_top_points(top_left, top_right)
+
+        # Calculate final redaction height considering top points and image bounds
+        final_redaction_height = self._calculate_final_redaction_height(base_redaction_height, highest_y, height)
+
+        # Create figure with 3 subplots: Original, Redacted, Diff
+        fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+        fig.suptitle(f'{filename} - Frame {frame_idx + 1}', fontsize=14)
+
+        # Original image (using normalized data)
+        if orig_frame_2d.ndim == 2:
+            axes[0].imshow(orig_frame_2d, cmap='gray')
+        else:
+            axes[0].imshow(orig_frame_2d)
+
+        axes[0].set_title('Original')
+        axes[0].axis('off')
+
+        # Add top redaction visualization
+        rect = patches.Rectangle((0, 0), orig_frame_2d.shape[1], final_redaction_height,
+                               linewidth=2, edgecolor='red', facecolor='red', alpha=0.3)
+        axes[0].add_patch(rect)
+
+        # Add top points if available (using different colors)
+        if top_left:
+            axes[0].plot(top_left[0], top_left[1], 'ro', markersize=8, label='Top Left')  # Red circle
+        if top_right:
+            axes[0].plot(top_right[0], top_right[1], 'bo', markersize=8, label='Top Right')  # Blue circle
+
+        if top_left or top_right:
+            axes[0].legend()
+
+        # Redacted image (using normalized data)
+        if redacted_frame_2d.ndim == 2:
+            axes[1].imshow(redacted_frame_2d, cmap='gray')
+        else:
+            axes[1].imshow(redacted_frame_2d)
+
+        axes[1].set_title('Redacted')
+        axes[1].axis('off')
+
+        # Diff image
+        if diff_frame.ndim == 2:
+            axes[2].imshow(diff_frame, cmap='hot')
+        else:
+            axes[2].imshow(diff_frame)
+
+        axes[2].set_title('Difference')
+        axes[2].axis('off')
+
+        # Add text with redaction info
+        info_text = f'Top Ratio: {top_ratio:.1%}\nBase Height: {base_redaction_height}px\nFinal Height: {final_redaction_height}px'
+        if top_left or top_right:
+            info_text += f'\nTop Points: {highest_y}px'
+
+        fig.text(0.5, 0.02, info_text, ha='center', fontsize=10,
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="lightgray"))
+
+        pdf.savefig(fig, bbox_inches='tight')
+        plt.close(fig)
+
+
     def _save_sequence_info(self, final_output_path: str, row, mask_config: Optional[dict]):
         """Save sequence info JSON"""
-        if not self.config.no_mask_generation:
+        if not self.config.no_mask_generation and not self.config.phi_only_mode:
             sequence_info = {
                 'SOPInstanceUID': getattr(row.DICOMDataset, 'SOPInstanceUID', 'None') or 'None',
                 'GrayscaleConversion': False

@@ -3,6 +3,15 @@ import numpy as np
 from PIL import Image
 import cv2
 import logging
+import os
+import requests
+
+# Model URL for downloading the AI model
+MODEL_URL = "https://www.dropbox.com/scl/fi/mnu2k4n8fju6gy1glhieb/model_traced.pt?rlkey=eb0xmwzwsoesq3mp11s8xt9xd&dl=1"
+
+# Default model path (relative to the AnonymizeUltrasound module)
+SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Go up one level from common/
+MODEL_PATH = os.path.join(SCRIPT_DIR, 'Resources/checkpoints/model_traced_unet_dsnt.pt')
 
 def get_device(device: str = 'cpu'):
     """ Set the Device to run the model on """
@@ -123,3 +132,75 @@ def preprocess_image(
     tensor = tensor.unsqueeze(0)
 
     return tensor
+
+def download_model(url: str = None, output_path: str = None) -> bool:
+    """
+    Download the AI model to the default location.
+
+    Args:
+        url (str, optional): URL to download the model from. Defaults to MODEL_URL.
+        output_path (str, optional): Local path where the model should be saved. Defaults to MODEL_PATH.
+
+    Returns:
+        bool: True if download successful, False otherwise
+    """
+    if url is None:
+        url = MODEL_URL
+    if output_path is None:
+        output_path = MODEL_PATH
+
+    try:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
+        logging.info(f"Downloading model from {url}...")
+
+        # Send a GET request to the URL
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+
+        # Write the content to the file
+        with open(output_path, 'wb') as file:
+            for chunk in response.iter_content(chunk_size=8192):
+                file.write(chunk)
+
+        logging.info(f"Model downloaded successfully to {output_path}")
+        return True
+
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Failed to download model from {url}: {e}")
+        return False
+    except Exception as e:
+        logging.error(f"Unexpected error during model download: {e}")
+        return False
+
+def download_and_prepare_model(model_path: str = None) -> tuple:
+    """
+    Download the AI model if needed and prepare it for inference.
+
+    Args:
+        model_path (str, optional): Path to the model file. Defaults to MODEL_PATH.
+
+    Returns:
+        tuple: (model, device) if successful, (None, None) if failed
+    """
+    if model_path is None:
+        model_path = MODEL_PATH
+
+    # Download model if it doesn't exist
+    if not os.path.exists(model_path):
+        logging.info(f"The AI model does not exist at {model_path}. Starting download...")
+        success = download_model(output_path=model_path)
+        if not success:
+            logging.error("Failed to download the model")
+            return None, None
+
+    # Load the model
+    try:
+        device = get_device()
+        model = load_model(model_path, device)
+        logging.info(f"Model loaded successfully on {device}")
+        return model, device
+    except Exception as e:
+        logging.error(f"Failed to load the model: {e}")
+        return None, None

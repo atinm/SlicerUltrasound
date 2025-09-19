@@ -41,15 +41,12 @@ from DICOMLib import DICOMUtils
 
 from common.dicom_file_manager import DicomFileManager
 from common.masking import compute_masks_and_configs
-from common.inference import load_model, preprocess_image, get_device
+from common.inference import load_model, preprocess_image, get_device, download_model, MODEL_PATH
 from common.dicom_processor import DicomProcessor, ProcessingConfig
 from common.progress_reporter import SlicerProgressReporter
 from common.overview_generator import OverviewGenerator
 from common.logging import setup_logging
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(SCRIPT_DIR, 'Resources/checkpoints/model_traced_unet_dsnt.pt')
-MODEL_URL = "https://www.dropbox.com/scl/fi/mnu2k4n8fju6gy1glhieb/model_traced.pt?rlkey=eb0xmwzwsoesq3mp11s8xt9xd&dl=1"
 
 class AnonymizeUltrasound(ScriptedLoadableModule):
     def __init__(self, parent):
@@ -171,6 +168,9 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
     AUTO_ANON_DEVICE_SETTING = "AnonymizeUltrasound/AutoAnonymizeDevice"
     AUTO_ANON_OVERVIEW_DIR_SETTING = "AnonymizeUltrasound/AutoAnonymizeOverviewDir"
     AUTO_ANON_GT_DIR_SETTING = "AnonymizeUltrasound/AutoAnonymizeGroundTruthDir"
+    AUTO_ANON_TOP_RATIO_SETTING = "AnonymizeUltrasound/AutoAnonymizeTopRatio"
+    AUTO_ANON_PHI_ONLY_MODE_SETTING = "AnonymizeUltrasound/AutoAnonymizePhiOnlyMode"
+    AUTO_ANON_OVERWRITE_FILES_SETTING = "AnonymizeUltrasound/AutoAnonymizeOverwriteFiles"
     EVAL_ENABLE_SETTING = "AnonymizeUltrasound/EnableModelEvaluation"
     EVAL_INPUT_DIR_SETTING = "AnonymizeUltrasound/EvalInputFolder"
     EVAL_GT_DIR_SETTING = "AnonymizeUltrasound/EvalGroundTruthDir"
@@ -429,7 +429,29 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                                                 lambda newValue: self.onSettingChanged(self.AUTO_ANON_DEVICE_SETTING, newValue))
 
        # Run button
-        self.ui.runAutoAnonymizeButton.clicked.connect(self.on_run_auto_anon_clicked) 
+        self.ui.runAutoAnonymizeButton.clicked.connect(self.on_run_auto_anon_clicked)
+
+        # Setup top ratio setting
+        topRatioStr = settings.value(self.AUTO_ANON_TOP_RATIO_SETTING, "0.1")
+        try:
+            topRatio = float(topRatioStr)
+            self.ui.topRatioSpinBox.value = topRatio
+        except ValueError:
+            self.ui.topRatioSpinBox.value = 0.1
+        self.ui.topRatioSpinBox.connect('valueChanged(double)',
+                                       lambda value: self.onSettingChanged(self.AUTO_ANON_TOP_RATIO_SETTING, str(value)))
+
+        # Setup PHI-only mode setting
+        phiOnlyMode = settings.value(self.AUTO_ANON_PHI_ONLY_MODE_SETTING, "false").lower() == "true"
+        self.ui.phiOnlyModeCheckBox.checked = phiOnlyMode
+        self.ui.phiOnlyModeCheckBox.connect('toggled(bool)',
+                                           lambda checked: self.onSettingChanged(self.AUTO_ANON_PHI_ONLY_MODE_SETTING, str(checked).lower()))
+
+        # Setup overwrite files setting
+        overwriteFiles = settings.value(self.AUTO_ANON_OVERWRITE_FILES_SETTING, "false").lower() == "true"
+        self.ui.overwriteFilesCheckBox.checked = overwriteFiles
+        self.ui.overwriteFilesCheckBox.connect('toggled(bool)',
+                                              lambda checked: self.onSettingChanged(self.AUTO_ANON_OVERWRITE_FILES_SETTING, str(checked).lower()))
 
         # Model evaluation settings
         eval_enable = settings.value(self.EVAL_ENABLE_SETTING)
@@ -960,7 +982,7 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             self.ui.statusLabel.text = "No DICOM file loaded"
 
     def on_run_model_evaluation_clicked(self):
-        """ 
+        """
         Run model evaluation
         """
         in_dir = self.ui.inputDirectoryButtonEval.directory
@@ -1016,6 +1038,9 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
         hash_pid = self.ui.hashPatientIdCheckBox.checked
         preserve_dirs = self.ui.preserveDirectoryStructureCheckBox.checked
         resume = self.ui.continueProgressCheckBox.checked
+        top_ratio = self.ui.topRatioSpinBox.value
+        phi_only_mode = self.ui.phiOnlyModeCheckBox.checked
+        overwrite_files = self.ui.overwriteFilesCheckBox.checked
 
         self.ui.statusLabel.text = "Running auto‑anonymize..."
         slicer.app.processEvents()
@@ -1031,6 +1056,9 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
                 resume_anonymization=resume,
                 skip_single_frame=skip_single,
                 hash_patient_id=hash_pid,
+                top_ratio=top_ratio,
+                phi_only_mode=phi_only_mode,
+                overwrite_files=overwrite_files,
             )
             self.ui.statusLabel.text = result['status']
         except Exception as e:
@@ -1430,9 +1458,9 @@ class AnonymizeUltrasoundWidget(ScriptedLoadableModuleWidget, VTKObservationMixi
             self.shortcutC.activated.disconnect()
             self.shortcutE.activated.disconnect()
             self.shortcutA.activated.disconnect()
-        except Exception:
-            # If shortcuts were not connected yet, ignore
-            pass
+        except Exception as e:
+            # If shortcuts were not connected yet, log but don't fail
+            logging.debug(f"Could not disconnect shortcuts (may not have been connected): {e}")
 
     def onExportAndNextButton(self):
         """Helper slot to export the current scan and immediately load the next one (shortcut 'A')."""
@@ -1824,43 +1852,6 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         logging.info(f"Auto mask infer in {time.time() - start:.3f}s")
         return coordsN
 
-    def downloadAndPrepareModel(self):
-        """ Download the AI model and prepare it for inference """
-        if not os.path.exists(MODEL_PATH):
-            logging.info(f"The AI model does not exist. Starting download...")
-            dialog = AnonymizeUltrasoundWidget.createWaitDialog(self, "Downloading AI Model", "The AI model does not exist. Downloading...")
-            success = self.download_model(MODEL_URL, MODEL_PATH)
-            dialog.close()
-            if not success:
-                return None, None
-
-        # Check if the model loaded successfully
-        try:
-            device = get_device()
-            model = load_model(MODEL_PATH, device)
-        except Exception as e:
-            logging.error(f"Failed to load the model: {e}")
-            logging.error("Automatic mode is disabled. Please define the mask manually.")
-            return None, None
-
-        return model, device
-
-    def download_model(self, url, output_path):
-        """ Download a file from a URL """
-        try:
-            # Send a GET request to the URL
-            response = requests.get(url, stream=True)
-            # Raise an exception if the request was unsuccessful
-            response.raise_for_status()
-            # Write the content to the file
-            with open(output_path, 'wb') as file:
-                for chunk in response.iter_content(chunk_size=8192):
-                    file.write(chunk)
-                logging.info(f"Downloaded file saved to {output_path}")
-            return True
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Failed to download the file: {e}")
-            return False
 
     def showMaskContour(self, show=True):
         parameterNode = self.getParameterNode()
@@ -2653,6 +2644,9 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
             skip_single_frame=kwargs.get('skip_single_frame', False),
             hash_patient_id=kwargs.get('hash_patient_id', True),
             no_mask_generation=kwargs.get('no_mask_generation', False),
+            top_ratio=kwargs.get('top_ratio', 0.1),
+            phi_only_mode=kwargs.get('phi_only_mode', False),
+            overwrite_files=kwargs.get('overwrite_files', False),
         )
 
         # Initialize shared processor
@@ -2715,6 +2709,9 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
                     csv_row = processor.format_metrics_for_csv(result)
                     metrics_writer.writerow(csv_row)
 
+            # Generate all PDFs after processing all files
+            processor.generate_all_pdfs()
+
         finally:
             progress_reporter.finish()
             if metrics_file:
@@ -2745,7 +2742,7 @@ class AnonymizeUltrasoundLogic(ScriptedLoadableModuleLogic, VTKObservationMixin)
         """
         if not os.path.exists(model_path):
             logging.info("Model missing; downloading...")
-            ok = self.download_model(MODEL_URL, model_path)
+            ok = download_model(output_path=model_path)
             if not ok:
                 raise RuntimeError("Model download failed")
         device = get_device(device_hint)
