@@ -4,6 +4,7 @@ import os
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 import logging
+import cv2
 
 class OverviewGenerator:
     """Generates overview images for anonymization results"""
@@ -13,17 +14,74 @@ class OverviewGenerator:
         os.makedirs(output_dir, exist_ok=True)
         self.logger = logging.getLogger(__name__)
 
+    def _enhance_contrast_percentile(self, image: np.ndarray, **kwargs) :
+        """
+        Enhance image contrast using various methods
+
+        Args:
+            image: Input image array
+            method: 'percentile', 'clahe', or 'gamma'
+            **kwargs: Method-specific parameters
+
+        Returns:
+            Enhanced image or (vmin, vmax) for percentile method
+        """
+        low_pct = kwargs.get('low_percentile', 2)
+        high_pct = kwargs.get('high_percentile', 98)
+        vmin = np.percentile(image, low_pct)
+        vmax = np.percentile(image, high_pct)
+        return vmin, vmax
+
+    def _enhance_contrast(self, image: np.ndarray, method: str, **kwargs) :
+        """
+        Enhance image contrast using various methods
+
+        Args:
+            image: Input image array
+            method: 'clahe', or 'gamma'
+            **kwargs: Method-specific parameters
+
+        Returns:
+            Enhanced image
+        """
+        if method == 'clahe':
+            clip_limit = kwargs.get('clip_limit', 2.0)
+            tile_size = kwargs.get('tile_grid_size', (8, 8))
+
+            # Convert to uint8 if needed
+            if image.dtype != np.uint8:
+                img_norm = ((image - image.min()) / (image.max() - image.min()) * 255).astype(np.uint8)
+            else:
+                img_norm = image
+
+            clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_size)
+            return clahe.apply(img_norm)
+
+        elif method == 'gamma':
+            gamma = kwargs.get('gamma', 0.7)
+            normalized = image.astype(np.float32)
+            if normalized.max() > 1.0:
+                normalized = normalized / 255.0
+            corrected = np.power(normalized, gamma)
+            if image.max() > 1.0:
+                corrected = (corrected * 255).astype(np.uint8)
+            return corrected
+
     def generate_overview(
         self,
         filename: str,
         original_image: np.ndarray,
         masked_image: np.ndarray,
         mask: Optional[np.ndarray] = None,
-        metrics: Optional[Dict[str, Any]] = None
+        ground_truth_config: Optional[Dict[str, Any]] = None,
+        predicted_config: Optional[Dict[str, Any]] = None,
+        contrast_method: str = 'percentile'
     ) -> str:
         """Generate overview image comparing original vs anonymized"""
 
         # Validate input has frames
+        if original_image.shape[0] == 0:
+            raise ValueError("No frames available in original_image")
         if masked_image.shape[0] == 0:
             raise ValueError("No frames available in masked_image")
 
@@ -36,67 +94,48 @@ class OverviewGenerator:
 
         axes[0].set_title('Original')
         axes[1].set_title('Mask Outline')
-        axes[2].set_title('Anonymized')
 
-        orig_frame = original_image[0]
-        masked_frame = masked_image[0]
-        if orig_frame.shape != masked_frame.shape:
-            raise ValueError("Original and masked frame shapes do not match")
+        # Create max-pooled snapshots (same as AI model preprocessing)
+        # This ensures we're showing the same "background" image that the AI model analyzed
+        orig_frame = self._create_snapshot(original_image)
 
-        # Convert mask to boolean for processing
-        mask2d = None
-        if mask is not None:
-            mask2d = (mask > 0)
+        # Enhance contrast
+        if contrast_method == 'percentile':
+            vmin, vmax = self._enhance_contrast_percentile(orig_frame.squeeze())
+            axes[0].imshow(orig_frame.squeeze(), cmap='gray', vmin=vmin, vmax=vmax)
+            axes[1].imshow(orig_frame.squeeze(), cmap='gray', vmin=vmin, vmax=vmax)
+        else:
+            enhanced_frame = self._enhance_contrast(orig_frame.squeeze(), contrast_method)
+            axes[0].imshow(enhanced_frame, cmap='gray')
+            axes[1].imshow(enhanced_frame, cmap='gray')
 
-        # Helper function to apply white background outside the fan
-        def _with_white_bg(frame, mask2d):
-            """Apply white background outside the mask area"""
-            if mask2d is None:
-                return frame, 'gray'
 
-            if frame.ndim == 2:
-                out = frame.copy()
-                out[~mask2d] = 255
-                return out, 'gray'
-            elif frame.ndim == 3 and frame.shape[2] == 3:
-                out = frame.copy()
-                m3 = np.repeat((~mask2d)[..., None], 3, axis=2)
-                out[m3] = 255
-                return out, None
-            else:
-                # single-channel but kept as HxWx1
-                out = frame[..., 0].copy()
-                out[~mask2d] = 255
-                return out, 'gray'
-
-        # Apply white background to masked frame
-        masked_disp, cmap2 = _with_white_bg(masked_frame, mask2d)
-
-        # Display original
-        axes[0].imshow(orig_frame.squeeze(), cmap='gray')
-        axes[0].axis('off')
-
-        # Display original with mask outline
-        axes[1].imshow(orig_frame.squeeze(), cmap='gray')
         if mask is not None:
             axes[1].contour(mask, levels=[0.5], colors='lime', linewidths=1.0)
         else:
             axes[1].text(0.5, 0.5, 'No mask', ha='center', va='center',
                         transform=axes[1].transAxes, color='red')
+
+        axes[0].axis('off')
         axes[1].axis('off')
 
-        # Display anonymized with white background
-        axes[2].imshow(masked_disp, cmap=cmap2)
-        axes[2].axis('off')
+        # If ground truth and predicted configs are provided, show comparison, otherwise show anonymized
+        if ground_truth_config is not None and predicted_config is not None:
+            axes[2].set_title('GT (Yellow) vs Predicted (Cyan)')
+            comparison_image = self._create_mask_comparison_image(
+                original_image, ground_truth_config, predicted_config
+            )
+            axes[2].imshow(comparison_image)
+        else:
+            axes[2].set_title('Anonymized')
+            masked_frame = self._create_snapshot(masked_image)
 
-        # Add metrics if available
-        if metrics:
-            dice_txt = self._format_metric(metrics.get("dice_mean"))
-            iou_txt = self._format_metric(metrics.get("iou_mean"))
-            metrics_str = f"Dice: {dice_txt}  IoU: {iou_txt}"
-            axes[1].text(0.02, 0.98, metrics_str, transform=axes[1].transAxes,
-                        fontsize=12, color='yellow', ha='left', va='top',
-                        bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.5))
+            if orig_frame.shape != masked_frame.shape:
+                raise ValueError("Original and masked frame shapes do not match")
+
+            axes[2].imshow(masked_frame)
+
+        axes[2].axis('off')
 
         # Save overview
         overview_filename = f"{os.path.splitext(filename)[0]}.png"
@@ -107,6 +146,116 @@ class OverviewGenerator:
 
         return overview_path
 
+    def _create_mask_comparison_image(self,
+        original_image: np.ndarray,
+        ground_truth_config: Optional[dict],
+        predicted_config: Optional[dict]
+        ) -> np.ndarray:
+        """
+        Create a comparison image showing ground truth mask in yellow,
+        predicted mask in cyan, and overlap in lime green.
+
+        Args:
+            original_image: Original ultrasound image array (N, H, W, C)
+            ground_truth_config: Ground truth mask configuration
+            predicted_config: Predicted mask configuration
+
+        Returns:
+            RGB image with color-coded mask comparison
+        """
+        from .masking import create_mask
+
+        # Create snapshot for consistent visualization
+        orig_frame = self._create_snapshot(original_image)
+
+        # Get image dimensions
+        if orig_frame.ndim == 2:
+            height, width = orig_frame.shape
+        else:
+            height, width = orig_frame.shape[:2]
+
+        # Create ground truth and predicted masks
+        gt_mask = create_mask(ground_truth_config, image_size=(height, width))
+        pred_mask = create_mask(predicted_config, image_size=(height, width))
+
+        # Convert to binary masks
+        gt_binary = (gt_mask > 0).astype(np.uint8)
+        pred_binary = (pred_mask > 0).astype(np.uint8)
+
+        # Create RGB comparison image
+        # Start with grayscale original image as base
+        if orig_frame.ndim == 2:
+            # Convert grayscale to RGB
+            base_image = np.stack([orig_frame, orig_frame, orig_frame], axis=2)
+        else:
+            base_image = orig_frame.copy()
+
+        # Ensure base image is in 0-255 range
+        if base_image.max() <= 1.0:
+            base_image = (base_image * 255).astype(np.uint8)
+        else:
+            base_image = base_image.astype(np.uint8)
+
+        # Create color overlay
+        overlay = base_image.copy().astype(np.float32)
+
+        # Define colors (in RGB)
+        yellow_color = np.array([255, 255, 0], dtype=np.float32)    # Ground truth
+        cyan_color = np.array([0, 255, 255], dtype=np.float32)      # Predicted
+        lime_green_color = np.array([127, 255, 127], dtype=np.float32)   # Overlap (yellow + cyan = lime green)
+
+        # Calculate overlap
+        overlap_mask = (gt_binary & pred_binary).astype(bool)
+        gt_only_mask = (gt_binary & ~pred_binary).astype(bool)
+        pred_only_mask = (pred_binary & ~gt_binary).astype(bool)
+
+        # Apply color overlays with transparency
+        alpha = 0.4  # Transparency factor
+
+        # Ground truth only (yellow)
+        if np.any(gt_only_mask):
+            overlay[gt_only_mask] = (1 - alpha) * overlay[gt_only_mask] + alpha * yellow_color
+
+        # Predicted only (cyan)
+        if np.any(pred_only_mask):
+            overlay[pred_only_mask] = (1 - alpha) * overlay[pred_only_mask] + alpha * cyan_color
+
+        # Overlap (lime green)
+        if np.any(overlap_mask):
+            overlay[overlap_mask] = (1 - alpha) * overlay[overlap_mask] + alpha * lime_green_color
+
+        # Clip values and convert back to uint8
+        overlay = np.clip(overlay, 0, 255).astype(np.uint8)
+
+        return overlay
+
+    def _create_snapshot(self, image_array: np.ndarray) -> np.ndarray:
+        """
+        Create a max-pooled snapshot from multi-frame image array.
+        This replicates the same preprocessing step used by the AI model.
+
+        Args:
+            image_array: Multi-frame image array with shape (N, H, W, C)
+
+        Returns:
+            Single frame snapshot with shape (H, W, C) or (H, W) for grayscale
+        """
+        # Validate input shape - should be (N, H, W, C)
+        if len(image_array.shape) != 4:
+            raise ValueError(f"Expected 4D array (N, H, W, C), got {len(image_array.shape)}D array")
+
+        # Step 1: Max-pool frames to get single frame (same as AI model preprocessing)
+        snapshot = image_array.max(axis=0)  # (H, W, C)
+
+        # If single channel, we can optionally squeeze the channel dimension for display
+        # but keep it consistent with how the AI model would see it
+        if snapshot.shape[2] == 1:
+            # For display purposes, we can squeeze to (H, W) for grayscale
+            return snapshot.squeeze(axis=2)  # (H, W)
+        else:
+            # Keep RGB format
+            return snapshot  # (H, W, 3)
+
     def _format_metric(self, value) -> str:
         """Format metric value for display"""
         try:
@@ -114,27 +263,16 @@ class OverviewGenerator:
         except Exception:
             return "N/A"
 
+
     def generate_overview_pdf(self, overview_manifest: List[Dict[str, Any]], output_dir: str) -> str:
-        """
-        Generate a comprehensive PDF report from overview PNG images.
-
-        Args:
-            overview_manifest: List of dictionaries containing overview info
-            output_dir: Directory to save the PDF
-
-        Returns:
-            Path to the generated PDF file
-
-        Raises:
-            Exception: If PDF generation fails
-        """
+        """Generate a comprehensive PDF report with metrics tables."""
         from matplotlib.backends.backend_pdf import PdfPages
         from datetime import datetime
+        import matplotlib.gridspec as gridspec
 
         if not overview_manifest:
             raise ValueError("Overview manifest is empty")
 
-        # Generate timestamped filename
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         pdf_filename = f"overview_report_{timestamp}.pdf"
         overview_pdf_path = os.path.join(output_dir, pdf_filename)
@@ -142,64 +280,60 @@ class OverviewGenerator:
         try:
             with PdfPages(overview_pdf_path) as pdf:
                 for item in overview_manifest:
-                    # Validate required fields
                     if "path" not in item or not os.path.exists(item["path"]):
                         self.logger.warning(f"Skipping item - image not found: {item.get('path', 'N/A')}")
                         continue
 
-                    # Load the overview PNG image
                     img = plt.imread(item["path"])
 
-                    # Create full-page landscape figure with high DPI
+                    # Create figure with structured layout
                     fig = plt.figure(figsize=(11, 8.5), dpi=300)
                     fig.patch.set_facecolor('white')
 
-                    # Add image with minimal margins (1% margin on all sides)
-                    ax = fig.add_axes((0.01, 0.01, 0.98, 0.98))
-                    ax.imshow(img, interpolation='nearest')
-                    ax.axis('off')
+                    # Create vertical layout: image on top (75% height), table on bottom (25% height)
+                    gs = fig.add_gridspec(2, 1, height_ratios=[4, 1], hspace=0.05,
+                                         top=0.95, bottom=0.05, left=0.03, right=0.97)
 
-                    # Add filename overlay at top-left corner
-                    filename = item.get("filename", "Unknown")
-                    fig.text(
-                        0.012, 0.992,  # Position: 1.2% from left, 99.2% from bottom
-                        f"{filename}",
-                        ha='left', va='top',
-                        fontsize=10,
-                        bbox=dict(
-                            boxstyle='round,pad=0.2',
-                            facecolor='white',
-                            edgecolor='none',
-                            alpha=0.7
-                        )
+                    ax_img = fig.add_subplot(gs[0, 0])
+                    ax_img.imshow(img, interpolation='nearest')
+                    ax_img.axis('off')
+
+                    ax_table = fig.add_subplot(gs[1, 0])
+                    ax_table.axis('off')
+
+                    # Prepare metrics data
+                    metrics_data = [
+                        ["Filename", item.get("filename", "Unknown")],
+                        ["Dice Score", f"{item.get('dice', 0):.3f}"],
+                        ["IoU", f"{item.get('iou', 0):.3f}"],
+                        ["MDE", f"{item.get('mean_distance_error', 0):.3f}"],
+                        ["Upper Left Error", f"{item.get('upper_left_error', 0):.3f}"],
+                        ["Upper Right Error", f"{item.get('upper_right_error', 0):.3f}"],
+                        ["Lower Left Error", f"{item.get('lower_left_error', 0):.3f}"],
+                        ["Lower Right Error", f"{item.get('lower_right_error', 0):.3f}"]
+                    ]
+
+                    # Create horizontal table layout
+                    table = ax_table.table(
+                        cellText=[list(row[1] for row in metrics_data)],  # Values only
+                        colLabels=[row[0] for row in metrics_data],       # Metrics as column headers
+                        cellLoc='center',
+                        loc='center',
+                        bbox=[0,0,1,1]
                     )
 
-                    # Optionally add metrics overlay at top-right corner
-                    dice = item.get("dice")
-                    iou = item.get("iou")
-                    if dice is not None and iou is not None:
-                        metrics_text = f"Dice: {dice:.3f}, IoU: {iou:.3f}"
-                        fig.text(
-                            0.988, 0.992,  # Position: 98.8% from left, 99.2% from bottom
-                            metrics_text,
-                            ha='right', va='top',
-                            fontsize=9,
-                            bbox=dict(
-                                boxstyle='round,pad=0.2',
-                                facecolor='lightblue',
-                                edgecolor='none',
-                                alpha=0.8
-                            )
-                        )
+                    # Optimize table appearance for landscape layout
+                    table.auto_set_font_size(False)
+                    table.set_fontsize(6)
+                    table.scale(1, 1.2)
 
-                    # Save page to PDF (no bbox_inches to maintain full-page layout)
-                    pdf.savefig(fig, facecolor='white')
+                    pdf.savefig(fig, facecolor='white', bbox_inches='tight', pad_inches=0.05)
                     plt.close(fig)
 
             return overview_pdf_path
 
         except Exception as e:
-            # Clean up partial file if it exists
+            # Cleanup code remains the same
             if os.path.exists(overview_pdf_path):
                 try:
                     os.remove(overview_pdf_path)
